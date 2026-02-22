@@ -1,0 +1,4 @@
+[defaults]
+archetype = "explore-act"
+model = "sonnet"
+max_turns = 50
