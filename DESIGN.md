@@ -122,6 +122,95 @@ claude -p "<assembled prompt>" --model <model> --max-turns <N>
 
 Runs in the worktree directory. Claude reads project files (CLAUDE.md, etc.) from the worktree and can create/modify files there. The session runs as a background process (detached via `start_new_session`). Output captured to `.elmer/logs/<slug>.log`.
 
+## Planned Architecture [Phase 2+]
+
+### Daemon Loop
+
+```
+┌──────────────────────────────────────────────────┐
+│                 ELMER DAEMON                      │
+│                                                   │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐      │
+│  │GENERATE │───▶│SCHEDULE │───▶│  SPAWN  │      │
+│  │ topics  │    │  (DAG)  │    │ workers │      │
+│  └─────────┘    └─────────┘    └─────────┘      │
+│       ▲              ▲              │             │
+│       │              │              ▼             │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐      │
+│  │  LEARN  │◀───│  GATE   │◀───│HARVEST  │      │
+│  │(feed DAG)│   │approve/ │    │proposals│      │
+│  └─────────┘    │reject   │    └─────────┘      │
+│                  └─────────┘                      │
+└──────────────────────────────────────────────────┘
+```
+
+Each cycle: harvest completed → gate (auto/human) → merge approved → schedule unblocked → generate new topics (if below threshold). Interval-driven with cost budget per cycle.
+
+### Exploration DAG
+
+Explorations can depend on each other. An exploration only starts when all dependencies are approved and merged.
+
+```
+seed topic
+├── exploration A (approved, merged)
+│   ├── follow-up A1 (approved, merged)
+│   │   └── follow-up A1a (running...)
+│   └── follow-up A2 (rejected — dead end)
+├── exploration B (approved, merged)
+│   └── follow-up B1 (pending review)
+└── exploration C (running...)
+```
+
+State model extends with:
+```sql
+ALTER TABLE explorations ADD COLUMN parent_id TEXT;  -- what spawned this
+ALTER TABLE explorations ADD COLUMN project_path TEXT; -- multi-project
+
+CREATE TABLE dependencies (
+    exploration_id TEXT,
+    depends_on_id TEXT,
+    PRIMARY KEY (exploration_id, depends_on_id)
+);
+```
+
+### Two-Stage Prompt Generation
+
+Instead of static `$TOPIC` substitution:
+
+1. **Stage 1 (meta):** `claude -p "Given this project and topic, generate the optimal exploration prompt"` — reads project docs, available archetypes, topic, produces a bespoke prompt
+2. **Stage 2 (execution):** Execute the generated prompt in the worktree
+
+The archetype becomes a hint to Stage 1, not a rigid template. Stage 1 can combine elements from multiple archetypes, add project-specific instructions, or generate entirely novel prompts.
+
+### Auto-Approve Gate
+
+After exploration completes, if auto-approve is enabled:
+
+1. Spawn a second `claude -p` session with the proposal and criteria
+2. AI evaluates: "Does this proposal meet the approval criteria?"
+3. Output: APPROVE or REJECT with reasoning
+4. If APPROVE → auto-merge. If REJECT → queue for human review with reasoning attached.
+
+Criteria configurable per-project in `.elmer/config.toml`.
+
+### Cross-Project Architecture
+
+```
+~/.elmer/
+├── config.toml          # Global config (default model, budget)
+├── insights.db          # Cross-project insight log
+└── projects.toml        # Registered projects (optional)
+
+/path/to/project/.elmer/
+├── config.toml          # Project-specific overrides
+├── archetypes/          # Project-specific templates
+├── state.db             # Project state
+├── worktrees/
+└── logs/
+```
+
+Insights extracted from explorations that are generalizable get stored in `~/.elmer/insights.db`. Future explorations in any project get relevant insights injected into their prompt context.
+
 ## Design Decisions
 
 ### ADR-001: Git Worktrees Over Directory Copying
