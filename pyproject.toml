@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "elmer"
+version = "0.1.0"
+description = "Autonomous research with branching"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "click>=8.0",
+]
+
+[project.scripts]
+elmer = "elmer.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/elmer"]
