@@ -3,10 +3,11 @@
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable, Optional
 
 import click
 
-from . import state, worker
+from . import autoapprove, explore as explore_mod, state, worker, worktree as wt_mod
 
 
 def _age(iso_timestamp: str) -> str:
@@ -47,16 +48,43 @@ def _extract_summary(proposal_path: Path, max_lines: int = 5) -> str:
     return " ".join(summary_lines)[:200] if summary_lines else "(empty proposal)"
 
 
-def _refresh_running(elmer_dir: Path) -> None:
-    """Check running explorations and update status if finished."""
+def _refresh_running(
+    elmer_dir: Path,
+    project_dir: Path = None,
+    notify: Optional[Callable[[str], None]] = None,
+) -> None:
+    """Check running explorations and update status if finished.
+
+    If project_dir is provided, also schedules pending explorations
+    whose dependencies are now met.
+
+    notify is a callback for status messages (default: click.echo).
+    """
+    if notify is None:
+        notify = click.echo
     conn = state.get_db(elmer_dir)
     explorations = state.list_explorations(conn, status="running")
 
+    newly_done = []
     for exp in explorations:
         pid = exp["pid"]
         if not worker.is_running(pid):
             worktree_path = Path(exp["worktree_path"])
             proposal_path = worktree_path / "PROPOSAL.md"
+
+            # Extract cost data from the JSON log file (best-effort)
+            cost_fields = {}
+            log_path = elmer_dir / "logs" / f"{exp['id']}.log"
+            cost_result = worker.parse_log_costs(log_path)
+            if cost_result:
+                cost_fields = {
+                    k: v for k, v in {
+                        "input_tokens": cost_result.input_tokens,
+                        "output_tokens": cost_result.output_tokens,
+                        "cost_usd": cost_result.cost_usd,
+                        "num_turns_actual": cost_result.num_turns,
+                    }.items() if v is not None
+                }
 
             if proposal_path.exists():
                 summary = _extract_summary(proposal_path)
@@ -66,7 +94,9 @@ def _refresh_running(elmer_dir: Path) -> None:
                     status="done",
                     completed_at=datetime.now(timezone.utc).isoformat(),
                     proposal_summary=summary,
+                    **cost_fields,
                 )
+                newly_done.append(exp)
             else:
                 state.update_exploration(
                     conn,
@@ -74,13 +104,30 @@ def _refresh_running(elmer_dir: Path) -> None:
                     status="failed",
                     completed_at=datetime.now(timezone.utc).isoformat(),
                     proposal_summary="(no PROPOSAL.md produced)",
+                    **cost_fields,
                 )
     conn.close()
 
+    if project_dir:
+        # Auto-approve flagged explorations that just finished
+        for exp in newly_done:
+            if exp["auto_approve"]:
+                notify(f"Auto-reviewing: {exp['id']}...")
+                approved = autoapprove.evaluate(elmer_dir, project_dir, exp["id"])
+                if approved:
+                    notify(f"  Auto-approved: {exp['id']}")
+                else:
+                    notify(f"  Queued for human review: {exp['id']}")
 
-def show_status(elmer_dir: Path) -> None:
+        # Schedule pending explorations whose dependencies are now met
+        launched = explore_mod.schedule_ready(elmer_dir, project_dir)
+        for slug in launched:
+            notify(f"Unblocked and started: {slug}")
+
+
+def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
     """Display status of all explorations."""
-    _refresh_running(elmer_dir)
+    _refresh_running(elmer_dir, project_dir)
 
     conn = state.get_db(elmer_dir)
     explorations = state.list_explorations(conn)
@@ -92,6 +139,7 @@ def show_status(elmer_dir: Path) -> None:
 
     # Status indicators
     status_icons = {
+        "pending": ".",
         "running": "~",
         "done": "*",
         "approved": "+",
@@ -115,7 +163,7 @@ def show_status(elmer_dir: Path) -> None:
 
     # Legend
     click.echo()
-    click.echo("~ running  * review ready  + approved  - rejected  ! failed")
+    click.echo(". pending  ~ running  * review ready  + approved  - rejected  ! failed")
 
 
 def list_proposals(elmer_dir: Path) -> None:
@@ -172,3 +220,94 @@ def show_proposal(elmer_dir: Path, exploration_id: str) -> None:
         log_path = elmer_dir / "logs" / f"{exp['id']}.log"
         if log_path.exists():
             click.echo(f"\nLog available at: {log_path}")
+
+
+def _score_proposal(exp, conn, project_dir: Path) -> tuple[float, list[str]]:
+    """Score a proposal for prioritized review. Returns (score, reasons).
+
+    Higher score = review first. Scoring factors:
+    - Blockers: is anything waiting on this? (+30 per dependent)
+    - Staleness: older proposals get priority (+1 per hour, max 24)
+    - Diff size: smaller diffs are quicker to review (+10 if <50 lines)
+    - Failed status: failed explorations need attention (+5)
+    """
+    score = 0.0
+    reasons = []
+
+    # Factor 1: Dependents — other explorations are blocked on this
+    dependents = state.get_dependents(conn, exp["id"])
+    if dependents:
+        score += 30 * len(dependents)
+        reasons.append(f"blocks {len(dependents)}")
+
+    # Factor 2: Staleness — older proposals get priority
+    try:
+        created = datetime.fromisoformat(exp["created_at"])
+        now = datetime.now(timezone.utc)
+        hours = (now - created).total_seconds() / 3600
+        staleness = min(hours, 24)
+        score += staleness
+        if hours > 12:
+            reasons.append("stale")
+    except (ValueError, TypeError):
+        pass
+
+    # Factor 3: Diff size — smaller = easier to review
+    try:
+        branch = exp["branch"]
+        diff = wt_mod.get_branch_diff(project_dir, branch)
+        # Count file lines in diff stat
+        file_lines = [l for l in diff.strip().splitlines() if "|" in l]
+        if len(file_lines) <= 5:
+            score += 10
+            reasons.append("small diff")
+    except Exception:
+        pass
+
+    # Factor 4: Failed status — needs attention
+    if exp["status"] == "failed":
+        score += 5
+        reasons.append("failed")
+
+    return score, reasons
+
+
+def list_proposals_prioritized(elmer_dir: Path, project_dir: Path) -> None:
+    """List proposals ranked by review priority."""
+    _refresh_running(elmer_dir, project_dir)
+
+    conn = state.get_db(elmer_dir)
+    done = state.list_explorations(conn, status="done")
+    failed = state.list_explorations(conn, status="failed")
+    proposals = list(done) + list(failed)
+
+    if not proposals:
+        click.echo("No proposals pending review.")
+        conn.close()
+        return
+
+    # Score and sort
+    scored = []
+    for exp in proposals:
+        score, reasons = _score_proposal(exp, conn, project_dir)
+        scored.append((score, reasons, exp))
+
+    conn.close()
+
+    scored.sort(key=lambda x: -x[0])
+
+    click.echo(f"{'#':<4} {'PRIORITY':>8} {'ID':<36} {'STATUS':<8} {'AGE':<8} {'REASONS'}")
+    click.echo("-" * 100)
+
+    for i, (score, reasons, exp) in enumerate(scored, 1):
+        age = _age(exp["created_at"])
+        reason_str = ", ".join(reasons) if reasons else "-"
+        eid = exp["id"]
+        if len(eid) > 34:
+            eid = eid[:33] + ".."
+        click.echo(
+            f"{i:<4} {score:>8.0f} {eid:<36} {exp['status']:<8} {age:<8} {reason_str}"
+        )
+
+    click.echo(f"\n{len(scored)} proposal(s) ranked by review priority.")
+    click.echo("Higher priority = review first.")

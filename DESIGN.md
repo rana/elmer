@@ -71,6 +71,19 @@ Elmer Fudd. Persistent hunter. Homage to the [Ralph Wiggum](https://github.com/a
 | `worker.py` | Claude CLI invocation and process management |
 | `state.py` | SQLite state tracking |
 | `config.py` | Configuration loading and project initialization |
+| `generate.py` | AI topic generation orchestration |
+| `autoapprove.py` | AI review gate for auto-approval |
+| `promptgen.py` | Two-stage AI prompt generation |
+| `archselect.py` | AI archetype selection |
+| `costs.py` | Cost reporting and summaries |
+| `daemon.py` | Daemon loop, PID management, cycle execution |
+| `insights.py` | Cross-project insight extraction and injection |
+| `questions.py` | Question mining from project documentation |
+| `scaffold.py` | Project scaffolding (five-document pattern) |
+| `archstats.py` | Archetype effectiveness statistics |
+| `invariants.py` | Document invariant enforcement |
+| `dashboard.py` | Multi-project status aggregation |
+| `pr.py` | PR creation via gh CLI |
 
 ### Data Flow
 
@@ -101,11 +114,12 @@ clean   → remove worktrees/state for approved/rejected explorations
 ### State Model
 
 ```
-running → done → approved
-              → rejected
-        → failed → rejected
+pending → running → done → approved
+                        → rejected
+                  → failed → rejected
 ```
 
+- **pending**: Blocked by unmet dependencies (no worktree yet)
 - **running**: Claude session active (PID alive)
 - **done**: Session finished, PROPOSAL.md exists
 - **failed**: Session finished, no PROPOSAL.md
@@ -114,7 +128,7 @@ running → done → approved
 
 ### Storage
 
-SQLite database at `.elmer/state.db`. Single table:
+SQLite database at `.elmer/state.db`:
 
 ```sql
 explorations (
@@ -123,13 +137,24 @@ explorations (
     archetype TEXT,            -- template used
     branch TEXT,               -- git branch name
     worktree_path TEXT,        -- absolute path to worktree
-    status TEXT,               -- running|done|approved|rejected|failed
+    status TEXT,               -- pending|running|done|approved|rejected|failed
     model TEXT,                -- sonnet|opus|haiku
     pid INTEGER,               -- OS process ID
     created_at TEXT,           -- ISO timestamp
     completed_at TEXT,         -- ISO timestamp
     merged_at TEXT,            -- ISO timestamp
-    proposal_summary TEXT      -- first few lines of PROPOSAL.md
+    proposal_summary TEXT,     -- first few lines of PROPOSAL.md
+    parent_id TEXT,            -- what spawned this (for follow-ups)
+    max_turns INTEGER,         -- turn limit for claude session
+    auto_approve INTEGER DEFAULT 0, -- 1 = trigger AI review on completion
+    on_approve TEXT,               -- shell command on approval ($ID, $TOPIC)
+    on_reject TEXT                 -- shell command on rejection ($ID, $TOPIC)
+)
+
+dependencies (
+    exploration_id TEXT,       -- the exploration that depends
+    depends_on_id TEXT,        -- the exploration it depends on
+    PRIMARY KEY (exploration_id, depends_on_id)
 )
 ```
 
@@ -139,10 +164,24 @@ Markdown templates with `$TOPIC` substitution. Resolved in order:
 1. `.elmer/archetypes/<name>.md` (project-local, user-customizable)
 2. Bundled `src/elmer/archetypes/<name>.md` (package defaults)
 
-Three bundled archetypes:
+Exploration archetypes (8):
 - **explore** — read-only analysis, no action bias
 - **explore-act** — analysis biased toward concrete proposals
 - **prototype** — write working code on the branch
+- **adr-proposal** — propose architecture decisions
+- **question-cluster** — explore clusters of related questions
+- **benchmark** — measure and evaluate
+- **dead-end-analysis** — analyze potential dead ends
+- **devil-advocate** — challenge assumptions and decisions
+
+Meta-prompt archetypes (7):
+- **generate-topics** — meta-prompt for AI topic generation
+- **prompt-gen** — meta-prompt for two-stage prompt generation
+- **review-gate** — prompt for auto-approve AI review
+- **select-archetype** — meta-prompt for AI archetype selection
+- **extract-insights** — meta-prompt for insight extraction
+- **mine-questions** — meta-prompt for question mining
+- **validate-invariants** — meta-prompt for invariant enforcement
 
 ### Git Integration
 
@@ -150,7 +189,7 @@ Three bundled archetypes:
 - Worktrees share the `.git` directory — instant creation, space-efficient
 - Approve merges into whatever branch HEAD currently points to
 - Reject deletes the branch and worktree
-- No remote operations (push/PR) in Phase 1
+- Remote operations (`elmer pr`) available for GitHub integration via `gh` CLI
 
 ### Claude Invocation
 
@@ -163,6 +202,8 @@ Runs in the worktree directory. Claude reads project files (CLAUDE.md, etc.) fro
 ## Planned Architecture [Phase 2+]
 
 ### Daemon Loop
+
+**Status: Implemented** — see `src/elmer/daemon.py`, `src/elmer/cli.py` (daemon command group)
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -185,6 +226,8 @@ Runs in the worktree directory. Claude reads project files (CLAUDE.md, etc.) fro
 Each cycle: harvest completed → gate (auto/human) → merge approved → schedule unblocked → generate new topics (if below threshold). Interval-driven with cost budget per cycle.
 
 ### Exploration DAG
+
+**Status: Implemented** — see `src/elmer/state.py` (dependencies table), `src/elmer/explore.py` (schedule_ready)
 
 Explorations can depend on each other. An exploration only starts when all dependencies are approved and merged.
 
@@ -222,6 +265,8 @@ The archetype becomes a hint to Stage 1, not a rigid template. Stage 1 can combi
 
 ### Auto-Approve Gate
 
+**Status: Implemented** — see `src/elmer/autoapprove.py`, `src/elmer/archetypes/review-gate.md`
+
 After exploration completes, if auto-approve is enabled:
 
 1. Spawn a second `claude -p` session with the proposal and criteria
@@ -233,11 +278,11 @@ Criteria configurable per-project in `.elmer/config.toml`.
 
 ### Cross-Project Architecture
 
+**Status: Implemented** — see `src/elmer/insights.py`
+
 ```
 ~/.elmer/
-├── config.toml          # Global config (default model, budget)
-├── insights.db          # Cross-project insight log
-└── projects.toml        # Registered projects (optional)
+├── insights.db          # Cross-project insight log (SQLite)
 
 /path/to/project/.elmer/
 ├── config.toml          # Project-specific overrides
@@ -247,7 +292,49 @@ Criteria configurable per-project in `.elmer/config.toml`.
 └── logs/
 ```
 
-Insights extracted from explorations that are generalizable get stored in `~/.elmer/insights.db`. Future explorations in any project get relevant insights injected into their prompt context.
+Insights extracted from explorations that are generalizable get stored in `~/.elmer/insights.db`. Future explorations in any project get relevant insights injected into their prompt context. Extraction is opt-in via `[insights] enabled = true`. Injection uses keyword-based relevance matching.
+
+### Question Mining
+
+**Status: Implemented** — see `src/elmer/questions.py`
+
+`elmer mine-questions` runs a synchronous `claude -p` session that reads project documentation and extracts open questions — both explicit (marked as TODO, TBD) and implicit (gaps, missing strategies). Questions are clustered by theme. With `--spawn`, clusters are converted to exploration topics.
+
+### Project Scaffolding
+
+**Status: Implemented** — see `src/elmer/scaffold.py`
+
+`elmer init --docs` scaffolds the five-document pattern (CLAUDE.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CONTEXT.md) that makes projects effective with Claude Code. Templates are Python format strings in `scaffold.py` with `{project_name}` substitution. Only creates files that don't already exist — safe to run repeatedly.
+
+### Template Evolution
+
+**Status: Implemented** — see `src/elmer/archstats.py`
+
+`elmer archetypes stats` shows archetype effectiveness metrics computed from existing exploration data: approval rate, rejection count, average cost, total explorations per archetype. `elmer archetypes list` shows all available archetypes (local + bundled). No new tables or tracking — everything is derived from the existing `explorations` table.
+
+### Attention Routing
+
+**Status: Implemented** — see `src/elmer/review.py` (`list_proposals_prioritized`, `_score_proposal`)
+
+`elmer review --prioritize` ranks pending proposals using a deterministic heuristic: dependents blocked (+30 each), staleness (+1/hour, max 24), small diff (+10), failed status (+5). Scores and reasons are displayed to help humans review the most impactful proposals first. No AI call — fast, free, transparent.
+
+### Document Invariant Enforcement
+
+**Status: Implemented** — see `src/elmer/invariants.py`, `src/elmer/archetypes/validate-invariants.md`
+
+`elmer validate` and `elmer approve --validate-invariants` spawn a synchronous `claude -p` session that checks document consistency (ADR counts, phase status, feature claims) and auto-fixes violations. Default rules match CLAUDE.md's "Document Invariants" section. Custom rules configurable in `[invariants] rules` in `config.toml`.
+
+### Multi-Project Dashboard
+
+**Status: Implemented** — see `src/elmer/dashboard.py`, `src/elmer/config.py` (registry functions)
+
+`elmer status --all-projects` aggregates exploration status across all registered Elmer projects. Projects are tracked in a global registry at `~/.elmer/projects.json`, automatically updated when `elmer init` runs or any command accesses `.elmer/`. The dashboard shows counts by status and total cost per project with a grand totals row when multiple projects are registered. Stale registry entries are pruned on read.
+
+### PR-Based Review
+
+**Status: Implemented** — see `src/elmer/pr.py`
+
+`elmer pr ID` pushes an exploration branch to the remote and creates a GitHub PR using the `gh` CLI. PROPOSAL.md content becomes the PR body. This integrates Elmer with existing code review workflows — explorations can be reviewed and discussed via GitHub's PR interface instead of (or in addition to) the local `elmer review` / `elmer approve` flow. The `gh` CLI is an optional dependency.
 
 ## Design Decisions
 
@@ -259,5 +346,19 @@ Full rationale in DECISIONS.md. Summary:
 - **ADR-004:** Click over argparse
 - **ADR-005:** Static templates before generated prompts
 - **ADR-006:** No daemon in Phase 1
+- **ADR-007:** Synchronous `claude -p` for meta-operations
+- **ADR-008:** JSON output format for cost extraction
+- **ADR-009:** AI archetype selection as a meta-operation
+- **ADR-010:** Daemon as composition layer
+- **ADR-011:** PID file for daemon coordination
+- **ADR-012:** Chain actions as shell commands
+- **ADR-013:** Global insights database at ~/.elmer/
+- **ADR-014:** Question mining as meta-operation
+- **ADR-015:** Five-document scaffolding as templates
+- **ADR-016:** Archetype stats from existing exploration data
+- **ADR-017:** Heuristic attention routing
+- **ADR-018:** Invariant enforcement as meta-operation
+- **ADR-019:** Global project registry for multi-project dashboard
+- **ADR-020:** PR creation via gh CLI
 
-*Last updated: Phase 1*
+*Last updated: Phase 4 complete — all features implemented*

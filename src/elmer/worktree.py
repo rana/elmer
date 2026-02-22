@@ -59,6 +59,17 @@ def branch_exists(project_dir: Path, branch_name: str) -> bool:
     return result.returncode == 0
 
 
+def get_branch_diff(project_dir: Path, branch_name: str) -> str:
+    """Get a diff stat of changes on a branch relative to its merge base."""
+    result = subprocess.run(
+        ["git", "diff", f"HEAD...{branch_name}", "--stat"],
+        cwd=str(project_dir),
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else "(diff unavailable)"
+
+
 def get_project_root() -> Path:
     """Find the git root of the current directory."""
     result = subprocess.run(

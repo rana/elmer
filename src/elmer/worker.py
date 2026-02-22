@@ -1,9 +1,61 @@
 """Claude CLI invocation for exploration sessions."""
 
+import json
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
+
+
+@dataclass
+class ClaudeResult:
+    """Result from a claude -p invocation."""
+
+    output: str
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
+    num_turns: Optional[int] = None
+    is_error: bool = False
+
+
+def _parse_json_result(raw: str) -> ClaudeResult:
+    """Parse JSON output from claude -p --output-format json.
+
+    Expected format: a JSON object with fields like 'result', 'cost_usd',
+    'num_turns', 'is_error', etc. Falls back to treating raw as plain text
+    if JSON parsing fails.
+    """
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        # Not JSON — treat as plain text output
+        return ClaudeResult(output=raw.strip())
+
+    # Handle both single-object and streaming (last object wins) formats
+    if isinstance(data, list):
+        # Streaming: take the last result-type object
+        for obj in reversed(data):
+            if isinstance(obj, dict) and obj.get("type") == "result":
+                data = obj
+                break
+        else:
+            # No result object found; use last item or fall back
+            data = data[-1] if data else {}
+
+    if not isinstance(data, dict):
+        return ClaudeResult(output=raw.strip())
+
+    return ClaudeResult(
+        output=str(data.get("result", raw)).strip(),
+        input_tokens=data.get("input_tokens"),
+        output_tokens=data.get("output_tokens"),
+        cost_usd=data.get("cost_usd") or data.get("total_cost_usd"),
+        num_turns=data.get("num_turns"),
+        is_error=bool(data.get("is_error", False)),
+    )
 
 
 def check_claude_available() -> bool:
@@ -17,6 +69,7 @@ def spawn_claude(
     model: str,
     log_path: Path,
     max_turns: int = 50,
+    budget_usd: Optional[float] = None,
 ) -> int:
     """Spawn a claude -p session in the background. Returns PID."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,7 +80,10 @@ def spawn_claude(
         "-p", prompt,
         "--model", model,
         "--max-turns", str(max_turns),
+        "--output-format", "json",
     ]
+    if budget_usd is not None:
+        cmd.extend(["--max-budget-usd", str(budget_usd)])
 
     proc = subprocess.Popen(
         cmd,
@@ -39,6 +95,61 @@ def spawn_claude(
 
     log_fd.close()
     return proc.pid
+
+
+def run_claude(
+    prompt: str,
+    cwd: Path,
+    model: str,
+    max_turns: int = 5,
+    budget_usd: Optional[float] = None,
+) -> ClaudeResult:
+    """Run a claude -p session synchronously. Returns ClaudeResult."""
+    cmd = [
+        "claude",
+        "-p", prompt,
+        "--model", model,
+        "--max-turns", str(max_turns),
+        "--output-format", "json",
+    ]
+    if budget_usd is not None:
+        cmd.extend(["--max-budget-usd", str(budget_usd)])
+
+    result = subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        raise RuntimeError(f"claude exited with code {result.returncode}: {stderr}")
+
+    raw = result.stdout.strip()
+    if not raw:
+        raise RuntimeError("claude produced no output")
+
+    return _parse_json_result(raw)
+
+
+def parse_log_costs(log_path: Path) -> Optional[ClaudeResult]:
+    """Parse a completed session's JSON log file for cost data.
+
+    Returns ClaudeResult with cost fields populated, or None on failure.
+    Best-effort: cost tracking never blocks exploration flow.
+    """
+    try:
+        raw = log_path.read_text().strip()
+        if not raw:
+            return None
+        result = _parse_json_result(raw)
+        # Only return if we got some cost data
+        if result.cost_usd is not None or result.input_tokens is not None:
+            return result
+        return None
+    except (OSError, ValueError):
+        return None
 
 
 def is_running(pid: int) -> bool:
