@@ -19,6 +19,44 @@ Elmer is an autonomous research tool that uses git branches as isolation boundar
         └───────────┘  └───────────┘
 ```
 
+## Philosophy
+
+### What Elmer Is
+
+A **persistent autonomous research layer** between you and your projects. Claude Code sessions are ephemeral — you open them, work, close them. Elmer persists. It remembers what was explored, what was approved, what failed, what chains are in progress. The closest analogy is a research assistant who works while you sleep, leaves proposals on your desk, and starts the next investigation based on what you approved yesterday.
+
+Git branches are the desk. PROPOSAL.md is the memo. `elmer approve` is your signature.
+
+### Why Elmer Exists
+
+Two observations led here:
+
+1. **Claude Code sessions are powerful but ephemeral.** Each session starts fresh. Research insights, design proposals, and exploratory work die with the session unless manually preserved. Elmer makes exploration persistent — branches survive sessions, proposals accumulate, research trees grow across days.
+
+2. **Multiple projects share a cognition pattern.** Mercury (autonomous trading) and SRF (spiritual teachings portal) both use the same five-document structure: CONTEXT.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CLAUDE.md. Both have `/explore` commands with identical templates. Elmer operationalizes this pattern — it reads those documents for context, explores topics autonomously, and produces proposals that fit the project's existing structure.
+
+### Core Principles
+
+**Git is the coordination layer.** Not a database, not a message queue, not a shared filesystem. Branches provide isolation. Merge provides integration. Worktrees provide parallelism. These are simple primitives with decades of reliability behind them.
+
+**Demonstrate value before adding complexity.** Phase 1 proves the manual loop works. The daemon exists only if manual exploration is useful. Auto-approve exists only if human-gated exploration is useful. Each phase justifies the next. This mirrors Mercury's own principle: "demonstrate intelligence before deploying capital."
+
+**Project-aware but not project-prescriptive.** Elmer reads CLAUDE.md, CONTEXT.md, DESIGN.md if they exist. It works without them. The five-document pattern is a convention that makes Elmer more effective, not a requirement Elmer imposes.
+
+**Templates are scaffolding, not the destination.** Phase 1 uses static archetypes with `$TOPIC` substitution. The real architecture is two-stage prompt generation (Phase 2) where AI generates the optimal exploration prompt given the project's state and the topic's nature. Static templates are debuggable and predictable. Generated prompts are adaptive and project-aware. The transition is deliberate.
+
+**Conservative autonomy.** Auto-approve is opt-in, default off. The AI review gate rejects when uncertain. Better to queue 5 proposals for human review than to merge 1 bad proposal autonomously. Trust is built incrementally.
+
+### The Deeper Pattern
+
+Elmer changes what a "session" means. Currently you open Claude Code, work, close it. With Elmer running continuously (Phase 3), Claude Code becomes the interactive layer for steering and review, while Elmer is the autonomous layer that runs between sessions. The two compose: you steer Elmer from within Claude Code, and Elmer spawns Claude Code sessions as workers.
+
+The archetype library is a form of institutional memory. Which templates produce the best proposals? Which topics lead to productive chains? This is meta-learning about how to use AI effectively, accumulated across projects and time.
+
+### Naming
+
+Elmer Fudd. Persistent hunter. Homage to the [Ralph Wiggum](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) naming tradition for autonomous Claude Code tools. Ralph uses a Stop hook for iterative self-referential loops. Elmer uses git branches for parallel autonomous exploration. Different shapes, same lineage.
+
 ## Architecture
 
 ### Modules
@@ -213,28 +251,13 @@ Insights extracted from explorations that are generalizable get stored in `~/.el
 
 ## Design Decisions
 
-### ADR-001: Git Worktrees Over Directory Copying
+Full rationale in DECISIONS.md. Summary:
 
-Worktrees share `.git`, are instant to create, and space-efficient. Directory copying wastes disk, duplicates git history, and creates confusion about which copy is canonical. Worktrees provide real branch isolation with minimal overhead.
-
-### ADR-002: Background Processes Over Agent Teams
-
-Agent teams are session-scoped and don't persist across Claude Code sessions. Elmer explorations should outlive any single session — start explorations, close your terminal, review tomorrow. Background `claude -p` processes provide this persistence.
-
-### ADR-003: SQLite Over JSON State Files
-
-Concurrent explorations writing to a single JSON file risk corruption. SQLite handles concurrent access correctly via WAL mode. It also supports queries (find all explorations by status) without loading everything into memory.
-
-### ADR-004: Click Over Argparse
-
-Click produces cleaner subcommand handling, better help text, and composable decorators. The single dependency is worth the ergonomic improvement for a CLI tool.
-
-### ADR-005: Static Templates Before Generated Prompts
-
-Phase 1 uses static archetype templates with `$TOPIC` substitution. Two-stage prompt generation (AI generates the prompt, then AI executes it) is deferred to Phase 2. Static templates are debuggable, predictable, and sufficient for initial use.
-
-### ADR-006: No Daemon in Phase 1
-
-The daemon (continuous loop: generate topics → spawn explorations → harvest → gate) adds complexity and requires cost controls. Phase 1 proves the core loop manually. If the manual loop is useful, the daemon is justified in Phase 2.
+- **ADR-001:** Git worktrees over directory copying
+- **ADR-002:** Background `claude -p` over Agent Teams
+- **ADR-003:** SQLite over JSON state files
+- **ADR-004:** Click over argparse
+- **ADR-005:** Static templates before generated prompts
+- **ADR-006:** No daemon in Phase 1
 
 *Last updated: Phase 1*
