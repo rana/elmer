@@ -161,6 +161,12 @@ CONTEXT_MD = """\
 
 (Target users or audience.)
 
+## Project Methodology
+
+This project is maintained through AI-human collaboration. The documentation volume — CLAUDE.md, CONTEXT.md, DESIGN.md, DECISIONS.md, ROADMAP.md — is intentional: it is the project's institutional memory, enabling continuity across AI context windows where no persistent memory exists. Each document serves a distinct role (instructions, context, architecture, rationale, timeline). Together they allow any new session to understand the full project state without archeological effort.
+
+(Describe the AI-human collaboration model for this project: what decisions does the human make? What does the AI execute? Where is the boundary?)
+
 ## Key Constraints
 
 (Non-negotiable constraints: technical, business, time.)

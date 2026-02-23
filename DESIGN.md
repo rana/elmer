@@ -58,6 +58,7 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `dashboard.py` | Multi-project status aggregation |
 | `batch.py` | Topic list file parsing for batch command |
 | `pr.py` | PR creation via gh CLI |
+| `mcp_server.py` | MCP server — structured tool access over stdio |
 
 ### Data Flow
 
@@ -274,8 +275,34 @@ Elmer archetypes and Claude Code skills overlap in analysis methodology but serv
 
 The overlap is tolerated. No shared template layer — they diverge independently because they serve different runtimes. `elmer init --skills` generates project-specific skills from doc signals.
 
+### MCP Server
+
+`mcp_server.py` exposes Elmer state as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP).
+
+**Read-only tools:**
+
+| Tool | Wraps | Returns |
+|------|-------|---------|
+| `elmer_status` | `state.list_explorations()` | Explorations + status summary |
+| `elmer_review` | `state.get_exploration()` + PROPOSAL.md | Proposal content + metadata + dependencies |
+| `elmer_costs` | `state.list_explorations()` + `state.get_all_costs()` | Cost data per exploration + meta-ops + totals |
+| `elmer_tree` | `state.list_explorations()` + `state.get_dependencies()` | Recursive dependency tree |
+| `elmer_archetypes` | `config.ARCHETYPES_DIR` glob + optional stats | Archetype list with optional approval rates |
+| `elmer_insights` | `insights.list_all_insights()` / `get_relevant_insights()` | Cross-project insights |
+
+**Mutation tools:**
+
+| Tool | Wraps | Effect |
+|------|-------|--------|
+| `elmer_explore` | `explore.start_exploration()` | Creates branch, spawns background claude session |
+| `elmer_approve` | `gate.approve_exploration()` | Merges branch, cleans up, unblocks dependents |
+| `elmer_reject` | `gate.reject_exploration()` | Deletes branch and worktree |
+| `elmer_cancel` | `gate.cancel_exploration()` | Stops process, deletes branch and worktree |
+
+Each tool opens a DB connection per call, matching the CLI pattern. Mutation tools catch `SystemExit` from gate functions (which use `sys.exit(1)` for validation errors) and convert to structured error responses.
+
 ## Design Decisions
 
-23 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+24 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-23, crystallization — merged architecture sections, removed duplication*
+*Last updated: 2026-02-23, MCP server Phase 2 — added mutation tools*

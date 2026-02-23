@@ -28,6 +28,8 @@ Features discussed but not committed:
 - **Web UI for review** — local web server showing proposals with rich formatting. CLI review is sufficient for now.
 - **Elmer-on-Elmer recursion** — Elmer running explorations on its own codebase.
 - **Agent Teams integration** — within a single exploration, the Claude session could use Agent Teams for parallel sub-tasks. Emergent from claude's own capabilities, no Elmer changes needed.
-- **MCP server** — expose Elmer state as an MCP tool for other AI systems to query.
+## Phase 5: Integration — COMPLETE
 
-*Last updated: 2026-02-23, crystallization — collapsed completed phases*
+MCP server exposing Elmer state and operations as structured tools (ADR-024). 10 tools over stdio JSON-RPC: 6 read-only (status, review, costs, tree, archetypes, insights) + 4 mutation (explore, approve, reject, cancel).
+
+*Last updated: 2026-02-23, MCP server Phase 2 complete*

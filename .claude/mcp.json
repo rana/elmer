@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "elmer": {
+      "command": "elmer",
+      "args": ["mcp"]
+    }
+  }
+}

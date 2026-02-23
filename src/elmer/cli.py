@@ -1164,3 +1164,24 @@ def daemon_stop():
     import signal
     os.kill(pid, signal.SIGTERM)
     click.echo(f"Sent SIGTERM to daemon (PID {pid}). It will stop after the current cycle.")
+
+
+@cli.command("mcp")
+def mcp_cmd():
+    """Start the MCP server for Claude Code integration.
+
+    Exposes Elmer state as structured MCP tools over stdio JSON-RPC.
+    Configure in Claude Code via .claude/mcp.json:
+
+    \b
+        {
+          "mcpServers": {
+            "elmer": {
+              "command": "uv",
+              "args": ["run", "elmer", "mcp"]
+            }
+          }
+        }
+    """
+    from .mcp_server import main
+    main()

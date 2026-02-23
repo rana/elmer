@@ -4,13 +4,14 @@
 
 Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, rules, conventions
-2. **DESIGN.md** — architecture, data model, module responsibilities
-3. **DECISIONS.md** — ADRs with full rationale (23 recorded)
-4. **ROADMAP.md** — phase history and deferred features
-5. **README.md** — user-facing docs, install, full command reference
-6. **GUIDE.md** — practical usage playbook, workflows, patterns
+2. **CONTEXT.md** — project methodology, collaboration model, current state
+3. **DESIGN.md** — architecture, data model, module responsibilities
+4. **DECISIONS.md** — ADRs with full rationale (24 recorded)
+5. **ROADMAP.md** — phase history and deferred features
+6. **README.md** — user-facing docs, install, full command reference
+7. **GUIDE.md** — practical usage playbook, workflows, patterns
 
-Elmer is an autonomous research tool that uses git branches as isolation boundaries and Claude Code sessions (`claude -p`) as workers. All four development phases complete.
+Elmer is an autonomous research tool that uses git branches as isolation boundaries and Claude Code sessions (`claude -p`) as workers. All four development phases complete. Phase 5 (Integration) in progress.
 
 ## Tech Stack
 
@@ -20,6 +21,7 @@ Elmer is an autonomous research tool that uses git branches as isolation boundar
 - **Git worktrees** for branch isolation — no directory copying
 - **`claude -p`** (Claude Code print mode) for headless exploration sessions
 - **tomllib** (stdlib 3.11+) for config
+- **`mcp`** (FastMCP) for MCP server — structured tool access over stdio
 - No external database, no web framework, no async — deliberate simplicity
 
 ## Commands
@@ -46,6 +48,7 @@ Full options and examples in README.md. Core subcommands:
 | `elmer daemon` | Continuous operation (`--auto-approve --generate` for full autonomy) |
 | `elmer pr ID` | Push branch, create GitHub PR |
 | `elmer clean` | Remove finished worktrees + state entries |
+| `elmer mcp` | Start MCP server for Claude Code integration |
 
 ## Rules
 
@@ -73,6 +76,7 @@ Full options and examples in README.md. Core subcommands:
 | File | Role | Update when... |
 |------|------|---------------|
 | **CLAUDE.md** | Instructions | Rules change, tech stack changes, ADR count changes |
+| **CONTEXT.md** | Methodology & context | Project purpose evolves, collaboration model changes, current state shifts |
 | **DESIGN.md** | Architecture | Architecture changes, modules added/removed |
 | **DECISIONS.md** | ADR registry | Any non-trivial design choice (revise in place, git is the audit trail) |
 | **ROADMAP.md** | Phase history | Deferred features added or resolved |
@@ -86,6 +90,7 @@ Each piece of information lives in one place. Other files reference, not duplica
 | Information | Canonical home |
 |-------------|---------------|
 | Tech stack | CLAUDE.md |
+| Project methodology & context | CONTEXT.md |
 | Full command reference | README.md |
 | Module responsibilities | DESIGN.md |
 | ADR list + rationale | DECISIONS.md |
@@ -95,7 +100,7 @@ Each piece of information lives in one place. Other files reference, not duplica
 
 ### Per-Session Checklist
 
-1. If you added ADRs → update count in CLAUDE.md Orientation ("23 recorded") and DECISIONS.md header
+1. If you added ADRs → update count in CLAUDE.md Orientation ("24 recorded") and DECISIONS.md header
 2. If architecture changed → update DESIGN.md
 3. If commands changed → update README.md
 4. Update last-updated footer on every modified document
@@ -106,4 +111,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-23, added cancel command, cycle detection, chain rejection warnings*
+*Last updated: 2026-02-23, added CONTEXT.md with project methodology*

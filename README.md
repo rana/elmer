@@ -87,6 +87,7 @@ elmer clean
 | `elmer status --all-projects` | Show status across all registered projects |
 | `elmer pr ID` | Push branch and create GitHub PR |
 | `elmer clean` | Remove finished worktrees and state entries |
+| `elmer mcp` | Start the MCP server for Claude Code integration |
 
 ## Options
 
@@ -265,7 +266,31 @@ These skills provide interactive analysis lenses (`/mission-align`, `/cultural-l
 
 ## Using Elmer from Claude Code
 
-Elmer is a CLI tool. The simplest way to use it from within a Claude Code session is to call it via the terminal:
+### MCP Server (Recommended)
+
+The MCP server exposes Elmer's state as structured JSON tools that Claude Code can call directly — no text parsing needed.
+
+Add to your `.claude/mcp.json` (project-level) or `~/.claude/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "elmer": {
+      "command": "uv",
+      "args": ["run", "elmer", "mcp"]
+    }
+  }
+}
+```
+
+This gives Claude Code 10 tools, all returning structured JSON:
+
+- **Read-only:** `elmer_status`, `elmer_review`, `elmer_costs`, `elmer_tree`, `elmer_archetypes`, `elmer_insights`
+- **Mutation:** `elmer_explore`, `elmer_approve`, `elmer_reject`, `elmer_cancel`
+
+### CLI Fallback
+
+Elmer also works as a regular CLI tool from within Claude Code:
 
 ```bash
 elmer explore "evaluate caching strategies"
@@ -274,9 +299,7 @@ elmer review evaluate-caching-strategies
 elmer approve evaluate-caching-strategies
 ```
 
-Claude Code learns the commands from the project's `CLAUDE.md`, which documents the full interface. No MCP server or special integration is needed — Elmer is designed to be called as a regular CLI tool.
-
-Note that `elmer explore` spawns a background `claude -p` process, so running it from within Claude Code means nested Claude Code invocations. This works fine (they are separate processes) but be aware of the cost and concurrency implications.
+Claude Code learns the commands from the project's `CLAUDE.md`. Note that `elmer explore` spawns a background `claude -p` process — nested Claude Code invocations work fine but be aware of cost and concurrency implications.
 
 ## Name
 

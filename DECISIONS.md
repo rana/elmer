@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-23 ADRs recorded.
+24 ADRs recorded.
 
 ## Domain Index
 
@@ -31,6 +31,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-021 | CLI | Topic list files with batch command |
 | ADR-022 | Integration | Claude Code skill scaffolding as Elmer feature |
 | ADR-023 | Governance | Mutable ADRs with git audit trail |
+| ADR-024 | Integration | MCP server for structured tool access |
 
 ---
 
@@ -266,4 +267,16 @@ Adopted from the SRF Yogananda Teachings project's ADR governance model.
 
 **Alternatives considered:** Keep append-only (status quo — adds overhead, creates supersession chains), hybrid approach where only "major" reversals get new ADRs (subjective threshold, worst of both worlds).
 
-*Last updated: 2026-02-23, crystallization — updated ADR-018 stale reference*
+## ADR-024: MCP Server for Structured Tool Access
+
+**Decision:** Expose Elmer state and operations as MCP tools via a stdio JSON-RPC server (`elmer mcp`), using Anthropic's `mcp` Python SDK (FastMCP).
+
+Elmer's CLI returns formatted text tables that Claude Code must parse as unstructured text — lossy, brittle, and prone to misinterpretation. The MCP server wraps the same module functions (`state.py`, `costs.py`, `insights.py`, `config.py`, `explore.py`, `gate.py`) and returns structured JSON that Claude Code reasons about natively.
+
+10 tools total: 6 read-only (status, review, costs, tree, archetypes, insights) + 4 mutation (explore, approve, reject, cancel). Mutation tools catch `SystemExit` from gate functions (which use `sys.exit(1)` for validation) and convert to structured error responses — the server never crashes.
+
+The server is a presentation layer. Each tool opens a DB connection, queries, closes, and returns JSON — the same per-call pattern as CLI commands. No connection pooling, no persistent state between tool calls.
+
+**Alternatives considered:** REST API (adds web framework dependency, requires port management, conflicts with no-web-framework constraint), enhancing CLI with `--json` output flags (per-command work, doesn't provide tool discovery or schema introspection that MCP gives for free).
+
+*Revised: 2026-02-23, added Phase 2 mutation tools*
