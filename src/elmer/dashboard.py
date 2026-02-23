@@ -1,5 +1,6 @@
 """Multi-project dashboard — aggregate status across all registered projects."""
 
+import shutil
 from pathlib import Path
 
 import click
@@ -16,8 +17,12 @@ def show_all_projects() -> None:
         click.echo("Run 'elmer init' in your projects to register them.")
         return
 
-    click.echo(f"{'PROJECT':<30} {'RUN':>4} {'DONE':>5} {'PEND':>5} {'APPR':>5} {'REJ':>5} {'FAIL':>5} {'TOTAL':>6} {'COST':>10}")
-    click.echo("-" * 90)
+    # Fixed columns: run(4)+done(5)+pend(5)+appr(5)+rej(5)+fail(5)+total(6)+cost(10)+gaps(7) = 52
+    tw = shutil.get_terminal_size((90, 24)).columns
+    name_w = max(16, tw - 52)
+
+    click.echo(f"{'PROJECT':<{name_w}} {'RUN':>4} {'DONE':>5} {'PEND':>5} {'APPR':>5} {'REJ':>5} {'FAIL':>5} {'TOTAL':>6} {'COST':>10}")
+    click.echo("-" * tw)
 
     grand_totals = {"running": 0, "done": 0, "pending": 0, "approved": 0,
                     "rejected": 0, "failed": 0, "total": 0, "cost": 0.0}
@@ -25,15 +30,15 @@ def show_all_projects() -> None:
     for project_dir in projects:
         elmer_dir = project_dir / ".elmer"
         name = project_dir.name
-        if len(name) > 28:
-            name = name[:27] + ".."
+        if len(name) > name_w:
+            name = name[: name_w - 2] + ".."
 
         try:
             conn = state.get_db(elmer_dir)
             explorations = state.list_explorations(conn)
             conn.close()
         except Exception:
-            click.echo(f"{name:<30} (error reading state)")
+            click.echo(f"{name:<{name_w}} (error reading state)")
             continue
 
         counts = {"running": 0, "done": 0, "pending": 0, "approved": 0,
@@ -51,7 +56,7 @@ def show_all_projects() -> None:
         total = len(explorations)
 
         click.echo(
-            f"{name:<30} {counts['running']:>4} {counts['done']:>5} "
+            f"{name:<{name_w}} {counts['running']:>4} {counts['done']:>5} "
             f"{counts['pending']:>5} {counts['approved']:>5} {counts['rejected']:>5} "
             f"{counts['failed']:>5} {total:>6} "
             f"{'$' + f'{total_cost:.2f}':>10}"
@@ -63,10 +68,10 @@ def show_all_projects() -> None:
         grand_totals["cost"] += total_cost
 
     if len(projects) > 1:
-        click.echo("-" * 90)
+        click.echo("-" * tw)
         cost_str = "$" + f"{grand_totals['cost']:.2f}"
         click.echo(
-            f"{'TOTAL':<30} {grand_totals['running']:>4} {grand_totals['done']:>5} "
+            f"{'TOTAL':<{name_w}} {grand_totals['running']:>4} {grand_totals['done']:>5} "
             f"{grand_totals['pending']:>5} {grand_totals['approved']:>5} "
             f"{grand_totals['rejected']:>5} {grand_totals['failed']:>5} "
             f"{grand_totals['total']:>6} "

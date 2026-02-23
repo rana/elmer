@@ -1,5 +1,6 @@
 """Proposal review — read proposals, display status and summaries."""
 
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,6 +9,18 @@ from typing import Callable, Optional
 import click
 
 from . import autoapprove, explore as explore_mod, state, worker, worktree as wt_mod
+
+
+def _term_width() -> int:
+    """Get terminal width, defaulting to 82 for non-interactive contexts."""
+    return shutil.get_terminal_size((82, 24)).columns
+
+
+def _truncate(text: str, width: int) -> str:
+    """Truncate text with '..' suffix if it exceeds width."""
+    if len(text) > width:
+        return text[: width - 2] + ".."
+    return text
 
 
 def _age(iso_timestamp: str) -> str:
@@ -147,18 +160,23 @@ def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
         "failed": "!",
     }
 
+    # Column layout — give ID all remaining space after fixed columns
+    # Fixed: icon(2) + status(10) + archetype(14) + model(8) + age(6) + gaps(4) = 44
+    tw = _term_width()
+    id_w = max(20, tw - 44)
+    total_w = id_w + 44
+
     # Header
-    click.echo(
-        f"{'ID':<40} {'STATUS':<10} {'ARCHETYPE':<14} {'MODEL':<8} {'AGE':<10}"
-    )
-    click.echo("-" * 82)
+    click.echo(f"{'ID':<{id_w}} {'STATUS':<10} {'ARCHETYPE':<14} {'MODEL':<8} {'AGE':<6}")
+    click.echo("-" * total_w)
 
     for exp in explorations:
         icon = status_icons.get(exp["status"], " ")
         age = _age(exp["created_at"])
+        eid = _truncate(exp["id"], id_w - 2)  # -2 for icon + space
         click.echo(
-            f"{icon} {exp['id']:<38} {exp['status']:<10} "
-            f"{exp['archetype']:<14} {exp['model']:<8} {age:<10}"
+            f"{icon} {eid:<{id_w - 2}} {exp['status']:<10} "
+            f"{exp['archetype']:<14} {exp['model']:<8} {age:<6}"
         )
 
     # Legend
@@ -178,12 +196,17 @@ def list_proposals(elmer_dir: Path) -> None:
         click.echo("No proposals pending review.")
         return
 
-    click.echo(f"{'ID':<40} {'TOPIC':<60}")
-    click.echo("-" * 100)
+    tw = _term_width()
+    id_w = min(40, max(20, tw // 3))
+    topic_w = max(20, tw - id_w - 2)
+
+    click.echo(f"{'ID':<{id_w}} {'TOPIC':<{topic_w}}")
+    click.echo("-" * tw)
 
     for exp in explorations:
-        topic = exp["topic"][:58] + ".." if len(exp["topic"]) > 60 else exp["topic"]
-        click.echo(f"  {exp['id']:<38} {topic}")
+        eid = _truncate(exp["id"], id_w - 2)  # -2 for leading indent
+        topic = _truncate(exp["topic"], topic_w)
+        click.echo(f"  {eid:<{id_w - 2}} {topic}")
 
     click.echo(f"\n{len(explorations)} proposal(s) ready for review.")
     click.echo("Use 'elmer review <id>' to read a proposal.")
@@ -296,17 +319,19 @@ def list_proposals_prioritized(elmer_dir: Path, project_dir: Path) -> None:
 
     scored.sort(key=lambda x: -x[0])
 
-    click.echo(f"{'#':<4} {'PRIORITY':>8} {'ID':<36} {'STATUS':<8} {'AGE':<8} {'REASONS'}")
-    click.echo("-" * 100)
+    # Fixed: #(4) + priority(8) + status(8) + age(8) + gaps(3) + reasons(~20) = 51
+    tw = _term_width()
+    id_w = max(20, tw - 51)
+
+    click.echo(f"{'#':<4} {'PRIORITY':>8} {'ID':<{id_w}} {'STATUS':<8} {'AGE':<8} {'REASONS'}")
+    click.echo("-" * tw)
 
     for i, (score, reasons, exp) in enumerate(scored, 1):
         age = _age(exp["created_at"])
         reason_str = ", ".join(reasons) if reasons else "-"
-        eid = exp["id"]
-        if len(eid) > 34:
-            eid = eid[:33] + ".."
+        eid = _truncate(exp["id"], id_w)
         click.echo(
-            f"{i:<4} {score:>8.0f} {eid:<36} {exp['status']:<8} {age:<8} {reason_str}"
+            f"{i:<4} {score:>8.0f} {eid:<{id_w}} {exp['status']:<8} {age:<8} {reason_str}"
         )
 
     click.echo(f"\n{len(scored)} proposal(s) ranked by review priority.")
