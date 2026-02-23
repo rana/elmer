@@ -1,6 +1,6 @@
 # Elmer — Roadmap
 
-All four phases complete. Git history has the full delivery record.
+All five phases complete. Git history has the full delivery record.
 
 ## Phase 1: Core Loop — COMPLETE
 
@@ -27,9 +27,9 @@ Features discussed but not committed:
 - **Shared template library** — single source for analysis methodology shared between Elmer archetypes and Claude Code skills. Deferred because drift between the two systems is tolerable and the indirection cost exceeds the sync benefit.
 - **Web UI for review** — local web server showing proposals with rich formatting. CLI review is sufficient for now.
 - **Elmer-on-Elmer recursion** — Elmer running explorations on its own codebase.
-- **Agent Teams integration** — within a single exploration, the Claude session could use Agent Teams for parallel sub-tasks. Emergent from claude's own capabilities, no Elmer changes needed.
+- **Agent Teams integration** — within a single exploration, the Claude session could use Agent Teams for parallel sub-tasks. Partially addressed by ADR-026 (custom subagents). Agent Teams remain session-scoped and don't persist, so full integration is deferred.
 ## Phase 5: Integration — COMPLETE
 
-MCP server exposing Elmer state and operations as structured tools (ADR-024). 10 tools over stdio JSON-RPC: 6 read-only (status, review, costs, tree, archetypes, insights) + 4 mutation (explore, approve, reject, cancel).
+MCP server exposing Elmer state and operations as structured tools (ADR-024). 10 tools over stdio JSON-RPC: 6 read-only (status, review, costs, tree, archetypes, insights) + 4 mutation (explore, approve, reject, cancel). Custom subagent integration converting all archetypes and meta-operations to Claude Code subagents with tool restrictions and model selection (ADR-026).
 
-*Last updated: 2026-02-23, MCP server Phase 2 complete*
+*Last updated: 2026-02-23, custom subagent integration (ADR-026)*
