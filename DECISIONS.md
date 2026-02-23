@@ -1,8 +1,8 @@
 # Elmer — Decisions
 
-Architecture Decision Records. Append-only — never edit past entries. If a decision is superseded, record a new ADR with rationale.
+Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-22 ADRs recorded.
+23 ADRs recorded.
 
 ## Domain Index
 
@@ -13,7 +13,7 @@ Architecture Decision Records. Append-only — never edit past entries. If a dec
 | ADR-003 | Storage | SQLite over JSON state files |
 | ADR-004 | CLI | Click over argparse |
 | ADR-005 | Prompts | Static templates before generated prompts |
-| ADR-006 | Architecture | No daemon in Phase 1 |
+| ADR-006 | Architecture | Daemon deferred to Phase 3 |
 | ADR-007 | Process | Synchronous `claude -p` for meta-operations |
 | ADR-008 | Process | JSON output format for cost extraction |
 | ADR-009 | Prompts | AI archetype selection as a meta-operation |
@@ -30,6 +30,7 @@ Architecture Decision Records. Append-only — never edit past entries. If a dec
 | ADR-020 | Integration | PR creation via gh CLI |
 | ADR-021 | CLI | Topic list files with batch command |
 | ADR-022 | Integration | Claude Code skill scaffolding as Elmer feature |
+| ADR-023 | Governance | Mutable ADRs with git audit trail |
 
 ---
 
@@ -73,13 +74,15 @@ Static templates are debuggable, predictable, and sufficient for initial use. Tw
 
 **Alternatives considered:** Jinja templating (overkill), AI-generated prompts from day one (premature complexity).
 
-## ADR-006: No Daemon in Phase 1
+## ADR-006: Daemon Deferred to Phase 3
 
-**Decision:** No daemon or continuous loop in Phase 1. Manual CLI only.
+**Decision:** The daemon was deferred from Phase 1, implemented in Phase 3 after the manual loop and intelligence features proved useful. The daemon is a composition layer (ADR-010) that calls existing functions in a loop — no new execution model.
 
-The daemon (continuous loop: generate topics → spawn explorations → harvest → gate) adds complexity and requires cost controls. Phase 1 proves the core loop manually. If the manual loop is useful, the daemon is justified in Phase 2.
+The phased approach validated the core principle: "Demonstrate value before adding complexity." Phase 1 proved the manual loop. Phase 2 added intelligence (topic generation, auto-approve). Phase 3 composed them into the daemon. Each phase justified the next.
 
 **Alternatives considered:** Ship daemon immediately (risk: overbuilt before proving value).
+
+*Revised: 2026-02-23, updated to reflect implemented state (ADR-023)*
 
 ## ADR-007: Synchronous `claude -p` for Meta-Operations
 
@@ -251,4 +254,16 @@ This positions Elmer as infrastructure that makes both autonomous exploration (v
 
 **Alternatives considered:** Shared template library at `~/.config/analysis-lenses/` with both systems reading from one source (adds a third location to maintain, indirection cost exceeds drift cost), `elmer sync-skills` command to regenerate skills on demand (implies ongoing sync obligation — generation at init time is sufficient), Claude Code plugin (couples Elmer to Claude Code's evolving plugin API, constrains Elmer's process model).
 
-*Last updated: ADR-022 added — Claude Code skill scaffolding*
+## ADR-023: Mutable ADRs with Git Audit Trail
+
+**Decision:** ADRs are mutable living documents. Update them directly — add, revise, or replace content in place. Do not create superseding ADRs or use withdrawal ceremony. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
+
+The previous approach (append-only, new ADR to supersede old) adds ceremony without value at Elmer's scale (22 ADRs). It creates supersession chains that are harder to follow than simply reading the current state of each ADR. Git provides a complete, queryable audit trail via `git log -p DECISIONS.md` — maintaining a parallel audit trail in the document itself is redundant.
+
+This aligns with how DESIGN.md is already treated (mutable, update to reflect actual decisions) and eliminates the philosophical inconsistency between the two documents.
+
+Adopted from the SRF Yogananda Teachings project's ADR governance model.
+
+**Alternatives considered:** Keep append-only (status quo — adds overhead, creates supersession chains), hybrid approach where only "major" reversals get new ADRs (subjective threshold, worst of both worlds).
+
+*Last updated: ADR-023 added — mutable ADR governance*

@@ -12,7 +12,7 @@ $TOPIC
 Examine documentation health:
 - Are documented maintenance protocols being followed in practice?
 - Are "Status: Implemented" or equivalent markers being added as features ship?
-- Are architectural decisions treated as immutable (superseded, not silently edited)?
+- Are architectural decisions maintained as living documents with revision notes and git audit trail?
 - Is the documentation-code transition protocol being respected?
 - Would a new contributor understand the project from these documents alone?
 - Is there redundancy across documents that risks divergence?

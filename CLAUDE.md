@@ -11,7 +11,7 @@ Read in this order:
 
 Elmer is an autonomous research tool that uses git branches as isolation boundaries and Claude Code sessions (`claude -p`) as workers. It works with any git project. Named after Elmer Fudd — persistent hunter, homage to the Ralph Wiggum naming tradition.
 
-**Current state:** Phase 4 complete. All features implemented: project scaffolding, template evolution, attention routing, document invariant enforcement, multi-project dashboard, PR-based review, batch topic lists, Claude Code skill scaffolding. 22 ADRs recorded.
+**Current state:** Phase 4 complete. All features implemented: project scaffolding, template evolution, attention routing, document invariant enforcement, multi-project dashboard, PR-based review, batch topic lists, Claude Code skill scaffolding. 23 ADRs recorded.
 
 ## Tech Stack
 
@@ -215,7 +215,7 @@ src/elmer/
 |------|------|---------------|
 | **CLAUDE.md** | Living | Commands change, rules change, phase completes, ADR count changes |
 | **DESIGN.md** | Stable + Planned | Architecture changes, planned features marked as implemented |
-| **DECISIONS.md** | Append-only | Any non-trivial design choice (never edit past entries) |
+| **DECISIONS.md** | Living | Any non-trivial design choice (revise in place, git is the audit trail) |
 | **ROADMAP.md** | Living | Phase status changes, deliverables complete or deferred |
 | **README.md** | Stable | User-facing changes (new commands, new archetypes) |
 | **GUIDE.md** | Living | New workflows, new patterns, usage advice evolves with features |
@@ -240,7 +240,8 @@ These must hold after each session. Violations indicate drift:
 1. **Before implementation:** DESIGN.md is the source of truth. Code follows it.
 2. **When a section is implemented:** Add `**Status: Implemented** — see src/elmer/<module>` at the top.
 3. **When implementation diverges from design:** Update DESIGN.md to reflect the actual decision.
-4. **ADRs are immutable:** Decisions are never silently changed. If a decision is superseded, a new ADR records the reversal with rationale.
+4. **ADRs are mutable living documents.** Update them directly — add, revise, or replace content in place. Do not create superseding ADRs or use withdrawal ceremony. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
+5. **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 
 ### Scaling Strategy
 
@@ -249,14 +250,14 @@ These must hold after each session. Violations indicate drift:
 
 ## Key Design Decisions (Summary)
 
-Full rationale in DECISIONS.md. 22 ADRs recorded.
+Full rationale in DECISIONS.md. 23 ADRs recorded.
 
 - **ADR-001:** Git worktrees over directory copying
 - **ADR-002:** Background `claude -p` processes over Agent Teams
 - **ADR-003:** SQLite over JSON state files
 - **ADR-004:** Click over argparse
 - **ADR-005:** Static templates before generated prompts
-- **ADR-006:** No daemon in Phase 1
+- **ADR-006:** Daemon deferred to Phase 3
 - **ADR-007:** Synchronous `claude -p` for meta-operations
 - **ADR-008:** JSON output format for cost extraction
 - **ADR-009:** AI archetype selection as a meta-operation
@@ -273,9 +274,10 @@ Full rationale in DECISIONS.md. 22 ADRs recorded.
 - **ADR-020:** PR creation via gh CLI
 - **ADR-021:** Topic list files with batch command
 - **ADR-022:** Claude Code skill scaffolding as Elmer feature
+- **ADR-023:** Mutable ADRs with git audit trail
 
 ## What's Next
 
 See ROADMAP.md for the full 4-phase plan. All four phases complete. See Deferred / Uncertain in ROADMAP.md for potential future work.
 
-*Last updated: ADR-022 — Claude Code skill scaffolding*
+*Last updated: ADR-023 — mutable ADR governance*

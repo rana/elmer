@@ -11,7 +11,7 @@ CLAUDE_MD = """\
 Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, commands, rules
 2. **DESIGN.md** — architecture, data model, design decisions
-3. **DECISIONS.md** — architecture decision records (append-only)
+3. **DECISIONS.md** — architecture decision records (living, git is the audit trail)
 4. **ROADMAP.md** — phased plan with deliverables
 5. **README.md** — user-facing docs, install, quick start
 
@@ -55,7 +55,7 @@ Read in this order:
 |------|------|---------------|
 | **CLAUDE.md** | Living | Commands change, rules change, phase completes |
 | **DESIGN.md** | Stable + Planned | Architecture changes, features marked as implemented |
-| **DECISIONS.md** | Append-only | Any non-trivial design choice (never edit past entries) |
+| **DECISIONS.md** | Living | Any non-trivial design choice (revise in place, git is the audit trail) |
 | **ROADMAP.md** | Living | Phase status changes, deliverables complete or deferred |
 | **README.md** | Stable | User-facing changes |
 
@@ -97,7 +97,7 @@ Full rationale in DECISIONS.md.
 DECISIONS_MD = """\
 # {project_name} — Decisions
 
-Architecture Decision Records. Append-only — never edit past entries. If a decision is superseded, record a new ADR with rationale.
+Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
 0 ADRs recorded.
 

@@ -376,7 +376,7 @@ Full rationale in DECISIONS.md. Summary:
 - **ADR-003:** SQLite over JSON state files
 - **ADR-004:** Click over argparse
 - **ADR-005:** Static templates before generated prompts
-- **ADR-006:** No daemon in Phase 1
+- **ADR-006:** Daemon deferred to Phase 3
 - **ADR-007:** Synchronous `claude -p` for meta-operations
 - **ADR-008:** JSON output format for cost extraction
 - **ADR-009:** AI archetype selection as a meta-operation
@@ -393,5 +393,6 @@ Full rationale in DECISIONS.md. Summary:
 - **ADR-020:** PR creation via gh CLI
 - **ADR-021:** Topic list files with batch command
 - **ADR-022:** Claude Code skill scaffolding as Elmer feature
+- **ADR-023:** Mutable ADRs with git audit trail
 
-*Last updated: ADR-022 — Claude Code skill scaffolding*
+*Last updated: ADR-023 — mutable ADR governance*
