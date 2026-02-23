@@ -344,6 +344,29 @@ Insights extracted from explorations that are generalizable get stored in `~/.el
 
 Topic list files are committed to git at `.elmer/<archetype>.md`. They serve as curated, versioned research agendas — the human decides what to explore, Elmer executes.
 
+### Claude Code Skill Scaffolding
+
+**Status: Implemented** — see `src/elmer/skill_scaffold.py`, `src/elmer/cli.py` (init --skills)
+
+`elmer init --skills` generates project-specific Claude Code skills in `.claude/skills/`. Skills are detected by scanning project docs (CLAUDE.md, DESIGN.md, CONTEXT.md) for signals: mission principles → `mission-align`, i18n references → `cultural-lens`, user personas → `persona-ux`, compliance requirements → `compliance-check`.
+
+Generated skills are Claude Code SKILL.md files with YAML frontmatter and `$ARGUMENTS` substitution. They provide interactive analysis lenses invocable as `/skill-name` within Claude Code sessions.
+
+### Elmer vs Claude Code Skills
+
+Elmer archetypes and Claude Code skills are parallel systems. They overlap in analysis methodology but serve different moments:
+
+| Dimension | Elmer archetypes | Claude Code skills |
+|-----------|-----------------|-------------------|
+| Execution | Background `claude -p` on git branches | Interactive, in-session |
+| Output | PROPOSAL.md on a branch | Action list in chat |
+| State | Tracked in SQLite, persistent | Ephemeral, dies with session |
+| Parallelism | Multiple concurrent workers | One at a time |
+| Substitution | `$TOPIC` | `$ARGUMENTS` |
+| Best for | Autonomous batch research, overnight runs | Interactive design thinking, quick audits |
+
+The overlap (e.g., `coherence-audit.md` archetype ≈ `/coherence` skill) is tolerated. No shared template layer — they diverge independently because they serve different runtimes. `elmer init --skills` bridges the gap by generating project-specific skills that complement the global analysis skills and Elmer's autonomous archetypes.
+
 ## Design Decisions
 
 Full rationale in DECISIONS.md. Summary:
@@ -369,5 +392,6 @@ Full rationale in DECISIONS.md. Summary:
 - **ADR-019:** Global project registry for multi-project dashboard
 - **ADR-020:** PR creation via gh CLI
 - **ADR-021:** Topic list files with batch command
+- **ADR-022:** Claude Code skill scaffolding as Elmer feature
 
-*Last updated: ADR-021 — batch topic lists*
+*Last updated: ADR-022 — Claude Code skill scaffolding*

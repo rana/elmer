@@ -33,6 +33,14 @@ This creates `.elmer/` (config, archetypes, state) and scaffolds five project do
 
 If you already have these documents, `--docs` won't overwrite them. If you don't want them, `elmer init` without `--docs` works fine — Elmer doesn't require them.
 
+Optionally, scaffold Claude Code skills too:
+
+```bash
+elmer init --skills
+```
+
+This reads your project docs and generates `.claude/skills/` with project-specific analysis lenses (e.g., `/mission-align`, `/cultural-lens`). These complement Elmer's autonomous archetypes with interactive skills you can invoke in Claude Code sessions.
+
 ### 2. Edit .elmer/config.toml
 
 The defaults work, but review them:
@@ -356,6 +364,21 @@ elmer mine-questions                   # see what's open
 elmer mine-questions --spawn           # explore everything
 elmer mine-questions --cluster "API"   # just one area
 ```
+
+## When to Use Elmer vs Claude Code Skills
+
+Elmer and Claude Code skills overlap in analysis methodology but serve different moments. Use both.
+
+| Situation | Use | Why |
+|-----------|-----|-----|
+| Deep overnight research | `elmer explore` or `elmer daemon` | Background execution, persistent state, branch isolation |
+| Quick interactive audit | `/coherence` or `/gaps` | In-session, conversational, iterate with follow-ups |
+| Batch refactoring | `elmer batch .elmer/prototype.md --chain` | Worktree isolation, sequential merging, no conflicts |
+| Design review with feedback loop | `/mission-align` or `/deep-review` | Interactive, you steer the analysis in real-time |
+| Don't know what to explore | `elmer mine-questions` or `elmer generate` | AI generates topics autonomously |
+| Check a specific concern | `/cultural-lens "rural India"` | Focused, immediate, argumentized |
+
+**The general rule:** If you need persistence, parallelism, or autonomy — use Elmer. If you need interactivity, iteration, or immediacy — use a skill. If you're setting up a project, use both: `elmer init --docs --skills`.
 
 ## Common Mistakes
 

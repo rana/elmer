@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Append-only — never edit past entries. If a decision is superseded, record a new ADR with rationale.
 
-21 ADRs recorded.
+22 ADRs recorded.
 
 ## Domain Index
 
@@ -29,6 +29,7 @@ Architecture Decision Records. Append-only — never edit past entries. If a dec
 | ADR-019 | Storage | Global project registry for multi-project dashboard |
 | ADR-020 | Integration | PR creation via gh CLI |
 | ADR-021 | CLI | Topic list files with batch command |
+| ADR-022 | Integration | Claude Code skill scaffolding as Elmer feature |
 
 ---
 
@@ -236,4 +237,18 @@ Existing `elmer explore -f topics.txt` is preserved for backwards compatibility.
 
 **Alternatives considered:** Enhancing `-f` to support the new format (would break existing users or require format detection), YAML/TOML topic files (heavier syntax for what's essentially a list of text blocks), per-topic frontmatter for overrides (deferred — global CLI flags cover the common case).
 
-*Last updated: ADR-021 added — topic list files with batch command*
+## ADR-022: Claude Code Skill Scaffolding as Elmer Feature
+
+**Decision:** `elmer init --skills` generates project-specific Claude Code skills in `.claude/skills/` by reading existing project documentation and detecting which review lenses apply.
+
+Elmer archetypes and Claude Code skills are parallel systems with overlapping analysis methodology but different runtimes. Archetypes run in background `claude -p` sessions, output PROPOSAL.md to git branches, and are tracked in SQLite. Skills run interactively in Claude Code sessions, output action lists in chat, and have no persistent state. Both are useful. Neither replaces the other.
+
+The overlap (e.g., `coherence-audit.md` archetype ≈ `/coherence` skill) is tolerated rather than unified through a shared template layer. A shared template directory was considered but adds indirection without reducing drift enough to justify the infrastructure. If the analysis methodology in an archetype and its corresponding skill diverge, they diverge — they serve different moments (autonomous batch research vs. interactive design thinking).
+
+Project-specific skills are different: they encode domain knowledge (mission principles, cultural constraints, UX personas) that's specific to the project and benefits from being generated from existing docs rather than hand-crafted. `elmer init --skills` reads CLAUDE.md, DESIGN.md, and CONTEXT.md, detects signals (mission principles, i18n references, compliance requirements), and generates `.claude/skills/<name>/SKILL.md` files with project-specific content filled in. Only creates skills that don't exist — safe to run repeatedly.
+
+This positions Elmer as infrastructure that makes both autonomous exploration (via archetypes) and interactive analysis (via generated skills) more effective for any project.
+
+**Alternatives considered:** Shared template library at `~/.config/analysis-lenses/` with both systems reading from one source (adds a third location to maintain, indirection cost exceeds drift cost), `elmer sync-skills` command to regenerate skills on demand (implies ongoing sync obligation — generation at init time is sufficient), Claude Code plugin (couples Elmer to Claude Code's evolving plugin API, constrains Elmer's process model).
+
+*Last updated: ADR-022 added — Claude Code skill scaffolding*

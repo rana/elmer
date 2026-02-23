@@ -194,6 +194,14 @@ Elmer becomes a tool for managing how projects are researched, not just executin
 - [x] PR title auto-generated from exploration topic
 - [x] Works with explorations in done, failed, or running status
 
+#### Claude Code Skill Scaffolding — COMPLETE
+- [x] `elmer init --skills` — detect project characteristics and generate Claude Code skills
+- [x] Signal detection from project docs (mission principles, i18n, personas, compliance)
+- [x] Four skill templates: `mission-align`, `cultural-lens`, `persona-ux`, `compliance-check`
+- [x] Only creates skills that don't already exist — safe to run repeatedly
+- [x] Generates `.claude/skills/<name>/SKILL.md` with proper frontmatter and `$ARGUMENTS` substitution
+- [x] Bridges Elmer's autonomous exploration with Claude Code's interactive analysis
+
 ### Phase Gate
 `elmer init --docs` used to scaffold a new project. Template evolution demonstrably improves archetype quality over time. Attention routing helps a user managing 10+ pending proposals across 2+ projects.
 
@@ -203,10 +211,10 @@ Elmer becomes a tool for managing how projects are researched, not just executin
 
 Features discussed but not committed to a phase:
 
-- **Claude Code plugin wrapper** — thin plugin providing `/elmer:status`, `/elmer:explore` from within sessions. Low priority since `elmer` CLI works from any terminal.
+- **Shared template library** — single source for analysis methodology shared between Elmer archetypes and Claude Code skills. Deferred because drift between the two systems is tolerable and the indirection cost exceeds the sync benefit. Revisit if methodology divergence becomes painful.
 - **Web UI for review** — local web server showing proposals with rich formatting. CLI review is sufficient for now.
 - **Forge-on-Forge recursion** — Elmer running explorations on its own codebase. Philosophically interesting, practically requires CONTEXT.md.
 - **Agent Teams integration** — within a single exploration, the Claude session could use Agent Teams for parallel sub-tasks. Emergent from claude's own capabilities, no Elmer changes needed.
 - **MCP server** — expose Elmer state as an MCP tool for other AI systems to query.
 
-*Last updated: Phase 4 complete — all features implemented*
+*Last updated: Phase 4 — Claude Code skill scaffolding added*

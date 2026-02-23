@@ -28,6 +28,7 @@ pip install /path/to/elmer
 # In any git repo:
 elmer init
 elmer init --docs                     # Also scaffold project documentation
+elmer init --skills                   # Also scaffold Claude Code skills
 
 # Start explorations
 elmer explore "evaluate COT positioning as 6th data axis"
@@ -55,6 +56,7 @@ elmer clean
 |---------|-------------|
 | `elmer init` | Initialize `.elmer/` in the current project |
 | `elmer init --docs` | Also scaffold CLAUDE.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CONTEXT.md |
+| `elmer init --skills` | Scaffold Claude Code skills from project docs |
 | `elmer explore "topic"` | Start an exploration on a new branch |
 | `elmer explore -f topics.txt` | Batch explore from a file (one topic per line) |
 | `elmer batch .elmer/explore-act.md` | Run explorations from a topic list file |
@@ -237,6 +239,18 @@ DECISIONS.md           # Architecture decision records
 ROADMAP.md             # Phased development plan
 CONTEXT.md             # Project context for AI assistants
 ```
+
+With `--skills`, detects project characteristics and creates:
+
+```
+.claude/skills/
+├── mission-align/SKILL.md    # If mission/principles detected
+├── cultural-lens/SKILL.md    # If i18n/multilingual detected
+├── persona-ux/SKILL.md       # If user personas detected
+└── compliance-check/SKILL.md # If compliance requirements detected
+```
+
+These skills provide interactive analysis lenses (`/mission-align`, `/cultural-lens`, etc.) in Claude Code sessions, complementing Elmer's autonomous exploration archetypes.
 
 ## How Explorations Work
 

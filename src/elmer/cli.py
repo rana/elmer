@@ -6,7 +6,7 @@ from pathlib import Path
 
 import click
 
-from . import archstats, batch as batch_mod, config, costs as costs_mod, daemon as daemon_mod, dashboard, explore as explore_mod, gate, generate as gen_mod, insights as insights_mod, invariants as inv_mod, pr as pr_mod, questions as questions_mod, review as review_mod, scaffold, state, worktree as wt
+from . import archstats, batch as batch_mod, config, costs as costs_mod, daemon as daemon_mod, dashboard, explore as explore_mod, gate, generate as gen_mod, insights as insights_mod, invariants as inv_mod, pr as pr_mod, questions as questions_mod, review as review_mod, scaffold, skill_scaffold, state, worktree as wt
 
 
 @click.group()
@@ -47,12 +47,18 @@ def _require_elmer(project_dir: Path) -> Path:
 
 @cli.command()
 @click.option("--docs", is_flag=True, help="Scaffold the five-document pattern (CLAUDE.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CONTEXT.md)")
-def init(docs):
+@click.option("--skills", is_flag=True, help="Scaffold project-specific Claude Code skills in .claude/skills/")
+def init(docs, skills):
     """Initialize Elmer in the current project.
 
     With --docs, scaffolds the five-document pattern that makes projects
     effective with Claude Code: CLAUDE.md, DESIGN.md, DECISIONS.md,
     ROADMAP.md, CONTEXT.md. Only creates files that don't already exist.
+
+    With --skills, detects project characteristics from existing docs and
+    generates Claude Code skills in .claude/skills/. Skills provide
+    interactive analysis lenses (e.g., /mission-align, /cultural-lens)
+    that complement Elmer's autonomous exploration archetypes.
     """
     project_dir = _require_project()
     elmer_dir = config.init_project(project_dir)
@@ -72,11 +78,40 @@ def init(docs):
         else:
             click.echo()
             click.echo("All five documents already exist — nothing to scaffold.")
-    else:
+
+    if skills:
+        detected = skill_scaffold.detect_skills(project_dir)
+        any_detected = any(detected.values())
+
+        if any_detected:
+            click.echo()
+            click.echo("Detected project signals:")
+            for name, found in sorted(detected.items()):
+                icon = "+" if found else " "
+                click.echo(f"  {icon} {name}")
+
+        created = skill_scaffold.scaffold_skills(project_dir)
+        if created:
+            click.echo()
+            click.echo("Scaffolded Claude Code skills:")
+            for name in created:
+                click.echo(f"  .claude/skills/{name}/SKILL.md")
+            click.echo()
+            click.echo("Use /{name} in Claude Code sessions for interactive analysis.")
+        elif any_detected:
+            click.echo()
+            click.echo("All detected skills already exist — nothing to scaffold.")
+        else:
+            click.echo()
+            click.echo("No project-specific skills detected from project docs.")
+            click.echo("Add project documentation first (elmer init --docs), then re-run with --skills.")
+
+    if not docs and not skills:
         click.echo()
         click.echo("Edit .elmer/config.toml to change defaults.")
         click.echo("Add custom archetypes to .elmer/archetypes/.")
         click.echo("Use 'elmer init --docs' to scaffold project documentation.")
+        click.echo("Use 'elmer init --skills' to scaffold Claude Code skills.")
 
 
 @cli.command()

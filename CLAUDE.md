@@ -11,7 +11,7 @@ Read in this order:
 
 Elmer is an autonomous research tool that uses git branches as isolation boundaries and Claude Code sessions (`claude -p`) as workers. It works with any git project. Named after Elmer Fudd — persistent hunter, homage to the Ralph Wiggum naming tradition.
 
-**Current state:** Phase 4 complete. All features implemented: project scaffolding, template evolution, attention routing, document invariant enforcement, multi-project dashboard, PR-based review, batch topic lists. 21 ADRs recorded.
+**Current state:** Phase 4 complete. All features implemented: project scaffolding, template evolution, attention routing, document invariant enforcement, multi-project dashboard, PR-based review, batch topic lists, Claude Code skill scaffolding. 22 ADRs recorded.
 
 ## Tech Stack
 
@@ -29,6 +29,8 @@ Elmer is an autonomous research tool that uses git branches as isolation boundar
 # Setup
 elmer init                              # Create .elmer/ in current project
 elmer init --docs                       # Also scaffold CLAUDE.md, DESIGN.md, etc.
+elmer init --skills                     # Scaffold Claude Code skills from project docs
+elmer init --docs --skills              # Scaffold both docs and skills
 
 # Explore
 elmer explore "topic"                   # Default archetype + model from config
@@ -141,6 +143,7 @@ src/elmer/
 ├── insights.py         # Cross-project insight extraction and injection
 ├── questions.py        # Question mining from project documentation
 ├── scaffold.py         # Project scaffolding (five-document pattern)
+├── skill_scaffold.py   # Claude Code skill scaffolding
 ├── archstats.py        # Archetype effectiveness statistics
 ├── invariants.py       # Document invariant enforcement
 ├── dashboard.py        # Multi-project status aggregation
@@ -246,7 +249,7 @@ These must hold after each session. Violations indicate drift:
 
 ## Key Design Decisions (Summary)
 
-Full rationale in DECISIONS.md. 21 ADRs recorded.
+Full rationale in DECISIONS.md. 22 ADRs recorded.
 
 - **ADR-001:** Git worktrees over directory copying
 - **ADR-002:** Background `claude -p` processes over Agent Teams
@@ -269,9 +272,10 @@ Full rationale in DECISIONS.md. 21 ADRs recorded.
 - **ADR-019:** Global project registry for multi-project dashboard
 - **ADR-020:** PR creation via gh CLI
 - **ADR-021:** Topic list files with batch command
+- **ADR-022:** Claude Code skill scaffolding as Elmer feature
 
 ## What's Next
 
 See ROADMAP.md for the full 4-phase plan. All four phases complete. See Deferred / Uncertain in ROADMAP.md for potential future work.
 
-*Last updated: ADR-021 — batch topic lists*
+*Last updated: ADR-022 — Claude Code skill scaffolding*
