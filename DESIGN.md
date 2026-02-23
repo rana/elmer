@@ -336,6 +336,14 @@ Insights extracted from explorations that are generalizable get stored in `~/.el
 
 `elmer pr ID` pushes an exploration branch to the remote and creates a GitHub PR using the `gh` CLI. PROPOSAL.md content becomes the PR body. This integrates Elmer with existing code review workflows — explorations can be reviewed and discussed via GitHub's PR interface instead of (or in addition to) the local `elmer review` / `elmer approve` flow. The `gh` CLI is an optional dependency.
 
+### Batch Topic Lists
+
+**Status: Implemented** — see `src/elmer/batch.py`, `src/elmer/cli.py` (batch command)
+
+`elmer batch <file>` reads `---`-separated markdown topic list files and spawns one exploration per topic. The archetype is inferred from the filename stem (`.elmer/explore-act.md` → `explore-act`). `--chain` creates a dependency chain using the existing DAG system so topics execute and merge sequentially, avoiding merge conflicts.
+
+Topic list files are committed to git at `.elmer/<archetype>.md`. They serve as curated, versioned research agendas — the human decides what to explore, Elmer executes.
+
 ## Design Decisions
 
 Full rationale in DECISIONS.md. Summary:
@@ -360,5 +368,6 @@ Full rationale in DECISIONS.md. Summary:
 - **ADR-018:** Invariant enforcement as meta-operation
 - **ADR-019:** Global project registry for multi-project dashboard
 - **ADR-020:** PR creation via gh CLI
+- **ADR-021:** Topic list files with batch command
 
-*Last updated: Phase 4 complete — all features implemented*
+*Last updated: ADR-021 — batch topic lists*

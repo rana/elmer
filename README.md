@@ -57,6 +57,9 @@ elmer clean
 | `elmer init --docs` | Also scaffold CLAUDE.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CONTEXT.md |
 | `elmer explore "topic"` | Start an exploration on a new branch |
 | `elmer explore -f topics.txt` | Batch explore from a file (one topic per line) |
+| `elmer batch .elmer/explore-act.md` | Run explorations from a topic list file |
+| `elmer batch FILE --chain` | Run topics sequentially (each depends on previous) |
+| `elmer batch FILE --dry-run` | Preview parsed topics without spawning |
 | `elmer generate` | AI-generate research topics and spawn explorations |
 | `elmer status` | Show all explorations and their states |
 | `elmer tree` | Show exploration dependency tree |
@@ -110,6 +113,13 @@ elmer mine-questions --cluster "API"    # Filter to a cluster
 elmer mine-questions --spawn            # Explore all mined questions
 elmer mine-questions --spawn --cluster "Design"  # Explore one cluster
 
+# Batch topic lists
+elmer batch .elmer/explore-act.md              # Spawn all topics with explore-act
+elmer batch .elmer/prototype.md --chain        # Sequential — no merge conflicts
+elmer batch .elmer/explore-act.md --item 3     # Run only item 3
+elmer batch .elmer/explore-act.md --budget 10  # $10 divided across topics
+elmer batch .elmer/explore-act.md --auto-approve --chain  # Fully autonomous pipeline
+
 # Multi-project
 elmer status --all-projects            # Aggregated status across all projects
 
@@ -142,6 +152,37 @@ Archetypes are prompt templates that shape how Claude explores a topic.
 Use `--auto-archetype` to let AI pick the best archetype for each topic. Use `-a` to force a specific one.
 
 Archetypes live in `.elmer/archetypes/`. Add your own by creating a markdown file with `$TOPIC` as the placeholder. Use `elmer archetypes stats` to see which perform best.
+
+## Topic List Files
+
+Create a markdown file in `.elmer/` named after the archetype you want to use. Separate topics with `---`:
+
+```markdown
+# Refactoring priorities
+
+---
+
+Extract the validation logic from the controller into a dedicated validator module
+
+---
+
+Consolidate the three notification services into a unified notification gateway
+
+---
+
+Replace the hand-rolled SQL query builder with parameterized queries throughout
+
+---
+```
+
+Save as `.elmer/prototype.md` and run:
+
+```bash
+elmer batch .elmer/prototype.md --chain    # sequential — each builds on previous merge
+elmer batch .elmer/prototype.md --dry-run  # preview topics first
+```
+
+The archetype is inferred from the filename (`prototype.md` → `prototype` archetype). Use `-a` to override. Topics can be multi-line. The first section is ignored if it starts with `#` (use it for comments). Use `--chain` when topics might touch overlapping files — each exploration starts after the previous is approved and merged.
 
 ## Configuration
 
@@ -181,6 +222,7 @@ When you run `elmer init`, it creates:
 │   ├── explore.md
 │   ├── explore-act.md
 │   └── prototype.md
+├── explore-act.md     # Topic list file (optional, committed)
 ├── worktrees/         # Git worktrees (gitignored)
 ├── logs/              # Claude session logs (gitignored)
 └── state.db           # SQLite state (gitignored)

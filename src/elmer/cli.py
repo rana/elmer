@@ -6,7 +6,7 @@ from pathlib import Path
 
 import click
 
-from . import archstats, config, costs as costs_mod, daemon as daemon_mod, dashboard, explore as explore_mod, gate, generate as gen_mod, insights as insights_mod, invariants as inv_mod, pr as pr_mod, questions as questions_mod, review as review_mod, scaffold, state, worktree as wt
+from . import archstats, batch as batch_mod, config, costs as costs_mod, daemon as daemon_mod, dashboard, explore as explore_mod, gate, generate as gen_mod, insights as insights_mod, invariants as inv_mod, pr as pr_mod, questions as questions_mod, review as review_mod, scaffold, state, worktree as wt
 
 
 @click.group()
@@ -188,6 +188,166 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
             click.echo()
         except (RuntimeError, FileNotFoundError) as e:
             click.echo(f"Error: {e}", err=True)
+
+
+@cli.command()
+@click.argument("file", type=click.Path(exists=True))
+@click.option("-a", "--archetype", default=None, help="Override archetype (default: inferred from filename)")
+@click.option("-m", "--model", default=None, help="Model: sonnet, opus, haiku (default: from config)")
+@click.option("--max-turns", default=None, type=int, help="Max turns for claude sessions")
+@click.option("--chain", is_flag=True, help="Run topics sequentially — each depends on the previous")
+@click.option("--dry-run", is_flag=True, help="Parse and display topics without spawning explorations")
+@click.option("--item", default=None, type=int, help="Run only item N (1-indexed)")
+@click.option("--auto-approve", is_flag=True, help="Auto-approve via AI review when done")
+@click.option("--auto-archetype", is_flag=True, default=False, help="AI selects the best archetype per topic (overrides filename inference)")
+@click.option("--generate-prompt", is_flag=True, default=False, help="Use AI to generate exploration prompts (two-stage)")
+@click.option("--budget", "budget_usd", default=None, type=float, help="Total budget in USD (divided across topics)")
+def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve, auto_archetype, generate_prompt, budget_usd):
+    """Run explorations from a topic list file.
+
+    Topic list files are markdown documents with --- separators.
+    The archetype is inferred from the filename: .elmer/explore-act.md
+    uses the explore-act archetype.
+
+    With --chain, topics run sequentially — each exploration depends on
+    the previous one, so merges never conflict. Without --chain, all
+    topics launch in parallel.
+
+    \b
+    File format:
+        # Optional header (ignored)
+        ---
+        First topic
+        ---
+        Second topic (can be multi-line)
+        ---
+
+    \b
+    Examples:
+        elmer batch .elmer/explore-act.md              # spawn all topics
+        elmer batch .elmer/explore-act.md --dry-run    # preview parsed topics
+        elmer batch .elmer/explore-act.md --chain      # sequential execution
+        elmer batch .elmer/explore-act.md --item 2     # run only item 2
+        elmer batch .elmer/prototype.md -m opus        # override model
+        elmer batch .elmer/explore-act.md --budget 10  # $10 divided across topics
+    """
+    from pathlib import Path as P
+
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+
+    file_path = P(file)
+    topics = batch_mod.parse_topic_file(file_path)
+
+    if not topics:
+        click.echo("No topics found in file.", err=True)
+        sys.exit(1)
+
+    # Resolve archetype: CLI flag > --auto-archetype > filename inference
+    use_auto_archetype = auto_archetype and archetype is None
+    if archetype is None and not auto_archetype:
+        archetype = batch_mod.archetype_from_filename(file_path)
+    elif archetype is None:
+        # auto-archetype mode — need a fallback for start_exploration
+        cfg = config.load_config(elmer_dir)
+        archetype = cfg.get("defaults", {}).get("archetype", "explore-act")
+
+    # Validate archetype exists (unless auto-archetype will override it)
+    if not use_auto_archetype:
+        try:
+            config.resolve_archetype(elmer_dir, archetype)
+        except FileNotFoundError as e:
+            click.echo(f"Error: {e}", err=True)
+            click.echo(f"Filename '{file_path.stem}' doesn't match a known archetype. Use -a to specify one.", err=True)
+            sys.exit(1)
+
+    cfg = config.load_config(elmer_dir)
+    defaults = cfg.get("defaults", {})
+    model = model or defaults.get("model", "sonnet")
+    max_turns = max_turns or defaults.get("max_turns", 50)
+
+    # Handle --item filter
+    if item is not None:
+        if item < 1 or item > len(topics):
+            click.echo(f"Error: --item {item} out of range (1-{len(topics)}).", err=True)
+            sys.exit(1)
+        topics = [topics[item - 1]]
+        click.echo(f"Selected item {item}.")
+        click.echo()
+
+    # Display parsed topics
+    click.echo(f"Topic list: {file_path}")
+    click.echo(f"Archetype:  {archetype}" + (" (AI-selected per topic)" if use_auto_archetype else ""))
+    click.echo(f"Topics:     {len(topics)}")
+    if chain:
+        click.echo(f"Mode:       sequential (chained)")
+    click.echo()
+
+    for i, topic in enumerate(topics, 1):
+        # Truncate display for long multi-line topics
+        display = topic.replace("\n", " ")
+        if len(display) > 100:
+            display = display[:97] + "..."
+        click.echo(f"  {i}. {display}")
+    click.echo()
+
+    if dry_run:
+        click.echo("Dry run — no explorations spawned.")
+        return
+
+    # Resolve two-stage prompt generation
+    use_generate = generate_prompt or defaults.get("generate_prompt", False)
+
+    # Divide budget across topics
+    per_topic_budget = None
+    if budget_usd is not None:
+        per_topic_budget = budget_usd / len(topics)
+        click.echo(f"Budget per topic: ${per_topic_budget:.2f}")
+        click.echo()
+
+    # Spawn explorations
+    previous_slug = None
+    for i, topic in enumerate(topics):
+        dep_list = None
+        if chain and previous_slug is not None:
+            dep_list = [previous_slug]
+
+        try:
+            slug, archetype_used = explore_mod.start_exploration(
+                topic=topic,
+                archetype=archetype,
+                model=model,
+                max_turns=max_turns,
+                elmer_dir=elmer_dir,
+                project_dir=project_dir,
+                depends_on=dep_list,
+                auto_approve=auto_approve,
+                auto_archetype=use_auto_archetype,
+                generate_prompt=use_generate,
+                budget_usd=per_topic_budget,
+            )
+            click.echo(f"Started: {slug}")
+            click.echo(f"  Branch:    elmer/{slug}")
+            click.echo(f"  Archetype: {archetype_used}" + (" (AI-selected)" if use_auto_archetype else ""))
+            if chain and previous_slug:
+                click.echo(f"  Depends on: {previous_slug}")
+            if auto_approve:
+                click.echo(f"  Auto-approve: enabled")
+            if per_topic_budget is not None:
+                click.echo(f"  Budget:    ${per_topic_budget:.2f}")
+            click.echo()
+
+            previous_slug = slug
+        except (RuntimeError, FileNotFoundError) as e:
+            click.echo(f"Error spawning topic {i + 1}: {e}", err=True)
+            if chain:
+                click.echo("Chain broken — stopping.", err=True)
+                break
+
+    click.echo(f"Batch complete.")
+    if chain:
+        click.echo("Topics are chained — each starts after the previous is approved.")
+        click.echo("Use 'elmer approve ID' to advance the chain, or 'elmer approve --all' for each step.")
 
 
 @cli.command()

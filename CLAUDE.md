@@ -7,10 +7,11 @@ Read in this order:
 2. **DESIGN.md** — architecture, data model, ADRs, planned features
 3. **ROADMAP.md** — 4-phase plan from manual CLI to autonomous daemon
 4. **README.md** — user-facing docs, install, quick start
+5. **GUIDE.md** — practical usage playbook, workflows, patterns
 
 Elmer is an autonomous research tool that uses git branches as isolation boundaries and Claude Code sessions (`claude -p`) as workers. It works with any git project. Named after Elmer Fudd — persistent hunter, homage to the Ralph Wiggum naming tradition.
 
-**Current state:** Phase 4 complete. All features implemented: project scaffolding, template evolution, attention routing, document invariant enforcement, multi-project dashboard, PR-based review. 20 ADRs recorded.
+**Current state:** Phase 4 complete. All features implemented: project scaffolding, template evolution, attention routing, document invariant enforcement, multi-project dashboard, PR-based review, batch topic lists. 21 ADRs recorded.
 
 ## Tech Stack
 
@@ -42,6 +43,14 @@ elmer explore "topic" --generate-prompt # AI-generated exploration prompt
 elmer explore "topic" --budget 2.00    # Cap cost at $2
 elmer explore "topic" --on-approve "elmer generate --follow-up \$ID"
 elmer explore "topic" --on-reject "elmer explore 'alt to \$TOPIC'"
+
+# Batch
+elmer batch .elmer/explore-act.md              # Spawn from topic list file
+elmer batch .elmer/explore-act.md --dry-run    # Preview parsed topics
+elmer batch .elmer/explore-act.md --chain      # Sequential (each depends on previous)
+elmer batch .elmer/explore-act.md --item 2     # Run only item 2
+elmer batch .elmer/prototype.md -m opus        # Override model
+elmer batch .elmer/explore-act.md --budget 10  # Total budget, divided across topics
 
 # Generate
 elmer generate                          # AI generates 5 topics, auto-spawns
@@ -115,6 +124,7 @@ elmer clean                             # Remove finished worktrees + state entr
 ```
 src/elmer/
 ├── cli.py              # Click CLI entry point
+├── batch.py            # Topic list file parsing for batch command
 ├── explore.py          # Orchestration: worktree → prompt → worker → state
 ├── review.py           # Status display, proposal reading, attention routing
 ├── gate.py             # Approve (merge) / reject (discard)
@@ -167,6 +177,7 @@ src/elmer/
 .elmer/
 ├── config.toml        # Defaults (committed)
 ├── archetypes/        # Project-specific templates (committed)
+├── <archetype>.md     # Topic list files for batch command (committed, optional)
 ├── .gitignore         # Excludes worktrees/, logs/, state.db, daemon.pid
 ├── worktrees/         # Git worktrees (gitignored)
 ├── logs/              # Claude session logs + daemon.log (gitignored)
@@ -204,6 +215,7 @@ src/elmer/
 | **DECISIONS.md** | Append-only | Any non-trivial design choice (never edit past entries) |
 | **ROADMAP.md** | Living | Phase status changes, deliverables complete or deferred |
 | **README.md** | Stable | User-facing changes (new commands, new archetypes) |
+| **GUIDE.md** | Living | New workflows, new patterns, usage advice evolves with features |
 
 ### Per-Session Checklist
 
@@ -234,7 +246,7 @@ These must hold after each session. Violations indicate drift:
 
 ## Key Design Decisions (Summary)
 
-Full rationale in DECISIONS.md. 20 ADRs recorded.
+Full rationale in DECISIONS.md. 21 ADRs recorded.
 
 - **ADR-001:** Git worktrees over directory copying
 - **ADR-002:** Background `claude -p` processes over Agent Teams
@@ -256,9 +268,10 @@ Full rationale in DECISIONS.md. 20 ADRs recorded.
 - **ADR-018:** Invariant enforcement as meta-operation
 - **ADR-019:** Global project registry for multi-project dashboard
 - **ADR-020:** PR creation via gh CLI
+- **ADR-021:** Topic list files with batch command
 
 ## What's Next
 
 See ROADMAP.md for the full 4-phase plan. All four phases complete. See Deferred / Uncertain in ROADMAP.md for potential future work.
 
-*Last updated: Phase 4 complete — all features implemented*
+*Last updated: ADR-021 — batch topic lists*

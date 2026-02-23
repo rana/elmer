@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Append-only — never edit past entries. If a decision is superseded, record a new ADR with rationale.
 
-20 ADRs recorded.
+21 ADRs recorded.
 
 ## Domain Index
 
@@ -28,6 +28,7 @@ Architecture Decision Records. Append-only — never edit past entries. If a dec
 | ADR-018 | Validation | Invariant enforcement as meta-operation |
 | ADR-019 | Storage | Global project registry for multi-project dashboard |
 | ADR-020 | Integration | PR creation via gh CLI |
+| ADR-021 | CLI | Topic list files with batch command |
 
 ---
 
@@ -221,4 +222,18 @@ The PR title is `elmer: {topic}` (truncated to 70 chars). The PR body is the ful
 
 **Alternatives considered:** `--pr` flag on `explore` (conflates exploration with review workflow — user may not want a PR for every exploration), PyGithub library (adds dependency, requires separate auth config), automatic PR on exploration completion (too aggressive — user should decide which explorations deserve PRs).
 
-*Last updated: Phase 4 complete — all features implemented*
+## ADR-021: Topic List Files with Batch Command
+
+**Decision:** `elmer batch <file>` reads a `---`-separated markdown file, infers the archetype from the filename stem, and spawns one exploration per topic section. `--chain` creates a dependency chain so topics execute and merge sequentially.
+
+Topic list files live at `.elmer/<archetype>.md` (e.g., `.elmer/explore-act.md`). This is a convention, not a requirement — any path works, but the filename-to-archetype inference makes the convention self-documenting. Files at `.elmer/` root don't collide with archetype templates (which live in `.elmer/archetypes/`).
+
+The `---` separator was chosen because it's a standard markdown thematic break, visually unambiguous, and trivially parseable with `text.split('---')`. Each section between separators is one topic. Multi-line sections are preserved as-is — the full text becomes the `$TOPIC` substitution value. The first section is discarded if it starts with `#` (header/comments).
+
+The `--chain` flag uses the existing `--depends-on` mechanism (ADR dependencies table, `schedule_ready()`). Topic 2 depends on topic 1, topic 3 depends on topic 2, etc. This ensures each exploration starts after the previous is approved and merged, working on the latest code — which eliminates merge conflicts when multiple proposals touch overlapping files.
+
+Existing `elmer explore -f topics.txt` is preserved for backwards compatibility. The key differences: `-f` is line-based and parallel; `batch` is `---`-separated, supports multi-line topics, infers archetype from filename, and supports `--chain`.
+
+**Alternatives considered:** Enhancing `-f` to support the new format (would break existing users or require format detection), YAML/TOML topic files (heavier syntax for what's essentially a list of text blocks), per-topic frontmatter for overrides (deferred — global CLI flags cover the common case).
+
+*Last updated: ADR-021 added — topic list files with batch command*
