@@ -10,10 +10,10 @@ from . import config, state, worker
 
 # Default invariant rules (used when no project-specific rules configured)
 DEFAULT_RULES = [
-    "ADR count mentioned in CLAUDE.md matches actual ## ADR- entries in DECISIONS.md",
-    "Phase status in ROADMAP.md matches 'Current state' in CLAUDE.md",
-    "No feature marked COMPLETE in ROADMAP.md without corresponding code in src/",
-    "Tech stack description is consistent across all documents",
+    "ADR count in CLAUDE.md Orientation and DECISIONS.md header matches actual ## ADR- entries in DECISIONS.md",
+    "Phase completion status in ROADMAP.md is consistent with CLAUDE.md Orientation",
+    "No feature listed in ROADMAP.md without corresponding code in src/",
+    "Tech stack canonical home is CLAUDE.md — other documents reference, not duplicate",
 ]
 
 

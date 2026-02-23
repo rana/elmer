@@ -200,7 +200,7 @@ AI-based impact assessment was considered but rejected for v1: it would cost mon
 
 **Decision:** `elmer validate` and `elmer approve --validate-invariants` run a synchronous `claude -p` meta-operation (consistent with ADR-007) using a `validate-invariants.md` archetype that checks and auto-fixes document consistency.
 
-Default invariant rules check the same conditions documented in CLAUDE.md's "Document Invariants" section: ADR count consistency, phase status alignment, feature-code correspondence. Custom rules can be configured in `[invariants] rules` in `config.toml`.
+Default invariant rules check document consistency: ADR count alignment between CLAUDE.md and DECISIONS.md, phase status consistency across ROADMAP.md and CLAUDE.md, feature-code correspondence. Custom rules can be configured in `[invariants] rules` in `config.toml`.
 
 The AI both checks and fixes — if an invariant fails, it edits the file to restore consistency. This is appropriate because the invariants are about document metadata (counts, status labels), not substantive content. The fix is always a small, mechanical edit.
 
@@ -266,4 +266,4 @@ Adopted from the SRF Yogananda Teachings project's ADR governance model.
 
 **Alternatives considered:** Keep append-only (status quo — adds overhead, creates supersession chains), hybrid approach where only "major" reversals get new ADRs (subjective threshold, worst of both worlds).
 
-*Last updated: ADR-023 added — mutable ADR governance*
+*Last updated: 2026-02-23, crystallization — updated ADR-018 stale reference*

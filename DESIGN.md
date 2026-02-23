@@ -19,43 +19,15 @@ Elmer is an autonomous research tool that uses git branches as isolation boundar
         └───────────┘  └───────────┘
 ```
 
-## Philosophy
+## Why Elmer Exists
 
-### What Elmer Is
+Two observations:
 
-A **persistent autonomous research layer** between you and your projects. Claude Code sessions are ephemeral — you open them, work, close them. Elmer persists. It remembers what was explored, what was approved, what failed, what chains are in progress. The closest analogy is a research assistant who works while you sleep, leaves proposals on your desk, and starts the next investigation based on what you approved yesterday.
+1. **Claude Code sessions are powerful but ephemeral.** Research insights, design proposals, and exploratory work die with the session unless manually preserved. Elmer makes exploration persistent — branches survive sessions, proposals accumulate, research trees grow across days.
 
-Git branches are the desk. PROPOSAL.md is the memo. `elmer approve` is your signature.
+2. **Multiple projects share a cognition pattern.** The five-document structure (CONTEXT.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CLAUDE.md) works across projects. Elmer operationalizes this pattern — it reads those documents for context, explores topics autonomously, and produces proposals that fit the project's existing structure.
 
-### Why Elmer Exists
-
-Two observations led here:
-
-1. **Claude Code sessions are powerful but ephemeral.** Each session starts fresh. Research insights, design proposals, and exploratory work die with the session unless manually preserved. Elmer makes exploration persistent — branches survive sessions, proposals accumulate, research trees grow across days.
-
-2. **Multiple projects share a cognition pattern.** Mercury (autonomous trading) and SRF (spiritual teachings portal) both use the same five-document structure: CONTEXT.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CLAUDE.md. Both have `/explore` commands with identical templates. Elmer operationalizes this pattern — it reads those documents for context, explores topics autonomously, and produces proposals that fit the project's existing structure.
-
-### Core Principles
-
-**Git is the coordination layer.** Not a database, not a message queue, not a shared filesystem. Branches provide isolation. Merge provides integration. Worktrees provide parallelism. These are simple primitives with decades of reliability behind them.
-
-**Demonstrate value before adding complexity.** Phase 1 proves the manual loop works. The daemon exists only if manual exploration is useful. Auto-approve exists only if human-gated exploration is useful. Each phase justifies the next. This mirrors Mercury's own principle: "demonstrate intelligence before deploying capital."
-
-**Project-aware but not project-prescriptive.** Elmer reads CLAUDE.md, CONTEXT.md, DESIGN.md if they exist. It works without them. The five-document pattern is a convention that makes Elmer more effective, not a requirement Elmer imposes.
-
-**Templates are scaffolding, not the destination.** Phase 1 uses static archetypes with `$TOPIC` substitution. The real architecture is two-stage prompt generation (Phase 2) where AI generates the optimal exploration prompt given the project's state and the topic's nature. Static templates are debuggable and predictable. Generated prompts are adaptive and project-aware. The transition is deliberate.
-
-**Conservative autonomy.** Auto-approve is opt-in, default off. The AI review gate rejects when uncertain. Better to queue 5 proposals for human review than to merge 1 bad proposal autonomously. Trust is built incrementally.
-
-### The Deeper Pattern
-
-Elmer changes what a "session" means. Currently you open Claude Code, work, close it. With Elmer running continuously (Phase 3), Claude Code becomes the interactive layer for steering and review, while Elmer is the autonomous layer that runs between sessions. The two compose: you steer Elmer from within Claude Code, and Elmer spawns Claude Code sessions as workers.
-
-The archetype library is a form of institutional memory. Which templates produce the best proposals? Which topics lead to productive chains? This is meta-learning about how to use AI effectively, accumulated across projects and time.
-
-### Naming
-
-Elmer Fudd. Persistent hunter. Homage to the [Ralph Wiggum](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) naming tradition for autonomous Claude Code tools. Ralph uses a Stop hook for iterative self-referential loops. Elmer uses git branches for parallel autonomous exploration. Different shapes, same lineage.
+Elmer changes what a "session" means. Claude Code is the interactive layer for steering and review. Elmer is the autonomous layer that runs between sessions. You steer Elmer from Claude Code, and Elmer spawns Claude Code sessions as workers.
 
 ## Architecture
 
@@ -65,7 +37,7 @@ Elmer Fudd. Persistent hunter. Homage to the [Ralph Wiggum](https://github.com/a
 |--------|---------------|
 | `cli.py` | Click CLI entry point, argument parsing |
 | `explore.py` | Orchestration: create worktree, assemble prompt, spawn worker |
-| `review.py` | Read proposals, display status and summaries |
+| `review.py` | Read proposals, display status, attention routing |
 | `gate.py` | Approve (merge) or reject (discard) explorations |
 | `worktree.py` | Git worktree and branch operations |
 | `worker.py` | Claude CLI invocation and process management |
@@ -80,11 +52,11 @@ Elmer Fudd. Persistent hunter. Homage to the [Ralph Wiggum](https://github.com/a
 | `insights.py` | Cross-project insight extraction and injection |
 | `questions.py` | Question mining from project documentation |
 | `scaffold.py` | Project scaffolding (five-document pattern) |
+| `skill_scaffold.py` | Claude Code skill scaffolding |
 | `archstats.py` | Archetype effectiveness statistics |
 | `invariants.py` | Document invariant enforcement |
 | `dashboard.py` | Multi-project status aggregation |
 | `batch.py` | Topic list file parsing for batch command |
-| `skill_scaffold.py` | Claude Code skill scaffolding |
 | `pr.py` | PR creation via gh CLI |
 
 ### Data Flow
@@ -191,34 +163,11 @@ Markdown templates with `$TOPIC` substitution. Resolved in order:
 1. `.elmer/archetypes/<name>.md` (project-local, user-customizable)
 2. Bundled `src/elmer/archetypes/<name>.md` (package defaults)
 
-Exploration archetypes (8):
-- **explore** — read-only analysis, no action bias
-- **explore-act** — analysis biased toward concrete proposals
-- **prototype** — write working code on the branch
-- **adr-proposal** — propose architecture decisions
-- **question-cluster** — explore clusters of related questions
-- **benchmark** — measure and evaluate
-- **dead-end-analysis** — analyze potential dead ends
-- **devil-advocate** — challenge assumptions and decisions
+Exploration archetypes (8): explore, explore-act, prototype, adr-proposal, question-cluster, benchmark, dead-end-analysis, devil-advocate.
 
-Audit archetypes (8):
-- **consistency-audit** — subsystem consistency and reasoning sufficiency
-- **coherence-audit** — cross-reference integrity across docs
-- **architecture-audit** — pattern compliance, drift, emerging patterns
-- **operational-audit** — ops readiness, cost, resilience
-- **documentation-audit** — doc practice quality, staleness
-- **opportunity-scan** — emergent opportunities, simplifications
-- **workflow-audit** — end-to-end workflow tracing
-- **mission-audit** — alignment with stated principles
+Audit archetypes (8): consistency-audit, coherence-audit, architecture-audit, operational-audit, documentation-audit, opportunity-scan, workflow-audit, mission-audit.
 
-Meta-prompt archetypes (7):
-- **generate-topics** — meta-prompt for AI topic generation
-- **prompt-gen** — meta-prompt for two-stage prompt generation
-- **review-gate** — prompt for auto-approve AI review
-- **select-archetype** — meta-prompt for AI archetype selection
-- **extract-insights** — meta-prompt for insight extraction
-- **mine-questions** — meta-prompt for question mining
-- **validate-invariants** — meta-prompt for invariant enforcement
+Meta-prompt archetypes (7): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants.
 
 ### Git Integration
 
@@ -230,17 +179,14 @@ Meta-prompt archetypes (7):
 
 ### Claude Invocation
 
-```
-claude -p "<assembled prompt>" --model <model> --max-turns <N>
-```
+Two invocation patterns:
 
-Runs in the worktree directory. Claude reads project files (CLAUDE.md, etc.) from the worktree and can create/modify files there. The session runs as a background process (detached via `start_new_session`). Output captured to `.elmer/logs/<slug>.log`.
+- **Background** (`spawn_claude`): Explorations. Long-running, PID-tracked, output to `.elmer/logs/<slug>.log`. Runs in worktree directory.
+- **Synchronous** (`run_claude`): Meta-operations (topic generation, auto-approve, prompt generation, archetype selection, insight extraction, question mining, invariant validation). Short-lived (3-5 turns), output parsed immediately by caller.
 
-## Planned Architecture [Phase 2+]
+Both use `claude -p --output-format json --model <model> --max-turns <N>`.
 
 ### Daemon Loop
-
-**Status: Implemented** — see `src/elmer/daemon.py`, `src/elmer/cli.py` (daemon command group)
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -260,13 +206,11 @@ Runs in the worktree directory. Claude reads project files (CLAUDE.md, etc.) fro
 └──────────────────────────────────────────────────┘
 ```
 
-Each cycle: harvest completed → gate (auto/human) → merge approved → schedule unblocked → generate new topics (if below threshold). Interval-driven with cost budget per cycle.
+The daemon calls existing functions in a loop — no new execution model (ADR-010). Each cycle: harvest completed → gate (auto/human) → merge approved → schedule unblocked → generate new topics. Interval-driven with cost budget per cycle. PID file at `.elmer/daemon.pid` for single-instance enforcement.
 
 ### Exploration DAG
 
-**Status: Implemented** — see `src/elmer/state.py` (dependencies table), `src/elmer/explore.py` (schedule_ready)
-
-Explorations can depend on each other. An exploration only starts when all dependencies are approved and merged.
+Explorations can depend on each other via the `dependencies` table. An exploration only starts when all dependencies are approved and merged.
 
 ```
 seed topic
@@ -279,50 +223,33 @@ seed topic
 └── exploration C (running...)
 ```
 
-State model extends with:
-```sql
-ALTER TABLE explorations ADD COLUMN parent_id TEXT;  -- what spawned this
-ALTER TABLE explorations ADD COLUMN project_path TEXT; -- multi-project
-
-CREATE TABLE dependencies (
-    exploration_id TEXT,
-    depends_on_id TEXT,
-    PRIMARY KEY (exploration_id, depends_on_id)
-);
-```
+`--on-approve` / `--on-reject` chain actions execute user-specified shell commands with `$ID` and `$TOPIC` substitution (ADR-012). `--auto-followup` generates follow-up topics post-merge via `generate_topics()`.
 
 ### Two-Stage Prompt Generation
 
-**Status: Implemented** — see `src/elmer/promptgen.py`, `src/elmer/archetypes/prompt-gen.md`
-
 Instead of static `$TOPIC` substitution:
 
-1. **Stage 1 (meta):** `claude -p "Given this project and topic, generate the optimal exploration prompt"` — reads project docs, available archetypes, topic, produces a bespoke prompt
+1. **Stage 1 (meta):** Synchronous `claude -p` reads project docs, available archetypes, and topic — produces a bespoke prompt
 2. **Stage 2 (execution):** Execute the generated prompt in the worktree
 
-The archetype becomes a hint to Stage 1, not a rigid template. Stage 1 can combine elements from multiple archetypes, add project-specific instructions, or generate entirely novel prompts.
+The archetype becomes a hint to Stage 1, not a rigid template. Fallback: static templates when `--generate-prompt` is not used.
 
 ### Auto-Approve Gate
 
-**Status: Implemented** — see `src/elmer/autoapprove.py`, `src/elmer/archetypes/review-gate.md`
+After exploration completes, if `--auto-approve` is set:
 
-After exploration completes, if auto-approve is enabled:
+1. Synchronous `claude -p` evaluates the proposal against configurable criteria
+2. Output: APPROVE or REJECT with reasoning
+3. If APPROVE → auto-merge. If REJECT → queue for human review with reasoning attached.
 
-1. Spawn a second `claude -p` session with the proposal and criteria
-2. AI evaluates: "Does this proposal meet the approval criteria?"
-3. Output: APPROVE or REJECT with reasoning
-4. If APPROVE → auto-merge. If REJECT → queue for human review with reasoning attached.
+Conservative default: reject when uncertain. Criteria configurable in `.elmer/config.toml`.
 
-Criteria configurable per-project in `.elmer/config.toml`.
-
-### Cross-Project Architecture
-
-**Status: Implemented** — see `src/elmer/insights.py`
+### Cross-Project Layout
 
 ```
 ~/.elmer/
 ├── insights.db          # Cross-project insight log (SQLite)
-├── projects.json        # Global project registry (JSON, ADR-019)
+├── projects.json        # Global project registry
 
 /path/to/project/.elmer/
 ├── config.toml          # Project-specific overrides
@@ -332,107 +259,23 @@ Criteria configurable per-project in `.elmer/config.toml`.
 └── logs/
 ```
 
-Insights extracted from explorations that are generalizable get stored in `~/.elmer/insights.db`. Future explorations in any project get relevant insights injected into their prompt context. Extraction is opt-in via `[insights] enabled = true`. Injection uses keyword-based relevance matching.
-
-### Question Mining
-
-**Status: Implemented** — see `src/elmer/questions.py`
-
-`elmer mine-questions` runs a synchronous `claude -p` session that reads project documentation and extracts open questions — both explicit (marked as TODO, TBD) and implicit (gaps, missing strategies). Questions are clustered by theme. With `--spawn`, clusters are converted to exploration topics.
-
-### Project Scaffolding
-
-**Status: Implemented** — see `src/elmer/scaffold.py`
-
-`elmer init --docs` scaffolds the five-document pattern (CLAUDE.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CONTEXT.md) that makes projects effective with Claude Code. Templates are Python format strings in `scaffold.py` with `{project_name}` substitution. Only creates files that don't already exist — safe to run repeatedly.
-
-### Template Evolution
-
-**Status: Implemented** — see `src/elmer/archstats.py`
-
-`elmer archetypes stats` shows archetype effectiveness metrics computed from existing exploration data: approval rate, rejection count, average cost, total explorations per archetype. `elmer archetypes list` shows all available archetypes (local + bundled). No new tables or tracking — everything is derived from the existing `explorations` table.
-
-### Attention Routing
-
-**Status: Implemented** — see `src/elmer/review.py` (`list_proposals_prioritized`, `_score_proposal`)
-
-`elmer review --prioritize` ranks pending proposals using a deterministic heuristic: dependents blocked (+30 each), staleness (+1/hour, max 24), small diff (+10), failed status (+5). Scores and reasons are displayed to help humans review the most impactful proposals first. No AI call — fast, free, transparent.
-
-### Document Invariant Enforcement
-
-**Status: Implemented** — see `src/elmer/invariants.py`, `src/elmer/archetypes/validate-invariants.md`
-
-`elmer validate` and `elmer approve --validate-invariants` spawn a synchronous `claude -p` session that checks document consistency (ADR counts, phase status, feature claims) and auto-fixes violations. Default rules match CLAUDE.md's "Document Invariants" section. Custom rules configurable in `[invariants] rules` in `config.toml`.
-
-### Multi-Project Dashboard
-
-**Status: Implemented** — see `src/elmer/dashboard.py`, `src/elmer/config.py` (registry functions)
-
-`elmer status --all-projects` aggregates exploration status across all registered Elmer projects. Projects are tracked in a global registry at `~/.elmer/projects.json`, automatically updated when `elmer init` runs or any command accesses `.elmer/`. The dashboard shows counts by status and total cost per project with a grand totals row when multiple projects are registered. Stale registry entries are pruned on read.
-
-### PR-Based Review
-
-**Status: Implemented** — see `src/elmer/pr.py`
-
-`elmer pr ID` pushes an exploration branch to the remote and creates a GitHub PR using the `gh` CLI. PROPOSAL.md content becomes the PR body. This integrates Elmer with existing code review workflows — explorations can be reviewed and discussed via GitHub's PR interface instead of (or in addition to) the local `elmer review` / `elmer approve` flow. The `gh` CLI is an optional dependency.
-
-### Batch Topic Lists
-
-**Status: Implemented** — see `src/elmer/batch.py`, `src/elmer/cli.py` (batch command)
-
-`elmer batch <file>` reads `---`-separated markdown topic list files and spawns one exploration per topic. The archetype is inferred from the filename stem (`.elmer/explore-act.md` → `explore-act`). `--chain` creates a dependency chain using the existing DAG system so topics execute and merge sequentially, avoiding merge conflicts.
-
-Topic list files are committed to git at `.elmer/<archetype>.md`. They serve as curated, versioned research agendas — the human decides what to explore, Elmer executes.
-
-### Claude Code Skill Scaffolding
-
-**Status: Implemented** — see `src/elmer/skill_scaffold.py`, `src/elmer/cli.py` (init --skills)
-
-`elmer init --skills` generates project-specific Claude Code skills in `.claude/skills/`. Skills are detected by scanning project docs (CLAUDE.md, DESIGN.md, CONTEXT.md) for signals: mission principles → `mission-align`, i18n references → `cultural-lens`, user personas → `persona-ux`, compliance requirements → `compliance-check`.
-
-Generated skills are Claude Code SKILL.md files with YAML frontmatter and `$ARGUMENTS` substitution. They provide interactive analysis lenses invocable as `/skill-name` within Claude Code sessions.
+Insights extracted from approved proposals get stored in `~/.elmer/insights.db`. Future explorations get relevant insights injected via keyword matching. Extraction is opt-in (`[insights] enabled = true`). Both extraction and injection are best-effort — failures never block the flow.
 
 ### Elmer vs Claude Code Skills
 
-Elmer archetypes and Claude Code skills are parallel systems. They overlap in analysis methodology but serve different moments:
+Elmer archetypes and Claude Code skills overlap in analysis methodology but serve different moments:
 
 | Dimension | Elmer archetypes | Claude Code skills |
 |-----------|-----------------|-------------------|
 | Execution | Background `claude -p` on git branches | Interactive, in-session |
 | Output | PROPOSAL.md on a branch | Action list in chat |
 | State | Tracked in SQLite, persistent | Ephemeral, dies with session |
-| Parallelism | Multiple concurrent workers | One at a time |
-| Substitution | `$TOPIC` | `$ARGUMENTS` |
 | Best for | Autonomous batch research, overnight runs | Interactive design thinking, quick audits |
 
-The overlap (e.g., `coherence-audit.md` archetype ≈ `/coherence` skill) is tolerated. No shared template layer — they diverge independently because they serve different runtimes. `elmer init --skills` bridges the gap by generating project-specific skills that complement the global analysis skills and Elmer's autonomous archetypes.
+The overlap is tolerated. No shared template layer — they diverge independently because they serve different runtimes. `elmer init --skills` generates project-specific skills from doc signals.
 
 ## Design Decisions
 
-Full rationale in DECISIONS.md. 23 ADRs recorded.
+23 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-- **ADR-001:** Git worktrees over directory copying
-- **ADR-002:** Background `claude -p` over Agent Teams
-- **ADR-003:** SQLite over JSON state files
-- **ADR-004:** Click over argparse
-- **ADR-005:** Static templates before generated prompts
-- **ADR-006:** Daemon deferred to Phase 3
-- **ADR-007:** Synchronous `claude -p` for meta-operations
-- **ADR-008:** JSON output format for cost extraction
-- **ADR-009:** AI archetype selection as a meta-operation
-- **ADR-010:** Daemon as composition layer
-- **ADR-011:** PID file for daemon coordination
-- **ADR-012:** Chain actions as shell commands
-- **ADR-013:** Global insights database at ~/.elmer/
-- **ADR-014:** Question mining as meta-operation
-- **ADR-015:** Five-document scaffolding as templates
-- **ADR-016:** Archetype stats from existing exploration data
-- **ADR-017:** Heuristic attention routing
-- **ADR-018:** Invariant enforcement as meta-operation
-- **ADR-019:** Global project registry for multi-project dashboard
-- **ADR-020:** PR creation via gh CLI
-- **ADR-021:** Topic list files with batch command
-- **ADR-022:** Claude Code skill scaffolding as Elmer feature
-- **ADR-023:** Mutable ADRs with git audit trail
-
-*Last updated: coherence audit — modules table, archetype categories, storage schema, prompt-gen status marker*
+*Last updated: 2026-02-23, crystallization — merged architecture sections, removed duplication*
