@@ -146,6 +146,16 @@ def start_exploration(
                 conn.close()
                 raise RuntimeError(f"Dependency '{dep_id}' not found.")
 
+    # Check for dependency cycles before committing any resources
+    if depends_on:
+        for dep_id in depends_on:
+            if state.would_create_cycle(conn, slug, dep_id):
+                conn.close()
+                raise RuntimeError(
+                    f"Dependency cycle detected: '{slug}' -> '{dep_id}' "
+                    f"would create a circular dependency."
+                )
+
     # Check if blocked by unmet dependencies
     blocked = False
     if depends_on:

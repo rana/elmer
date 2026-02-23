@@ -73,6 +73,7 @@ elmer clean
 | `elmer approve ID --auto-followup` | Approve and generate follow-up topics |
 | `elmer approve ID --validate-invariants` | Check doc consistency after merge |
 | `elmer reject ID` | Discard branch and clean up |
+| `elmer cancel ID` | Stop a running or pending exploration |
 | `elmer costs` | Show cost summary for all explorations |
 | `elmer validate` | Check document invariants |
 | `elmer archetypes list` | List available archetypes |

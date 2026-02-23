@@ -679,6 +679,24 @@ def reject(exploration_id):
 
 
 @cli.command()
+@click.argument("exploration_id")
+def cancel(exploration_id):
+    """Cancel a running or pending exploration.
+
+    Stops the Claude session (if running), removes the worktree and branch,
+    and marks the exploration as rejected. The log file is preserved.
+
+    Use this to stop explorations that are burning money on the wrong topic
+    or archetype. For completed explorations, use 'elmer reject' instead.
+    """
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+
+    gate.cancel_exploration(elmer_dir, project_dir, exploration_id)
+    click.echo(f"Cancelled: {exploration_id}")
+
+
+@cli.command()
 def clean():
     """Clean up finished explorations.
 

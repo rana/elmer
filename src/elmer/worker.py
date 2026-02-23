@@ -163,3 +163,34 @@ def is_running(pid: int) -> bool:
         return False
     except PermissionError:
         return True  # exists but we can't signal it
+
+
+def terminate(pid: int) -> bool:
+    """Terminate a running process. Returns True if the process was stopped.
+
+    Sends SIGTERM first for graceful shutdown, then SIGKILL after 5 seconds.
+    """
+    import signal
+    import time
+
+    if pid is None or not is_running(pid):
+        return False
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return False
+
+    # Wait up to 5 seconds for graceful exit
+    for _ in range(50):
+        if not is_running(pid):
+            return True
+        time.sleep(0.1)
+
+    # Force kill
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+    return not is_running(pid)

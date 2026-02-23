@@ -9,7 +9,7 @@ from typing import Optional
 
 import click
 
-from . import config, explore as explore_mod, generate as gen_mod, insights, state, worktree
+from . import config, explore as explore_mod, generate as gen_mod, insights, state, worker, worktree
 
 
 def _cleanup_worktree(project_dir: Path, exp: dict) -> None:
@@ -203,6 +203,107 @@ def reject_exploration(
     _cleanup_worktree(project_dir, exp)
 
     state.update_exploration(conn, exploration_id, status="rejected")
+
+    _warn_orphaned_dependents(conn, exploration_id, notify=notify)
+    conn.close()
+
+    # Execute on_reject chain action
+    on_reject = exp["on_reject"] if "on_reject" in exp.keys() else None
+    if on_reject:
+        _execute_chain_action(
+            on_reject, exploration_id, exp["topic"], project_dir, notify=notify,
+        )
+
+
+def _warn_orphaned_dependents(
+    conn, exploration_id: str, notify=None,
+) -> None:
+    """Warn about pending explorations that depend on a rejected/cancelled exploration."""
+    if notify is None:
+        notify = click.echo
+
+    # Walk the dependency graph forward to find all transitive dependents
+    orphaned = []
+    queue = state.get_dependents(conn, exploration_id)
+    visited = set()
+    while queue:
+        dep_id = queue.pop(0)
+        if dep_id in visited:
+            continue
+        visited.add(dep_id)
+        dep = state.get_exploration(conn, dep_id)
+        if dep and dep["status"] == "pending":
+            orphaned.append(dep_id)
+            # This pending exploration's dependents are also affected
+            queue.extend(state.get_dependents(conn, dep_id))
+
+    if orphaned:
+        notify(
+            f"Warning: {len(orphaned)} pending exploration(s) depend on "
+            f"'{exploration_id}' and can no longer start:"
+        )
+        for oid in orphaned:
+            notify(f"  {oid}")
+        notify("Use 'elmer reject ID' to discard them.")
+
+
+def cancel_exploration(
+    elmer_dir: Path, project_dir: Path, exploration_id: str, *, notify=None,
+) -> None:
+    """Cancel a running or pending exploration: stop the process, clean up."""
+    if notify is None:
+        notify = click.echo
+
+    conn = state.get_db(elmer_dir)
+    exp = state.get_exploration(conn, exploration_id)
+
+    if exp is None:
+        click.echo(f"Exploration '{exploration_id}' not found.", err=True)
+        sys.exit(1)
+
+    if exp["status"] not in ("running", "pending"):
+        click.echo(
+            f"Cannot cancel exploration in status '{exp['status']}'. "
+            f"Must be 'running' or 'pending'.",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Stop the process if running
+    if exp["status"] == "running" and exp["pid"]:
+        stopped = worker.terminate(exp["pid"])
+        if stopped:
+            notify(f"Stopped process {exp['pid']}")
+        else:
+            notify(f"Process {exp['pid']} already stopped")
+
+        # Extract cost data from log (best-effort)
+        cost_fields = {}
+        log_path = elmer_dir / "logs" / f"{exploration_id}.log"
+        cost_result = worker.parse_log_costs(log_path)
+        if cost_result:
+            cost_fields = {
+                k: v for k, v in {
+                    "input_tokens": cost_result.input_tokens,
+                    "output_tokens": cost_result.output_tokens,
+                    "cost_usd": cost_result.cost_usd,
+                    "num_turns_actual": cost_result.num_turns,
+                }.items() if v is not None
+            }
+
+        _cleanup_worktree(project_dir, exp)
+        state.update_exploration(
+            conn,
+            exploration_id,
+            status="rejected",
+            completed_at=datetime.now(timezone.utc).isoformat(),
+            **cost_fields,
+        )
+    else:
+        # Pending — no process or worktree to clean
+        state.update_exploration(conn, exploration_id, status="rejected")
+
+    _warn_orphaned_dependents(conn, exploration_id, notify=notify)
     conn.close()
 
     # Execute on_reject chain action

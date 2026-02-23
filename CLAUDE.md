@@ -37,6 +37,7 @@ Full options and examples in README.md. Core subcommands:
 | `elmer review [ID]` | List pending proposals or show one (`--prioritize` for ranked review) |
 | `elmer approve ID` | Merge branch, cleanup (`--all`, `--auto-followup`, `--validate-invariants`) |
 | `elmer reject ID` | Discard branch, cleanup |
+| `elmer cancel ID` | Stop running/pending exploration, cleanup |
 | `elmer costs` | Cost summary (`--exploration ID` for detail) |
 | `elmer validate` | Check document invariants |
 | `elmer archetypes` | `list` or `stats` |
@@ -105,4 +106,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-23, crystallization — eliminated duplication, tightened to instructions*
+*Last updated: 2026-02-23, added cancel command, cycle detection, chain rejection warnings*

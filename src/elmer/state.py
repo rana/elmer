@@ -198,6 +198,27 @@ def get_dependents(conn: sqlite3.Connection, exploration_id: str) -> list[str]:
     return [r["exploration_id"] for r in rows]
 
 
+def would_create_cycle(conn: sqlite3.Connection, exploration_id: str, depends_on_id: str) -> bool:
+    """Check if adding exploration_id -> depends_on_id would create a cycle.
+
+    Returns True if depends_on_id already transitively depends on exploration_id,
+    meaning that adding this edge would close a loop.
+    """
+    # DFS from depends_on_id through existing dependencies.
+    # If we can reach exploration_id, adding the edge creates a cycle.
+    visited: set[str] = set()
+    stack = [depends_on_id]
+    while stack:
+        current = stack.pop()
+        if current == exploration_id:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        stack.extend(get_dependencies(conn, current))
+    return False
+
+
 def get_pending_ready(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Get pending explorations whose dependencies are all approved."""
     return conn.execute("""
