@@ -76,6 +76,8 @@ elmer clean
 | `elmer approve ID --validate-invariants` | Check doc consistency after merge |
 | `elmer reject ID` | Discard branch and clean up |
 | `elmer cancel ID` | Stop a running or pending exploration |
+| `elmer retry ID` | Retry a failed exploration with same parameters |
+| `elmer retry --failed` | Retry all failed explorations |
 | `elmer costs` | Show cost summary for all explorations |
 | `elmer validate` | Check document invariants |
 | `elmer archetypes list` | List available archetypes |
@@ -125,6 +127,13 @@ elmer batch .elmer/prototype.md --chain        # Sequential — no merge conflic
 elmer batch .elmer/explore-act.md --item 3     # Run only item 3
 elmer batch .elmer/explore-act.md --budget 10  # $10 divided across topics
 elmer batch .elmer/explore-act.md --auto-approve --chain  # Fully autonomous pipeline
+elmer batch .elmer/explore-act.md --max-concurrent 3  # Only 3 run at once, rest queued
+elmer batch .elmer/explore-act.md --stagger 5         # 5s delay between spawns
+
+# Retry failed explorations
+elmer retry my-exploration-id         # Retry one failed exploration
+elmer retry --failed                  # Retry all failed explorations
+elmer retry --failed --max-concurrent 3  # Throttled retry
 
 # Multi-project
 elmer status --all-projects            # Aggregated status across all projects

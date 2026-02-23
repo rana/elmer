@@ -342,6 +342,131 @@ def approve_all(
     return approved
 
 
+def retry_exploration(
+    elmer_dir: Path, project_dir: Path, exploration_id: str, *, notify=None,
+) -> str:
+    """Retry a failed exploration: clean up old state and re-spawn with same parameters.
+
+    Returns the new exploration slug.
+    """
+    if notify is None:
+        notify = click.echo
+
+    conn = state.get_db(elmer_dir)
+    exp = state.get_exploration(conn, exploration_id)
+
+    if exp is None:
+        click.echo(f"Exploration '{exploration_id}' not found.", err=True)
+        sys.exit(1)
+
+    if exp["status"] != "failed":
+        click.echo(
+            f"Cannot retry exploration in status '{exp['status']}'. "
+            f"Must be 'failed'.",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Extract parameters from the failed exploration
+    topic = exp["topic"]
+    archetype = exp["archetype"]
+    model = exp["model"]
+    max_turns = exp["max_turns"] or 50
+    auto_approve = bool(exp["auto_approve"])
+    generate_prompt = bool(exp["generate_prompt"])
+    budget_usd = exp["budget_usd"]
+
+    # Clean up the failed exploration's worktree and branch
+    _cleanup_worktree(project_dir, exp)
+    state.delete_exploration(conn, exploration_id)
+    conn.close()
+
+    # Re-spawn with the same parameters
+    slug, _ = explore_mod.start_exploration(
+        topic=topic,
+        archetype=archetype,
+        model=model,
+        max_turns=max_turns,
+        elmer_dir=elmer_dir,
+        project_dir=project_dir,
+        auto_approve=auto_approve,
+        generate_prompt=generate_prompt,
+        budget_usd=budget_usd,
+    )
+    return slug
+
+
+def retry_all_failed(
+    elmer_dir: Path, project_dir: Path, *, max_concurrent: Optional[int] = None, notify=None,
+) -> list[str]:
+    """Retry all failed explorations. Returns list of new slugs.
+
+    If max_concurrent is set, only the first N retry immediately;
+    the rest are queued with sliding-window dependencies.
+    """
+    if notify is None:
+        notify = click.echo
+
+    conn = state.get_db(elmer_dir)
+    failed = state.list_explorations(conn, status="failed")
+    conn.close()
+
+    if not failed:
+        notify("No failed explorations to retry.")
+        return []
+
+    retried: list[str] = []
+    for i, exp in enumerate(failed):
+        try:
+            conn = state.get_db(elmer_dir)
+            # Re-read to ensure it's still failed (may have been cleaned between iterations)
+            current = state.get_exploration(conn, exp["id"])
+            conn.close()
+            if current is None or current["status"] != "failed":
+                continue
+
+            # Determine dependencies for concurrency throttle
+            dep_list = None
+            if max_concurrent is not None and i >= max_concurrent:
+                dep_list = [retried[i - max_concurrent]]
+
+            topic = exp["topic"]
+            archetype = exp["archetype"]
+            model = exp["model"]
+            max_turns = exp["max_turns"] or 50
+            auto_approve = bool(exp["auto_approve"])
+            generate_prompt = bool(exp["generate_prompt"])
+            budget_usd = exp["budget_usd"]
+
+            # Clean up old state
+            _cleanup_worktree(project_dir, exp)
+            conn = state.get_db(elmer_dir)
+            state.delete_exploration(conn, exp["id"])
+            conn.close()
+
+            slug, _ = explore_mod.start_exploration(
+                topic=topic,
+                archetype=archetype,
+                model=model,
+                max_turns=max_turns,
+                elmer_dir=elmer_dir,
+                project_dir=project_dir,
+                depends_on=dep_list,
+                auto_approve=auto_approve,
+                generate_prompt=generate_prompt,
+                budget_usd=budget_usd,
+            )
+            retried.append(slug)
+            if dep_list:
+                notify(f"Queued:   {slug} (waiting for {dep_list[0]})")
+            else:
+                notify(f"Retrying: {slug}")
+        except (RuntimeError, FileNotFoundError) as e:
+            notify(f"Error retrying {exp['id']}: {e}")
+
+    return retried
+
+
 def clean_all(elmer_dir: Path, project_dir: Path) -> int:
     """Clean up worktrees for completed explorations. Returns count cleaned."""
     conn = state.get_db(elmer_dir)
@@ -349,7 +474,7 @@ def clean_all(elmer_dir: Path, project_dir: Path) -> int:
 
     cleaned = 0
     for exp in explorations:
-        if exp["status"] in ("approved", "rejected"):
+        if exp["status"] in ("approved", "rejected", "failed"):
             worktree_path = Path(exp["worktree_path"])
             if worktree_path.exists():
                 _cleanup_worktree(project_dir, exp)

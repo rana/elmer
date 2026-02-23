@@ -32,7 +32,7 @@ Full options and examples in README.md. Core subcommands:
 |---------|---------|
 | `elmer init` | Scaffold `.elmer/` in current project (`--docs`, `--skills`, `--agents`) |
 | `elmer explore "topic"` | Start exploration on a new branch (`-a`, `-m`, `--auto-approve`, `--budget`, etc.) |
-| `elmer batch FILE` | Spawn from `---`-separated topic list file (`--chain`, `--dry-run`, `--item`) |
+| `elmer batch FILE` | Spawn from `---`-separated topic list file (`--chain`, `--dry-run`, `--item`, `--max-concurrent`, `--stagger`) |
 | `elmer generate` | AI-generate research topics and spawn explorations (`--count`, `--follow-up`, `--dry-run`) |
 | `elmer status` | Show all explorations with state (`--all-projects` for dashboard) |
 | `elmer tree` | Exploration dependency tree |
@@ -40,6 +40,7 @@ Full options and examples in README.md. Core subcommands:
 | `elmer approve ID` | Merge branch, cleanup (`--all`, `--auto-followup`, `--validate-invariants`) |
 | `elmer reject ID` | Discard branch, cleanup |
 | `elmer cancel ID` | Stop running/pending exploration, cleanup |
+| `elmer retry [ID]` | Retry failed exploration(s) (`--failed`, `--max-concurrent`) |
 | `elmer costs` | Cost summary (`--exploration ID` for detail) |
 | `elmer validate` | Check document invariants |
 | `elmer archetypes` | `list` or `stats` |

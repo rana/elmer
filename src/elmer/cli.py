@@ -300,7 +300,9 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
 @click.option("--auto-archetype", is_flag=True, default=False, help="AI selects the best archetype per topic (overrides filename inference)")
 @click.option("--generate-prompt", is_flag=True, default=False, help="Use AI to generate exploration prompts (two-stage)")
 @click.option("--budget", "budget_usd", default=None, type=float, help="Total budget in USD (divided across topics)")
-def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve, auto_archetype, generate_prompt, budget_usd):
+@click.option("--max-concurrent", default=None, type=int, help="Max parallel explorations (excess queued as pending)")
+@click.option("--stagger", default=None, type=float, help="Seconds to wait between spawning each exploration")
+def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve, auto_archetype, generate_prompt, budget_usd, max_concurrent, stagger):
     """Run explorations from a topic list file.
 
     Topic list files are markdown documents with --- separators.
@@ -320,6 +322,14 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
         Second topic (can be multi-line)
         ---
 
+    With --max-concurrent N, only N explorations launch immediately.
+    The rest are queued as pending and launch automatically as running
+    ones complete (via 'elmer status' refresh or daemon). This prevents
+    API rate limit overwhelm when batching many topics.
+
+    With --stagger N, waits N seconds between spawning each exploration.
+    Can be combined with --max-concurrent for both throttling and spacing.
+
     \b
     Examples:
         elmer batch .elmer/explore-act.md              # spawn all topics
@@ -328,6 +338,8 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
         elmer batch .elmer/explore-act.md --item 2     # run only item 2
         elmer batch .elmer/prototype.md -m opus        # override model
         elmer batch .elmer/explore-act.md --budget 10  # $10 divided across topics
+        elmer batch .elmer/explore-act.md --max-concurrent 3  # throttle parallelism
+        elmer batch .elmer/explore-act.md --stagger 5  # 5s delay between spawns
     """
     from pathlib import Path as P
 
@@ -412,11 +424,18 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
         click.echo()
 
     # Spawn explorations
+    # Track all slugs for sliding-window dependency injection
+    spawned_slugs: list[str] = []
     previous_slug = None
+    deferred_count = 0
     for i, topic in enumerate(topics):
         dep_list = None
         if chain and previous_slug is not None:
             dep_list = [previous_slug]
+        elif max_concurrent is not None and i >= max_concurrent:
+            # Sliding window: depend on the exploration that is max_concurrent
+            # positions back, so as one finishes the next can start.
+            dep_list = [spawned_slugs[i - max_concurrent]]
 
         try:
             slug, archetype_used = explore_mod.start_exploration(
@@ -432,11 +451,20 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
                 generate_prompt=use_generate,
                 budget_usd=per_topic_budget,
             )
-            click.echo(f"Started: {slug}")
-            click.echo(f"  Branch:    elmer/{slug}")
-            click.echo(f"  Archetype: {archetype_used}" + (" (AI-selected)" if use_auto_archetype else ""))
-            if chain and previous_slug:
-                click.echo(f"  Depends on: {previous_slug}")
+            spawned_slugs.append(slug)
+            is_deferred = max_concurrent is not None and i >= max_concurrent
+            if is_deferred:
+                deferred_count += 1
+                click.echo(f"Queued:  {slug}")
+                click.echo(f"  Branch:    elmer/{slug}")
+                click.echo(f"  Archetype: {archetype_used}" + (" (AI-selected)" if use_auto_archetype else ""))
+                click.echo(f"  Waiting for: {dep_list[0]}")
+            else:
+                click.echo(f"Started: {slug}")
+                click.echo(f"  Branch:    elmer/{slug}")
+                click.echo(f"  Archetype: {archetype_used}" + (" (AI-selected)" if use_auto_archetype else ""))
+                if chain and previous_slug:
+                    click.echo(f"  Depends on: {previous_slug}")
             if auto_approve:
                 click.echo(f"  Auto-approve: enabled")
             if per_topic_budget is not None:
@@ -450,7 +478,16 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
                 click.echo("Chain broken — stopping.", err=True)
                 break
 
+        # Stagger delay between spawns (skip after last topic)
+        if stagger and i < len(topics) - 1:
+            import time
+            time.sleep(stagger)
+
     click.echo(f"Batch complete.")
+    if deferred_count:
+        click.echo(f"  {len(spawned_slugs) - deferred_count} launched, {deferred_count} queued (max-concurrent {max_concurrent}).")
+        click.echo("  Queued explorations launch as running ones complete.")
+        click.echo("  Use 'elmer status' to refresh and trigger pending launches.")
     if chain:
         click.echo("Topics are chained — each starts after the previous is approved.")
         click.echo("Use 'elmer approve ID' to advance the chain, or 'elmer approve --all' for each step.")
@@ -768,10 +805,47 @@ def cancel(exploration_id):
 
 
 @cli.command()
+@click.argument("exploration_id", required=False, default=None)
+@click.option("--failed", is_flag=True, help="Retry all failed explorations")
+@click.option("--max-concurrent", default=None, type=int, help="Max parallel retries (excess queued as pending)")
+def retry(exploration_id, failed, max_concurrent):
+    """Retry failed explorations.
+
+    Re-spawns a failed exploration with the same topic, archetype, model,
+    and budget. The old failed entry is cleaned up and a new exploration
+    is created.
+
+    \b
+    Examples:
+        elmer retry my-exploration-id         # retry one
+        elmer retry --failed                  # retry all failed
+        elmer retry --failed --max-concurrent 3  # throttled retry
+    """
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+
+    if not exploration_id and not failed:
+        click.echo("Specify an exploration ID or use --failed to retry all.", err=True)
+        sys.exit(1)
+
+    if exploration_id and failed:
+        click.echo("Cannot combine a specific ID with --failed.", err=True)
+        sys.exit(1)
+
+    if failed:
+        retried = gate.retry_all_failed(elmer_dir, project_dir, max_concurrent=max_concurrent)
+        if retried:
+            click.echo(f"Retried {len(retried)} exploration(s).")
+    else:
+        slug = gate.retry_exploration(elmer_dir, project_dir, exploration_id)
+        click.echo(f"Retrying: {slug}")
+
+
+@cli.command()
 def clean():
     """Clean up finished explorations.
 
-    Removes worktrees and state entries for approved and rejected
+    Removes worktrees and state entries for approved, rejected, and failed
     explorations. Running and pending explorations are not affected.
     """
     project_dir = _require_project()
