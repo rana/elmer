@@ -32,15 +32,25 @@ def generate_topics(
 
     conn.close()
 
-    # Load and assemble prompt
-    template_path = config.resolve_archetype(elmer_dir, "generate-topics")
-    template = template_path.read_text()
-    prompt = (
-        template
-        .replace("$COUNT", str(count))
-        .replace("$HISTORY", history or "(none yet)")
-        .replace("$FOLLOWUP_CONTEXT", followup_context)
-    )
+    # Try agent-aware invocation, fall back to template substitution
+    agent_config = config.resolve_meta_agent(project_dir, "generate-topics")
+
+    if agent_config is not None:
+        prompt = (
+            f"Generate exactly {count} research topics.\n\n"
+            f"## Exploration History\n\n"
+            f"{history or '(none yet)'}\n\n"
+            f"{followup_context}"
+        ).strip()
+    else:
+        template_path = config.resolve_archetype(elmer_dir, "generate-topics")
+        template = template_path.read_text()
+        prompt = (
+            template
+            .replace("$COUNT", str(count))
+            .replace("$HISTORY", history or "(none yet)")
+            .replace("$FOLLOWUP_CONTEXT", followup_context)
+        )
 
     # Run claude synchronously
     result = worker.run_claude(
@@ -48,6 +58,7 @@ def generate_topics(
         cwd=project_dir,
         model=model,
         max_turns=max_turns,
+        agent_config=agent_config,
     )
 
     # Record meta-operation cost

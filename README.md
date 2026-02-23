@@ -29,6 +29,7 @@ pip install /path/to/elmer
 elmer init
 elmer init --docs                     # Also scaffold project documentation
 elmer init --skills                   # Also scaffold Claude Code skills
+elmer init --agents                   # Scaffold subagent definitions for customization
 
 # Start explorations
 elmer explore "evaluate COT positioning as 6th data axis"
@@ -57,6 +58,7 @@ elmer clean
 | `elmer init` | Initialize `.elmer/` in the current project |
 | `elmer init --docs` | Also scaffold CLAUDE.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CONTEXT.md |
 | `elmer init --skills` | Scaffold Claude Code skills from project docs |
+| `elmer init --agents` | Scaffold Claude Code subagent definitions to `.claude/agents/` |
 | `elmer explore "topic"` | Start an exploration on a new branch |
 | `elmer explore -f topics.txt` | Batch explore from a file (one topic per line) |
 | `elmer batch .elmer/explore-act.md` | Run explorations from a topic list file |
@@ -140,22 +142,24 @@ elmer daemon --auto-followup           # Generate follow-ups after approvals
 
 ## Archetypes
 
-Archetypes are prompt templates that shape how Claude explores a topic.
+Archetypes define how Claude explores a topic. Each archetype is implemented as a Claude Code custom subagent with tool restrictions and a methodology-specific system prompt (ADR-026).
 
-| Archetype | Purpose |
-|-----------|---------|
-| `explore` | Read-only analysis — think deeply, no action bias |
-| `explore-act` | Analysis biased toward concrete action proposals |
-| `prototype` | Write working code on the branch |
-| `adr-proposal` | Propose architecture decisions with alternatives |
-| `question-cluster` | Explore clusters of related open questions |
-| `benchmark` | Measure, evaluate, and recommend improvements |
-| `dead-end-analysis` | Analyze whether a direction is worth pursuing |
-| `devil-advocate` | Challenge assumptions and decisions |
+| Archetype | Purpose | Tools |
+|-----------|---------|-------|
+| `explore` | Read-only analysis — think deeply, no action bias | Read, Grep, Glob, Bash, Edit, Write |
+| `explore-act` | Analysis biased toward concrete action proposals | Read, Grep, Glob, Bash, Edit, Write |
+| `prototype` | Write working code on the branch | Read, Grep, Glob, Bash, Edit, Write |
+| `adr-proposal` | Propose architecture decisions with alternatives | Read, Grep, Glob, Bash, Edit, Write |
+| `question-cluster` | Explore clusters of related open questions | Read, Grep, Glob, Bash, Edit, Write |
+| `benchmark` | Measure, evaluate, and recommend improvements | Read, Grep, Glob, Bash, Edit, Write |
+| `dead-end-analysis` | Analyze whether a direction is worth pursuing | Read, Grep, Glob, Bash, Edit, Write |
+| `devil-advocate` | Challenge assumptions and decisions | Read, Grep, Glob, Bash, Edit, Write |
+
+**Audit archetypes** use read-only tools (`Read, Grep, Glob, Bash`): consistency-audit, coherence-audit, architecture-audit, documentation-audit, mission-audit, operational-audit, opportunity-scan, workflow-audit.
 
 Use `--auto-archetype` to let AI pick the best archetype for each topic. Use `-a` to force a specific one.
 
-Archetypes live in `.elmer/archetypes/`. Add your own by creating a markdown file with `$TOPIC` as the placeholder. Use `elmer archetypes stats` to see which perform best.
+Agent definitions are bundled with Elmer and used automatically. To customize, run `elmer init --agents` to scaffold local copies in `.claude/agents/`. Local copies override bundled defaults. Legacy `$TOPIC` template substitution (`.elmer/archetypes/`) is used as fallback when no agent definition exists. Use `elmer archetypes stats` to see which perform best.
 
 ## Topic List Files
 
@@ -254,11 +258,24 @@ With `--skills`, detects project characteristics and creates:
 
 These skills provide interactive analysis lenses (`/mission-align`, `/cultural-lens`, etc.) in Claude Code sessions, complementing Elmer's autonomous exploration archetypes.
 
+With `--agents`, copies all bundled subagent definitions for customization:
+
+```
+.claude/agents/
+├── elmer-explore-act.md       # Exploration agents (8)
+├── elmer-explore.md
+├── elmer-consistency-audit.md # Audit agents (8)
+├── elmer-meta-review-gate.md  # Meta-operation agents (7)
+└── ...                        # 23 agents total
+```
+
+Agents define exploration methodology as Claude Code custom subagents with tool restrictions and model selection. Local copies override bundled defaults. See ADR-026 in DECISIONS.md.
+
 ## How Explorations Work
 
 1. `elmer explore "topic"` creates a git worktree on branch `elmer/<slug>`
-2. Loads the archetype template, substitutes `$TOPIC`
-3. Spawns `claude -p "<prompt>"` in the worktree directory (background)
+2. Resolves a Claude Code subagent for the archetype (or falls back to `$TOPIC` template)
+3. Spawns `claude --agents <JSON> --agent <name> -p "<topic>"` in the worktree (background)
 4. Claude reads project docs, investigates the topic, writes `PROPOSAL.md`
 5. `elmer status` detects when the session finishes
 6. `elmer review <id>` shows the proposal

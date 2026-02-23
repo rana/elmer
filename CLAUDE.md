@@ -6,7 +6,7 @@ Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, rules, conventions
 2. **CONTEXT.md** — project methodology, collaboration model, current state
 3. **DESIGN.md** — architecture, data model, module responsibilities
-4. **DECISIONS.md** — ADRs with full rationale (25 recorded)
+4. **DECISIONS.md** — ADRs with full rationale (26 recorded)
 5. **ROADMAP.md** — phase history and deferred features
 6. **README.md** — user-facing docs, install, full command reference
 7. **GUIDE.md** — practical usage playbook, workflows, patterns
@@ -30,7 +30,7 @@ Full options and examples in README.md. Core subcommands:
 
 | Command | Purpose |
 |---------|---------|
-| `elmer init` | Scaffold `.elmer/` in current project (`--docs`, `--skills`) |
+| `elmer init` | Scaffold `.elmer/` in current project (`--docs`, `--skills`, `--agents`) |
 | `elmer explore "topic"` | Start exploration on a new branch (`-a`, `-m`, `--auto-approve`, `--budget`, etc.) |
 | `elmer batch FILE` | Spawn from `---`-separated topic list file (`--chain`, `--dry-run`, `--item`) |
 | `elmer generate` | AI-generate research topics and spawn explorations (`--count`, `--follow-up`, `--dry-run`) |
@@ -56,9 +56,9 @@ Full options and examples in README.md. Core subcommands:
 
 - No external database servers. SQLite only.
 - No async framework. Subprocess + PID tracking for background processes.
-- Archetypes use `$TOPIC` substitution — no Jinja, no templating engine.
+- Archetypes as Claude Code custom subagents (ADR-026) — `$TOPIC` template fallback when no agent definition exists.
 - Git worktrees, never directory copying. Worktrees share `.git`.
-- `claude -p` for headless sessions, never Agent Teams (session-scoped, don't persist).
+- `claude -p` with `--agents`/`--agent` flags for headless sessions, never Agent Teams (session-scoped, don't persist).
 
 ### Design Principles
 
@@ -106,7 +106,7 @@ Each piece of information lives in one place. Other files reference, not duplica
 
 ### Per-Session Checklist
 
-1. If you added ADRs → update count in CLAUDE.md Orientation ("25 recorded") and DECISIONS.md header
+1. If you added ADRs → update count in CLAUDE.md Orientation ("26 recorded") and DECISIONS.md header
 2. If architecture changed → update DESIGN.md
 3. If commands changed → update README.md
 4. Update last-updated footer on every modified document
@@ -117,4 +117,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-23, event-driven document maintenance (ADR-025)*
+*Last updated: 2026-02-23, custom subagent integration (ADR-026)*

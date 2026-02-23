@@ -27,16 +27,22 @@ def mine_questions(
             "claude CLI not found in PATH. Install Claude Code first."
         )
 
-    # Load archetype
-    template_path = config.resolve_archetype(elmer_dir, "mine-questions")
-    template = template_path.read_text()
+    # Try agent-aware invocation, fall back to template substitution
+    agent_config = config.resolve_meta_agent(project_dir, "mine-questions")
+
+    if agent_config is not None:
+        prompt = "Extract all open questions from this project's documentation."
+    else:
+        template_path = config.resolve_archetype(elmer_dir, "mine-questions")
+        prompt = template_path.read_text()
 
     # Run claude synchronously — it reads the project docs itself
     result = worker.run_claude(
-        prompt=template,
+        prompt=prompt,
         cwd=project_dir,
         model=model,
         max_turns=max_turns,
+        agent_config=agent_config,
     )
 
     # Record meta-operation cost

@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-25 ADRs recorded.
+26 ADRs recorded.
 
 ## Domain Index
 
@@ -33,6 +33,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-023 | Governance | Mutable ADRs with git audit trail |
 | ADR-024 | Integration | MCP server for structured tool access |
 | ADR-025 | Scaffolding | Event-driven document maintenance in scaffolding |
+| ADR-026 | Process | Exploration archetypes as Claude Code custom subagents |
 
 ---
 
@@ -299,3 +300,30 @@ The enhanced scaffold also includes:
 These patterns were proven in a mature project (SRF Yogananda Teachings, 123 ADRs) and back-ported to Elmer's scaffolding. The scaffold teaches the full pattern from day one rather than requiring projects to discover it organically.
 
 **Alternatives considered:** Keeping the simple table and letting projects evolve their own maintenance patterns (loses the accumulated knowledge), making the scaffold AI-generated per-project via `claude -p` (expensive and unpredictable for what should be deterministic templates, consistent with ADR-015), adding maintenance rules as a separate post-init step (fragments the setup experience).
+
+## ADR-026: Exploration Archetypes as Claude Code Custom Subagents
+
+**Decision:** Convert all exploration archetypes and meta-operation templates into Claude Code custom subagent definitions, invoked via `--agents`/`--agent` CLI flags on `claude -p`.
+
+Previously, archetypes were prompt templates with `$TOPIC` substitution — the entire archetype was injected into the `-p` prompt. This works but wastes prompt tokens on methodology instructions every invocation and prevents Claude Code from applying tool restrictions or model overrides per archetype.
+
+Claude Code custom subagents (`.claude/agents/` markdown files with YAML frontmatter) provide:
+- **System prompt separation** — the archetype methodology becomes the agent's system prompt; the `-p` prompt carries only the topic. This is structurally correct: methodology is context, topic is the task.
+- **Tool restrictions** — audit archetypes get read-only tools (`Read, Grep, Glob, Bash`), exploration archetypes get full tools including `Edit, Write`. Enforced by Claude Code, not by prompt instructions.
+- **Model selection** — meta-operation agents specify `model: sonnet` in frontmatter, avoiding the overhead of opus for lightweight tasks like review-gate or topic generation.
+- **Project-local overrides** — `elmer init --agents` scaffolds to `.claude/agents/`, where users can customize agent behavior without modifying bundled defaults.
+
+**Architecture:**
+
+23 bundled agent definitions in `src/elmer/agents/`:
+- 8 exploration agents (explore-act, explore, prototype, adr-proposal, benchmark, dead-end-analysis, devil-advocate, question-cluster)
+- 8 audit agents (consistency-audit, coherence-audit, architecture-audit, documentation-audit, mission-audit, operational-audit, opportunity-scan, workflow-audit)
+- 7 meta-operation agents (review-gate, generate-topics, select-archetype, extract-insights, mine-questions, validate-invariants, prompt-gen)
+
+**Resolution order:** project-local `.claude/agents/elmer-<name>.md` → bundled `src/elmer/agents/<name>.md`. Meta agents use `elmer-meta-<name>` prefix.
+
+**Invocation:** `worker.py` builds `--agents '{name: {description, prompt, tools, model}}'` inline JSON + `--agent name` flags. The inline JSON approach avoids filesystem dependency — agents work correctly when `claude -p` runs in worktree directories where `.claude/agents/` doesn't exist.
+
+**Backwards compatibility:** When no agent definition exists for an archetype, the system falls back to the existing `$TOPIC` template substitution. All existing archetypes continue to work.
+
+**Alternatives considered:** Filesystem-based agents only (breaks in worktrees where `.claude/agents/` isn't visible), Agent Teams for parallel explorations (session-scoped, don't persist — consistent with ADR-002), prompt-only approach with tool restrictions in prompt text (unenforceable, wastes tokens), separate agent runner binary (unnecessary complexity when `claude -p` already supports `--agents`).

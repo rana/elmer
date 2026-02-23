@@ -63,6 +63,33 @@ def check_claude_available() -> bool:
     return shutil.which("claude") is not None
 
 
+def _build_agent_flags(agent_config: Optional[dict]) -> list[str]:
+    """Build --agents/--agent CLI flags from an agent config dict.
+
+    agent_config should have: name, description, prompt, and optionally
+    tools (list), model (str).
+
+    Returns a list of CLI arguments to prepend to the command.
+    """
+    if not agent_config:
+        return []
+
+    name = agent_config["name"]
+
+    # Build the inline agent definition for --agents JSON
+    agent_def: dict = {
+        "description": agent_config.get("description", "Elmer agent"),
+        "prompt": agent_config["prompt"],
+    }
+    if "tools" in agent_config:
+        agent_def["tools"] = agent_config["tools"]
+    if "model" in agent_config:
+        agent_def["model"] = agent_config["model"]
+
+    agents_json = json.dumps({name: agent_def})
+    return ["--agents", agents_json, "--agent", name]
+
+
 def spawn_claude(
     prompt: str,
     cwd: Path,
@@ -70,18 +97,28 @@ def spawn_claude(
     log_path: Path,
     max_turns: int = 50,
     budget_usd: Optional[float] = None,
+    agent_config: Optional[dict] = None,
 ) -> int:
-    """Spawn a claude -p session in the background. Returns PID."""
+    """Spawn a claude -p session in the background. Returns PID.
+
+    If agent_config is provided, uses --agents/--agent flags to run with
+    a custom Claude Code subagent definition. The agent's system prompt
+    provides the methodology; the prompt arg provides the topic.
+    """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fd = open(log_path, "w")
 
-    cmd = [
-        "claude",
+    cmd = ["claude"]
+    cmd.extend(_build_agent_flags(agent_config))
+    cmd.extend([
         "-p", prompt,
-        "--model", model,
-        "--max-turns", str(max_turns),
         "--output-format", "json",
-    ]
+    ])
+    # When using an agent, the model may be set in the agent config.
+    # Only add --model if not already specified by the agent.
+    if not (agent_config and agent_config.get("model")):
+        cmd.extend(["--model", model])
+    cmd.extend(["--max-turns", str(max_turns)])
     if budget_usd is not None:
         cmd.extend(["--max-budget-usd", str(budget_usd)])
 
@@ -103,15 +140,22 @@ def run_claude(
     model: str,
     max_turns: int = 5,
     budget_usd: Optional[float] = None,
+    agent_config: Optional[dict] = None,
 ) -> ClaudeResult:
-    """Run a claude -p session synchronously. Returns ClaudeResult."""
-    cmd = [
-        "claude",
+    """Run a claude -p session synchronously. Returns ClaudeResult.
+
+    If agent_config is provided, uses --agents/--agent flags to run with
+    a custom Claude Code subagent definition.
+    """
+    cmd = ["claude"]
+    cmd.extend(_build_agent_flags(agent_config))
+    cmd.extend([
         "-p", prompt,
-        "--model", model,
-        "--max-turns", str(max_turns),
         "--output-format", "json",
-    ]
+    ])
+    if not (agent_config and agent_config.get("model")):
+        cmd.extend(["--model", model])
+    cmd.extend(["--max-turns", str(max_turns)])
     if budget_usd is not None:
         cmd.extend(["--max-budget-usd", str(budget_usd)])
 

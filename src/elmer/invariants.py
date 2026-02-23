@@ -63,10 +63,15 @@ def validate_invariants(
 
     rules_text = "\n".join(f"- {r}" for r in rules)
 
-    # Load archetype template
-    template_path = config.resolve_archetype(elmer_dir, "validate-invariants")
-    template = template_path.read_text()
-    prompt = template.replace("$RULES", rules_text)
+    # Try agent-aware invocation, fall back to template substitution
+    agent_config = config.resolve_meta_agent(project_dir, "validate-invariants")
+
+    if agent_config is not None:
+        prompt = f"Check these invariant rules:\n\n{rules_text}"
+    else:
+        template_path = config.resolve_archetype(elmer_dir, "validate-invariants")
+        template = template_path.read_text()
+        prompt = template.replace("$RULES", rules_text)
 
     # Run validation
     result = worker.run_claude(
@@ -74,6 +79,7 @@ def validate_invariants(
         cwd=project_dir,
         model=model,
         max_turns=max_turns,
+        agent_config=agent_config,
     )
 
     # Record cost

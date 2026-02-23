@@ -82,14 +82,18 @@ def extract_insights(
     if not proposal_text.strip():
         return []
 
-    # Load archetype
-    try:
-        template_path = config.resolve_archetype(elmer_dir, "extract-insights")
-    except FileNotFoundError:
-        return []
+    # Try agent-aware invocation, fall back to template substitution
+    agent_config = config.resolve_meta_agent(project_dir, "extract-insights")
 
-    template = template_path.read_text()
-    prompt = template.replace("$PROPOSAL", proposal_text)
+    if agent_config is not None:
+        prompt = proposal_text
+    else:
+        try:
+            template_path = config.resolve_archetype(elmer_dir, "extract-insights")
+        except FileNotFoundError:
+            return []
+        template = template_path.read_text()
+        prompt = template.replace("$PROPOSAL", proposal_text)
 
     # Run extraction
     try:
@@ -98,6 +102,7 @@ def extract_insights(
             cwd=project_dir,
             model=model,
             max_turns=max_turns,
+            agent_config=agent_config,
         )
     except RuntimeError:
         return []

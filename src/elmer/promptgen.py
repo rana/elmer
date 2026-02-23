@@ -25,17 +25,26 @@ def generate_prompt(
     archetype_path = config.resolve_archetype(elmer_dir, archetype)
     archetype_hint = archetype_path.read_text()
 
-    # Load the meta-prompt template
-    meta_path = config.resolve_archetype(elmer_dir, "prompt-gen")
-    meta_template = meta_path.read_text()
+    # Try agent-aware invocation, fall back to template substitution
+    agent_config = config.resolve_meta_agent(project_dir, "prompt-gen")
 
-    # Assemble the meta-prompt
-    meta_prompt = (
-        meta_template
-        .replace("$TOPIC", topic)
-        .replace("$ARCHETYPE_NAME", archetype)
-        .replace("$ARCHETYPE_HINT", archetype_hint)
-    )
+    if agent_config is not None:
+        meta_prompt = (
+            f"## Topic to Explore\n\n{topic}\n\n"
+            f"## Archetype Hint\n\n"
+            f"The user selected the \"{archetype}\" archetype. "
+            f"Here is its template for reference:\n\n"
+            f"```\n{archetype_hint}\n```"
+        )
+    else:
+        meta_path = config.resolve_archetype(elmer_dir, "prompt-gen")
+        meta_template = meta_path.read_text()
+        meta_prompt = (
+            meta_template
+            .replace("$TOPIC", topic)
+            .replace("$ARCHETYPE_NAME", archetype)
+            .replace("$ARCHETYPE_HINT", archetype_hint)
+        )
 
     # Run Stage 1 synchronously — Claude reads project docs and generates the prompt
     result = worker.run_claude(
@@ -43,6 +52,7 @@ def generate_prompt(
         cwd=project_dir,
         model=model,
         max_turns=max_turns,
+        agent_config=agent_config,
     )
 
     return result.output, result

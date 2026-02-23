@@ -13,6 +13,11 @@ GLOBAL_DIR = Path.home() / ".elmer"
 PROJECTS_REGISTRY = GLOBAL_DIR / "projects.json"
 
 ARCHETYPES_DIR = Path(__file__).parent / "archetypes"
+AGENTS_DIR = Path(__file__).parent / "agents"
+
+# Prefix for agent names in .claude/agents/ to avoid collisions
+AGENT_PREFIX = "elmer-"
+META_AGENT_PREFIX = "elmer-meta-"
 
 DEFAULT_CONFIG = """\
 [defaults]
@@ -205,3 +210,136 @@ def resolve_archetype(elmer_dir: Path, archetype_name: str) -> Path:
     raise FileNotFoundError(
         f"Archetype '{archetype_name}' not found in .elmer/archetypes/ or bundled archetypes"
     )
+
+
+# ---------------------------------------------------------------------------
+# Agent definitions — Claude Code subagent integration
+# ---------------------------------------------------------------------------
+
+def parse_agent_file(content: str) -> tuple[dict, str]:
+    """Parse a markdown file with YAML frontmatter.
+
+    Returns (metadata, body) where metadata is a dict of key-value pairs
+    and body is the markdown content after the frontmatter.
+    Handles simple YAML: string values, comma-separated lists.
+    """
+    if not content.startswith("---"):
+        return {}, content.strip()
+
+    try:
+        end = content.index("---", 3)
+    except ValueError:
+        return {}, content.strip()
+
+    frontmatter = content[3:end].strip()
+    body = content[end + 3:].strip()
+
+    metadata: dict = {}
+    for line in frontmatter.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        value = value.strip()
+        # Comma-separated values become lists (for tools field)
+        if "," in value:
+            value = [v.strip() for v in value.split(",")]
+        metadata[key] = value
+
+    return metadata, body
+
+
+def resolve_agent(project_dir: Path, archetype_name: str) -> dict | None:
+    """Build a Claude Code agent config dict for an archetype.
+
+    Resolution order:
+    1. Project-local .claude/agents/elmer-<name>.md
+    2. Bundled src/elmer/agents/<name>.md
+
+    Returns a dict suitable for --agents JSON:
+        {"name": str, "description": str, "prompt": str, "tools": list, "model": str}
+    Returns None if no agent definition exists for this archetype.
+    """
+    # Determine the agent filename and expected name
+    agent_name = f"{AGENT_PREFIX}{archetype_name}"
+    agent_filename = f"{agent_name}.md"
+
+    # Check project-local first
+    local_path = project_dir / ".claude" / "agents" / agent_filename
+    if local_path.exists():
+        content = local_path.read_text()
+    else:
+        # Check bundled agents
+        bundled_path = AGENTS_DIR / f"{archetype_name}.md"
+        if not bundled_path.exists():
+            return None
+        content = bundled_path.read_text()
+
+    metadata, body = parse_agent_file(content)
+    if not body:
+        return None
+
+    config = {
+        "name": metadata.get("name", agent_name),
+        "description": metadata.get("description", f"Elmer {archetype_name} agent"),
+        "prompt": body,
+    }
+
+    # Optional fields
+    tools = metadata.get("tools")
+    if tools:
+        config["tools"] = tools if isinstance(tools, list) else [tools]
+    model = metadata.get("model")
+    if model:
+        config["model"] = model
+
+    return config
+
+
+def resolve_meta_agent(project_dir: Path, meta_name: str) -> dict | None:
+    """Build a Claude Code agent config dict for a meta-operation.
+
+    Same resolution as resolve_agent but for meta-operation agents
+    (generate-topics, review-gate, select-archetype, etc.).
+    """
+    agent_name = f"{META_AGENT_PREFIX}{meta_name}"
+    agent_filename = f"{agent_name}.md"
+
+    # Check project-local first
+    local_path = project_dir / ".claude" / "agents" / agent_filename
+    if local_path.exists():
+        content = local_path.read_text()
+    else:
+        bundled_path = AGENTS_DIR / f"{meta_name}.md"
+        if not bundled_path.exists():
+            return None
+        content = bundled_path.read_text()
+
+    metadata, body = parse_agent_file(content)
+    if not body:
+        return None
+
+    config = {
+        "name": metadata.get("name", agent_name),
+        "description": metadata.get("description", f"Elmer meta {meta_name} agent"),
+        "prompt": body,
+    }
+
+    tools = metadata.get("tools")
+    if tools:
+        config["tools"] = tools if isinstance(tools, list) else [tools]
+    model = metadata.get("model")
+    if model:
+        config["model"] = model
+
+    return config
+
+
+def list_bundled_agents() -> list[Path]:
+    """List all bundled agent definition files."""
+    if not AGENTS_DIR.exists():
+        return []
+    return sorted(AGENTS_DIR.glob("*.md"))

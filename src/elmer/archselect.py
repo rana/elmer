@@ -60,21 +60,29 @@ def select_archetype(
         f"- **{name}**: {desc}" for name, desc in sorted(available.items())
     )
 
-    # Load the meta-prompt template
-    meta_path = config.resolve_archetype(elmer_dir, "select-archetype")
-    meta_template = meta_path.read_text()
+    # Try agent-aware invocation, fall back to template substitution
+    agent_config = config.resolve_meta_agent(project_dir, "select-archetype")
 
-    meta_prompt = (
-        meta_template
-        .replace("$TOPIC", topic)
-        .replace("$ARCHETYPES", archetype_list)
-    )
+    if agent_config is not None:
+        meta_prompt = (
+            f"## Topic\n\n{topic}\n\n"
+            f"## Available Archetypes\n\n{archetype_list}"
+        )
+    else:
+        meta_path = config.resolve_archetype(elmer_dir, "select-archetype")
+        meta_template = meta_path.read_text()
+        meta_prompt = (
+            meta_template
+            .replace("$TOPIC", topic)
+            .replace("$ARCHETYPES", archetype_list)
+        )
 
     result = worker.run_claude(
         prompt=meta_prompt,
         cwd=project_dir,
         model=model,
         max_turns=max_turns,
+        agent_config=agent_config,
     )
 
     # Parse the output — should be a single archetype name

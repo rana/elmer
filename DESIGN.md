@@ -40,9 +40,9 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `review.py` | Read proposals, display status, attention routing |
 | `gate.py` | Approve (merge) or reject (discard) explorations |
 | `worktree.py` | Git worktree and branch operations |
-| `worker.py` | Claude CLI invocation and process management |
+| `worker.py` | Claude CLI invocation, process management, agent flag building |
 | `state.py` | SQLite state tracking |
-| `config.py` | Configuration loading and project initialization |
+| `config.py` | Configuration loading, project initialization, agent resolution |
 | `generate.py` | AI topic generation orchestration |
 | `autoapprove.py` | AI review gate for auto-approval |
 | `promptgen.py` | Two-stage AI prompt generation |
@@ -65,8 +65,8 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 ```
 explore → slugify(topic)
         → create git worktree on branch elmer/<slug>
-        → load archetype template, substitute $TOPIC
-        → spawn claude -p in worktree (background, PID tracked)
+        → resolve agent (config.resolve_agent) or load template
+        → spawn claude -p --agents/--agent in worktree (background, PID tracked)
         → record in SQLite
 
 status  → for each running: check PID alive
@@ -158,17 +158,27 @@ daemon_log (
 )
 ```
 
-### Archetypes
+### Archetypes & Agents
 
-Markdown templates with `$TOPIC` substitution. Resolved in order:
-1. `.elmer/archetypes/<name>.md` (project-local, user-customizable)
-2. Bundled `src/elmer/archetypes/<name>.md` (package defaults)
+Archetypes define exploration methodology. Two invocation modes (ADR-026):
 
-Exploration archetypes (8): explore, explore-act, prototype, adr-proposal, question-cluster, benchmark, dead-end-analysis, devil-advocate.
+**Agent mode** (preferred): Archetype is a Claude Code custom subagent definition — markdown with YAML frontmatter (`name`, `description`, `tools`, optional `model`). The agent's system prompt provides methodology; the `-p` prompt provides the topic. Invoked via `--agents` inline JSON + `--agent` flags.
 
-Audit archetypes (8): consistency-audit, coherence-audit, architecture-audit, operational-audit, documentation-audit, opportunity-scan, workflow-audit, mission-audit.
+**Template mode** (fallback): Markdown templates with `$TOPIC` substitution. Used when no agent definition exists.
 
-Meta-prompt archetypes (7): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants.
+Agent resolution order:
+1. `.claude/agents/elmer-<name>.md` (project-local, scaffolded via `elmer init --agents`)
+2. Bundled `src/elmer/agents/<name>.md` (package defaults)
+3. `.elmer/archetypes/<name>.md` (template fallback)
+4. Bundled `src/elmer/archetypes/<name>.md` (template fallback)
+
+Meta-operation agent resolution uses `elmer-meta-<name>` prefix.
+
+Exploration archetypes (8): explore, explore-act, prototype, adr-proposal, question-cluster, benchmark, dead-end-analysis, devil-advocate. Tools: `Read, Grep, Glob, Bash, Edit, Write`.
+
+Audit archetypes (8): consistency-audit, coherence-audit, architecture-audit, operational-audit, documentation-audit, opportunity-scan, workflow-audit, mission-audit. Tools: `Read, Grep, Glob, Bash` (read-only).
+
+Meta-operation agents (7): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants. Model: `sonnet`.
 
 ### Git Integration
 
@@ -180,12 +190,12 @@ Meta-prompt archetypes (7): generate-topics, prompt-gen, review-gate, select-arc
 
 ### Claude Invocation
 
-Two invocation patterns:
+Two invocation patterns, both agent-aware (ADR-026):
 
-- **Background** (`spawn_claude`): Explorations. Long-running, PID-tracked, output to `.elmer/logs/<slug>.log`. Runs in worktree directory.
+- **Background** (`spawn_claude`): Explorations. Long-running, PID-tracked, output to `.elmer/logs/<slug>.log`. Runs in worktree directory. Agent config passed via `--agents` inline JSON + `--agent` flags.
 - **Synchronous** (`run_claude`): Meta-operations (topic generation, auto-approve, prompt generation, archetype selection, insight extraction, question mining, invariant validation). Short-lived (3-5 turns), output parsed immediately by caller.
 
-Both use `claude -p --output-format json --model <model> --max-turns <N>`.
+Both use `claude [--agents JSON --agent name] -p <prompt> --output-format json --model <model> --max-turns <N>`. When an agent config specifies a model, the `--model` flag is omitted to avoid conflict.
 
 ### Daemon Loop
 
@@ -254,10 +264,15 @@ Conservative default: reject when uncertain. Criteria configurable in `.elmer/co
 
 /path/to/project/.elmer/
 ├── config.toml          # Project-specific overrides
-├── archetypes/          # Project-specific templates
+├── archetypes/          # Project-specific templates (fallback)
 ├── state.db             # Project state
 ├── worktrees/
 └── logs/
+
+/path/to/project/.claude/agents/
+├── elmer-explore-act.md # Project-local agent overrides (optional)
+├── elmer-meta-*.md      # Meta-operation agent overrides
+└── ...                  # Scaffolded via elmer init --agents
 ```
 
 Insights extracted from approved proposals get stored in `~/.elmer/insights.db`. Future explorations get relevant insights injected via keyword matching. Extraction is opt-in (`[insights] enabled = true`). Both extraction and injection are best-effort — failures never block the flow.
@@ -303,6 +318,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-25 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+26 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-23, MCP server Phase 2 — added mutation tools*
+*Last updated: 2026-02-23, custom subagent integration (ADR-026)*

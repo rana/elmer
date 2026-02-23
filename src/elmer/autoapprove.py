@@ -45,15 +45,24 @@ def evaluate(
     if file_count > max_files:
         return False
 
-    # Build review prompt
-    template_path = config.resolve_archetype(elmer_dir, "review-gate")
-    template = template_path.read_text()
-    prompt = (
-        template
-        .replace("$PROPOSAL", proposal_text)
-        .replace("$DIFF", diff or "(no changes)")
-        .replace("$CRITERIA", criteria)
-    )
+    # Try agent-aware invocation, fall back to template substitution
+    agent_config = config.resolve_meta_agent(project_dir, "review-gate")
+
+    if agent_config is not None:
+        prompt = (
+            f"## Approval Criteria\n\n{criteria}\n\n"
+            f"## Proposal\n\n{proposal_text}\n\n"
+            f"## Files Changed\n\n{diff or '(no changes)'}"
+        )
+    else:
+        template_path = config.resolve_archetype(elmer_dir, "review-gate")
+        template = template_path.read_text()
+        prompt = (
+            template
+            .replace("$PROPOSAL", proposal_text)
+            .replace("$DIFF", diff or "(no changes)")
+            .replace("$CRITERIA", criteria)
+        )
 
     # Run AI review
     try:
@@ -62,6 +71,7 @@ def evaluate(
             cwd=project_dir,
             model=model,
             max_turns=max_turns,
+            agent_config=agent_config,
         )
     except RuntimeError:
         return False  # Review failed, leave for human

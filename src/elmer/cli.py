@@ -1,6 +1,7 @@
 """Elmer CLI — Autonomous research with branching."""
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -42,13 +43,55 @@ def _require_elmer(project_dir: Path) -> Path:
     return elmer_dir
 
 
+def _scaffold_agents(project_dir: Path) -> list[str]:
+    """Copy bundled agent definitions to .claude/agents/ for customization.
+
+    Only copies agents that don't already exist locally.
+    Exploration/audit agents get prefixed with 'elmer-'.
+    Meta-operation agents get prefixed with 'elmer-meta-'.
+    Returns list of filenames that were created.
+    """
+    agents_dir = project_dir / ".claude" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    created = []
+    for src_file in sorted(config.AGENTS_DIR.glob("*.md")):
+        # Read the agent file to get its canonical name from frontmatter
+        content = src_file.read_text()
+        metadata, _ = config.parse_agent_file(content)
+        agent_name = metadata.get("name")
+
+        if agent_name:
+            dest_filename = f"{agent_name}.md"
+        else:
+            # Fallback: determine prefix from file contents
+            # Meta agents have "elmer-meta-" names, exploration agents have "elmer-"
+            base = src_file.stem
+            if any(base == m for m in [
+                "review-gate", "generate-topics", "select-archetype",
+                "extract-insights", "mine-questions", "validate-invariants",
+                "prompt-gen",
+            ]):
+                dest_filename = f"{config.META_AGENT_PREFIX}{base}.md"
+            else:
+                dest_filename = f"{config.AGENT_PREFIX}{base}.md"
+
+        dest_file = agents_dir / dest_filename
+        if not dest_file.exists():
+            shutil.copy2(src_file, dest_file)
+            created.append(dest_filename)
+
+    return created
+
+
 # --- Commands ---
 
 
 @cli.command()
 @click.option("--docs", is_flag=True, help="Scaffold the five-document pattern (CLAUDE.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CONTEXT.md)")
 @click.option("--skills", is_flag=True, help="Scaffold project-specific Claude Code skills in .claude/skills/")
-def init(docs, skills):
+@click.option("--agents", is_flag=True, help="Scaffold Claude Code subagent definitions in .claude/agents/")
+def init(docs, skills, agents):
     """Initialize Elmer in the current project.
 
     With --docs, scaffolds the five-document pattern that makes projects
@@ -59,6 +102,11 @@ def init(docs, skills):
     generates Claude Code skills in .claude/skills/. Skills provide
     interactive analysis lenses (e.g., /mission-align, /cultural-lens)
     that complement Elmer's autonomous exploration archetypes.
+
+    With --agents, copies Elmer's bundled subagent definitions to
+    .claude/agents/ for customization. These are used automatically
+    by explore, generate, approve, and other commands. Local copies
+    override the bundled versions.
     """
     project_dir = _require_project()
     elmer_dir = config.init_project(project_dir)
@@ -106,12 +154,27 @@ def init(docs, skills):
             click.echo("No project-specific skills detected from project docs.")
             click.echo("Add project documentation first (elmer init --docs), then re-run with --skills.")
 
-    if not docs and not skills:
+    if agents:
+        created = _scaffold_agents(project_dir)
+        if created:
+            click.echo()
+            click.echo("Scaffolded Claude Code subagent definitions:")
+            for name in created:
+                click.echo(f"  .claude/agents/{name}")
+            click.echo()
+            click.echo(f"  {len(created)} agents installed. Edit to customize exploration behavior.")
+            click.echo("  Local copies override bundled versions.")
+        else:
+            click.echo()
+            click.echo("All agent definitions already exist — nothing to scaffold.")
+
+    if not docs and not skills and not agents:
         click.echo()
         click.echo("Edit .elmer/config.toml to change defaults.")
         click.echo("Add custom archetypes to .elmer/archetypes/.")
         click.echo("Use 'elmer init --docs' to scaffold project documentation.")
         click.echo("Use 'elmer init --skills' to scaffold Claude Code skills.")
+        click.echo("Use 'elmer init --agents' to scaffold Claude Code subagent definitions.")
 
 
 @cli.command()
@@ -226,7 +289,7 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
 
 
 @cli.command()
-@click.argument("file", type=click.Path(exists=True))
+@click.argument("file", type=click.Path())
 @click.option("-a", "--archetype", default=None, help="Override archetype (default: inferred from filename)")
 @click.option("-m", "--model", default=None, help="Model: sonnet, opus, haiku (default: from config)")
 @click.option("--max-turns", default=None, type=int, help="Max turns for claude sessions")
@@ -272,6 +335,14 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
     elmer_dir = _require_elmer(project_dir)
 
     file_path = P(file)
+    if not file_path.exists():
+        # Check .elmer/ as a default location
+        elmer_candidate = elmer_dir / file_path.name
+        if elmer_candidate.exists():
+            file_path = elmer_candidate
+        else:
+            click.echo(f"Error: Path '{file}' does not exist.", err=True)
+            sys.exit(1)
     topics = batch_mod.parse_topic_file(file_path)
 
     if not topics:
