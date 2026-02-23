@@ -207,7 +207,7 @@ src/elmer/
 
 ## Identifier Conventions
 
-- **ADR-NNN** — Architecture Decision Records. Numbered sequentially, never reused. Header format: `### ADR-NNN: Title` in DECISIONS.md. Referenced in prose as `ADR-001`.
+- **ADR-NNN** — Architecture Decision Records. Numbered sequentially, never reused. Header format: `## ADR-NNN: Title` in DECISIONS.md. Referenced in prose as `ADR-001`.
 
 ## Document Maintenance
 
@@ -230,7 +230,7 @@ src/elmer/
 ### Document Invariants
 
 These must hold after each session. Violations indicate drift:
-- ADR count in CLAUDE.md Orientation == actual `### ADR-` entries in DECISIONS.md
+- ADR count in CLAUDE.md Orientation == actual `## ADR-` entries in DECISIONS.md
 - Phase status in ROADMAP.md matches "Current state" in CLAUDE.md Orientation
 - No planned feature marked COMPLETE in ROADMAP.md without corresponding code in `src/elmer/`
 - Tech stack canonical home is CLAUDE.md — other files reference, not duplicate
@@ -280,4 +280,4 @@ Full rationale in DECISIONS.md. 23 ADRs recorded.
 
 See ROADMAP.md for the full 4-phase plan. All four phases complete. See Deferred / Uncertain in ROADMAP.md for potential future work.
 
-*Last updated: ADR-023 — mutable ADR governance*
+*Last updated: coherence audit — ADR header format convention, invariant grep pattern*

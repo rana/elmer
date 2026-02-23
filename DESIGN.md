@@ -83,6 +83,8 @@ Elmer Fudd. Persistent hunter. Homage to the [Ralph Wiggum](https://github.com/a
 | `archstats.py` | Archetype effectiveness statistics |
 | `invariants.py` | Document invariant enforcement |
 | `dashboard.py` | Multi-project status aggregation |
+| `batch.py` | Topic list file parsing for batch command |
+| `skill_scaffold.py` | Claude Code skill scaffolding |
 | `pr.py` | PR creation via gh CLI |
 
 ### Data Flow
@@ -156,6 +158,31 @@ dependencies (
     depends_on_id TEXT,        -- the exploration it depends on
     PRIMARY KEY (exploration_id, depends_on_id)
 )
+
+costs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    exploration_id TEXT,        -- NULL for standalone meta-operations
+    operation TEXT NOT NULL,    -- generate|auto_approve|prompt_gen|archetype_select|...
+    model TEXT NOT NULL,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cost_usd REAL,
+    created_at TEXT NOT NULL
+)
+
+daemon_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cycle_number INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    harvested INTEGER DEFAULT 0,
+    approved INTEGER DEFAULT 0,
+    scheduled INTEGER DEFAULT 0,
+    generated INTEGER DEFAULT 0,
+    audits INTEGER DEFAULT 0,
+    cycle_cost_usd REAL,
+    error TEXT
+)
 ```
 
 ### Archetypes
@@ -173,6 +200,16 @@ Exploration archetypes (8):
 - **benchmark** — measure and evaluate
 - **dead-end-analysis** — analyze potential dead ends
 - **devil-advocate** — challenge assumptions and decisions
+
+Audit archetypes (8):
+- **consistency-audit** — subsystem consistency and reasoning sufficiency
+- **coherence-audit** — cross-reference integrity across docs
+- **architecture-audit** — pattern compliance, drift, emerging patterns
+- **operational-audit** — ops readiness, cost, resilience
+- **documentation-audit** — doc practice quality, staleness
+- **opportunity-scan** — emergent opportunities, simplifications
+- **workflow-audit** — end-to-end workflow tracing
+- **mission-audit** — alignment with stated principles
 
 Meta-prompt archetypes (7):
 - **generate-topics** — meta-prompt for AI topic generation
@@ -256,6 +293,8 @@ CREATE TABLE dependencies (
 
 ### Two-Stage Prompt Generation
 
+**Status: Implemented** — see `src/elmer/promptgen.py`, `src/elmer/archetypes/prompt-gen.md`
+
 Instead of static `$TOPIC` substitution:
 
 1. **Stage 1 (meta):** `claude -p "Given this project and topic, generate the optimal exploration prompt"` — reads project docs, available archetypes, topic, produces a bespoke prompt
@@ -283,6 +322,7 @@ Criteria configurable per-project in `.elmer/config.toml`.
 ```
 ~/.elmer/
 ├── insights.db          # Cross-project insight log (SQLite)
+├── projects.json        # Global project registry (JSON, ADR-019)
 
 /path/to/project/.elmer/
 ├── config.toml          # Project-specific overrides
@@ -369,7 +409,7 @@ The overlap (e.g., `coherence-audit.md` archetype ≈ `/coherence` skill) is tol
 
 ## Design Decisions
 
-Full rationale in DECISIONS.md. Summary:
+Full rationale in DECISIONS.md. 23 ADRs recorded.
 
 - **ADR-001:** Git worktrees over directory copying
 - **ADR-002:** Background `claude -p` over Agent Teams
@@ -395,4 +435,4 @@ Full rationale in DECISIONS.md. Summary:
 - **ADR-022:** Claude Code skill scaffolding as Elmer feature
 - **ADR-023:** Mutable ADRs with git audit trail
 
-*Last updated: ADR-023 — mutable ADR governance*
+*Last updated: coherence audit — modules table, archetype categories, storage schema, prompt-gen status marker*

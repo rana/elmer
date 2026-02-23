@@ -213,8 +213,8 @@ Features discussed but not committed to a phase:
 
 - **Shared template library** — single source for analysis methodology shared between Elmer archetypes and Claude Code skills. Deferred because drift between the two systems is tolerable and the indirection cost exceeds the sync benefit. Revisit if methodology divergence becomes painful.
 - **Web UI for review** — local web server showing proposals with rich formatting. CLI review is sufficient for now.
-- **Forge-on-Forge recursion** — Elmer running explorations on its own codebase. Philosophically interesting, practically requires CONTEXT.md.
+- **Elmer-on-Elmer recursion** — Elmer running explorations on its own codebase. Philosophically interesting, practically requires CONTEXT.md.
 - **Agent Teams integration** — within a single exploration, the Claude session could use Agent Teams for parallel sub-tasks. Emergent from claude's own capabilities, no Elmer changes needed.
 - **MCP server** — expose Elmer state as an MCP tool for other AI systems to query.
 
-*Last updated: Phase 4 — Claude Code skill scaffolding added*
+*Last updated: coherence audit — Forge-on-Forge → Elmer-on-Elmer*

@@ -47,7 +47,7 @@ Read in this order:
 
 ## Identifier Conventions
 
-- **ADR-NNN** — Architecture Decision Records. Numbered sequentially, never reused. Header format: `### ADR-NNN: Title` in DECISIONS.md.
+- **ADR-NNN** — Architecture Decision Records. Numbered sequentially, never reused. Header format: `## ADR-NNN: Title` in DECISIONS.md.
 
 ## Document Maintenance
 
