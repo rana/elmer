@@ -61,7 +61,7 @@ All five development phases complete:
 4. **Phase 4 (Meta):** Scaffolding, archetype stats, attention routing, invariant enforcement, multi-project dashboard, PR creation, batch topics, skill scaffolding.
 5. **Phase 5 (Integration):** MCP server — 10 tools over stdio JSON-RPC for structured Claude Code access.
 
-The tool is functional and in active use. 24 ADRs recorded.
+The tool is functional and in active use. 25 ADRs recorded.
 
 ## What's Working
 

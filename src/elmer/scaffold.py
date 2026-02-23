@@ -51,13 +51,49 @@ Read in this order:
 
 ## Document Maintenance
 
-| File | Type | Update when... |
-|------|------|---------------|
-| **CLAUDE.md** | Living | Commands change, rules change, phase completes |
-| **DESIGN.md** | Stable + Planned | Architecture changes, features marked as implemented |
-| **DECISIONS.md** | Living | Any non-trivial design choice (revise in place, git is the audit trail) |
-| **ROADMAP.md** | Living | Phase status changes, deliverables complete or deferred |
-| **README.md** | Stable | User-facing changes |
+Five documents. Keep them accurate — drift compounds across sessions.
+
+| When this happens... | ...update these documents |
+|----------------------|--------------------------|
+| New decision made | DECISIONS.md (ADR + domain index + count), CLAUDE.md (ADR count) |
+| Architecture changed | DESIGN.md |
+| Phase status changed | ROADMAP.md |
+| Commands changed | README.md |
+| Rules or constraints changed | CLAUDE.md |
+| Project context or methodology evolves | CONTEXT.md |
+
+At phase boundaries, reconcile all documents for consistency.
+
+### Canonical Homes
+
+Each piece of information lives in one place. Other files reference, not duplicate.
+
+| Information | Canonical home |
+|-------------|---------------|
+| Tech stack & rules | CLAUDE.md |
+| Project context | CONTEXT.md |
+| Architecture & data model | DESIGN.md |
+| Decision rationale | DECISIONS.md |
+| Phase history & plan | ROADMAP.md |
+
+### Per-Session Checklist
+
+1. If you added ADRs → update count in CLAUDE.md and DECISIONS.md header
+2. If architecture changed → update DESIGN.md
+3. Update last-updated footer on every modified document
+
+### Documentation Rules
+
+- **ADRs are mutable living documents.** Update directly — add, revise, or replace content in place. When substantially revising, add `*Revised: [date], [reason]*` at the section's end. Git history is the audit trail.
+- **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
+- **No duplication across documents.** If information exists in its canonical home, other documents reference it.
+
+### Documentation–Code Transition
+
+1. **Before code exists:** DESIGN.md is the source of truth. Follow it precisely.
+2. **When implemented:** Add `**Status: Implemented** — see [code path]` at section top. Code becomes source of truth for details; DESIGN.md remains architectural rationale.
+3. **When implementation diverges:** Update DESIGN.md to match actual decisions. It is a living document, not a historical artifact.
+4. **Section-level tracking:** When substantially revising, add `*Revised: [date], [reason]*` at section end.
 
 ## Key Design Decisions (Summary)
 

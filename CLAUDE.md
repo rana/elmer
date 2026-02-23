@@ -6,12 +6,12 @@ Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, rules, conventions
 2. **CONTEXT.md** — project methodology, collaboration model, current state
 3. **DESIGN.md** — architecture, data model, module responsibilities
-4. **DECISIONS.md** — ADRs with full rationale (24 recorded)
+4. **DECISIONS.md** — ADRs with full rationale (25 recorded)
 5. **ROADMAP.md** — phase history and deferred features
 6. **README.md** — user-facing docs, install, full command reference
 7. **GUIDE.md** — practical usage playbook, workflows, patterns
 
-Elmer is an autonomous research tool that uses git branches as isolation boundaries and Claude Code sessions (`claude -p`) as workers. All four development phases complete. Phase 5 (Integration) in progress.
+Elmer is an autonomous research tool that uses git branches as isolation boundaries and Claude Code sessions (`claude -p`) as workers. All five development phases complete.
 
 ## Tech Stack
 
@@ -73,15 +73,21 @@ Full options and examples in README.md. Core subcommands:
 
 ## Document Maintenance
 
-| File | Role | Update when... |
-|------|------|---------------|
-| **CLAUDE.md** | Instructions | Rules change, tech stack changes, ADR count changes |
-| **CONTEXT.md** | Methodology & context | Project purpose evolves, collaboration model changes, current state shifts |
-| **DESIGN.md** | Architecture | Architecture changes, modules added/removed |
-| **DECISIONS.md** | ADR registry | Any non-trivial design choice (revise in place, git is the audit trail) |
-| **ROADMAP.md** | Phase history | Deferred features added or resolved |
-| **README.md** | User-facing | Commands change, new archetypes, install changes |
-| **GUIDE.md** | Playbook | New workflows, new patterns, usage advice evolves |
+Seven files. Keep them accurate — drift compounds across sessions.
+
+| When this happens... | ...update these documents |
+|----------------------|--------------------------|
+| New ADR added | DECISIONS.md (ADR + domain index + count), CLAUDE.md (ADR count in Orientation) |
+| Module added or removed | DESIGN.md (module table, data flow) |
+| Command added or changed | README.md (command table, options), CLAUDE.md (command table) |
+| New workflow or pattern discovered | GUIDE.md |
+| Phase completed or status changed | ROADMAP.md, CONTEXT.md (current state) |
+| Deferred feature added or resolved | ROADMAP.md (deferred section) |
+| Project purpose or methodology evolves | CONTEXT.md |
+| Rules or constraints change | CLAUDE.md |
+| Tech stack changes | CLAUDE.md (tech stack section) |
+
+At phase boundaries, reconcile all documents for consistency.
 
 ### Canonical Homes
 
@@ -100,7 +106,7 @@ Each piece of information lives in one place. Other files reference, not duplica
 
 ### Per-Session Checklist
 
-1. If you added ADRs → update count in CLAUDE.md Orientation ("24 recorded") and DECISIONS.md header
+1. If you added ADRs → update count in CLAUDE.md Orientation ("25 recorded") and DECISIONS.md header
 2. If architecture changed → update DESIGN.md
 3. If commands changed → update README.md
 4. Update last-updated footer on every modified document
@@ -111,4 +117,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-23, added CONTEXT.md with project methodology*
+*Last updated: 2026-02-23, event-driven document maintenance (ADR-025)*

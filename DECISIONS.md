@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-24 ADRs recorded.
+25 ADRs recorded.
 
 ## Domain Index
 
@@ -32,6 +32,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-022 | Integration | Claude Code skill scaffolding as Elmer feature |
 | ADR-023 | Governance | Mutable ADRs with git audit trail |
 | ADR-024 | Integration | MCP server for structured tool access |
+| ADR-025 | Scaffolding | Event-driven document maintenance in scaffolding |
 
 ---
 
@@ -280,3 +281,21 @@ The server is a presentation layer. Each tool opens a DB connection, queries, cl
 **Alternatives considered:** REST API (adds web framework dependency, requires port management, conflicts with no-web-framework constraint), enhancing CLI with `--json` output flags (per-command work, doesn't provide tool discovery or schema introspection that MCP gives for free).
 
 *Revised: 2026-02-23, added Phase 2 mutation tools*
+
+## ADR-025: Event-Driven Document Maintenance in Scaffolding
+
+**Decision:** Upgrade `elmer init --docs` scaffolding to include event-driven document maintenance tables, canonical homes, per-session checklists, documentation rules, and a documentation–code transition lifecycle. Apply the same event-driven format to Elmer's own CLAUDE.md.
+
+The previous scaffold template used a simple "File / Type / Update when..." table that listed each file with generic triggers ("Architecture changes"). This format requires judgment about what constitutes an architecture change and doesn't specify cascade effects (e.g., adding an ADR requires updating both DECISIONS.md and the ADR count in CLAUDE.md).
+
+The event-driven format maps specific events to specific document updates: "When this happens → update these documents." This is more actionable, more machine-followable, and teaches the maintenance discipline that prevents drift across AI sessions.
+
+The enhanced scaffold also includes:
+- **Canonical homes** — each piece of information lives in one place, other files reference. Prevents duplication drift.
+- **Per-session checklist** — mechanical checks to run after each session (ADR count alignment, last-updated footers).
+- **Documentation rules** — mutable ADRs, section-level change tracking, no cross-document duplication.
+- **Documentation–code transition** — 4-stage lifecycle (spec → implemented → diverged → living reference) with status markers and section-level tracking.
+
+These patterns were proven in a mature project (SRF Yogananda Teachings, 123 ADRs) and back-ported to Elmer's scaffolding. The scaffold teaches the full pattern from day one rather than requiring projects to discover it organically.
+
+**Alternatives considered:** Keeping the simple table and letting projects evolve their own maintenance patterns (loses the accumulated knowledge), making the scaffold AI-generated per-project via `claude -p` (expensive and unpredictable for what should be deterministic templates, consistent with ADR-015), adding maintenance rules as a separate post-init step (fragments the setup experience).

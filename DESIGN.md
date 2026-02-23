@@ -303,6 +303,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-24 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+25 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
 *Last updated: 2026-02-23, MCP server Phase 2 — added mutation tools*
