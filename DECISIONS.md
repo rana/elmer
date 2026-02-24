@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-18 ADRs recorded.
+19 ADRs recorded.
 
 ## Domain Index
 
@@ -26,6 +26,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-033 | Safety | Archive-before-destroy and crash-recovery resilience |
 | ADR-034 | Safety | Commit PROPOSAL.md to branch on completion |
 | ADR-035 | UX | Topic visibility in status display |
+| ADR-036 | Storage | Topic-derived proposal archive filenames |
 
 ---
 
@@ -318,3 +319,26 @@ This was the root cause of unrecoverable data loss in the ensemble incident: eve
 **Heuristic:** `_topic_adds_info(topic, id)` compares `slugify(topic)` against the exploration ID. When they differ — collision suffix (`-2`, `-3`), truncation, or any slug mismatch — the topic subtitle appears automatically. This is deterministic, zero-configuration, and targets exactly the cases where differentiation is lost.
 
 **Alternatives considered:** Adding a TOPIC column to the status table (screen width already tight at 82 columns — a new column would compress ID to uselessness or require horizontal scrolling), user-supplied `--name` parameter for explorations (correct long-term solution but adds a new concept, schema column, and cognitive overhead — deferred), embedding archetype in the slug (makes branch names longer without solving the core readability problem), replacing the ID column with topic (users need the ID to type into commands like `elmer approve`).
+
+## ADR-036: Topic-Derived Proposal Archive Filenames
+
+**Decision:** Two changes to proposal archiving in `.elmer/proposals/`:
+
+1. **Archive filenames derive from the topic, not the exploration ID.** `_archive_proposal()` uses `slugify(topic, max_length=140)` to generate filenames instead of the exploration ID. This produces human-readable filenames when browsing the proposals directory. Synthesis proposals get a `-synthesis` suffix. Collisions are resolved with a numeric counter, and idempotency is preserved by checking the metadata `id:` field in existing files.
+
+2. **Replica proposals are not archived on synthesis cascade.** When a synthesis is approved or declined, replica proposals are no longer archived — only worktrees and DB records are cleaned up. The synthesis proposal is the permanent record and already embeds all replica content verbatim in its prompt. Individual replica content is also recoverable from git history if needed.
+
+**Context:** The archive filename was coupled to the exploration ID (`{id}.md`), which is itself a `slugify(topic, max_length=60)` derivative. This worked for standalone explorations with distinctive topics (`what-is-contributing-to-cognitive-load.md`) but failed for ensembles: replicas of the same topic produced near-identical filenames differentiated only by numeric suffix (`explore-act.md`, `explore-act-2.md`, `explore-act-3.md`). These names conveyed no information when browsing the proposals directory.
+
+Archiving 5 replica proposals alongside the synthesis also created noise. The synthesis already incorporated all replica content, making the individual replica archives redundant.
+
+**Implementation changes:**
+- `gate.py`: New `_resolve_archive_path()` and `_archive_has_id()` helpers. `_archive_proposal()` uses topic-derived filenames with collision handling and idempotency detection via metadata inspection.
+- `gate.py`: Replica `_archive_proposal()` calls removed from both `approve_exploration()` and `decline_exploration()` ensemble cascade loops.
+- `explore.py`: `_make_unique_slug()` checks `.elmer/logs/{slug}.log` instead of `.elmer/proposals/{slug}.md` for slug reuse prevention (ADR-032). Log files are still slug-based; proposal filenames no longer are.
+
+**Interaction with ADR-032:** Slug reuse prevention now keys off log files instead of proposal archives. Logs remain slug-based (`{id}.log`) and persist after DB cleanup, preserving the ADR-032 guarantee.
+
+**Interaction with ADR-033:** The archive-before-destroy safety chain is unchanged for standalone explorations and synthesis. For replicas in the cascade path, destruction proceeds without archiving — this is intentional, not a gap.
+
+**Alternatives considered:** Increasing `slugify()` max_length only (partial fix — replicas still get meaningless suffixes), `{id}--{archetype}.md` format (helps multi-archetype ensembles but not same-archetype replicas), subdirectories per ensemble (premature structure for current scale).

@@ -20,16 +20,17 @@ def slugify(text: str, max_length: int = 60) -> str:
 
 
 def _make_unique_slug(conn, base_slug: str, elmer_dir: Path) -> str:
-    """Append a counter if the slug already exists in DB or archive.
+    """Append a counter if the slug already exists in DB or logs.
 
-    Checks both the active database and the proposal archive directory.
-    After clean deletes DB records, archived proposals and logs persist —
-    without this check, a reused slug would overwrite them (ADR-032).
+    Checks both the active database and the logs directory.
+    After clean deletes DB records, logs persist — without this check,
+    a reused slug would overwrite them (ADR-032). Proposal archives use
+    topic-derived filenames (ADR-036) so are not checked here.
     """
     def _slug_exists(slug: str) -> bool:
         if state.get_exploration(conn, slug) is not None:
             return True
-        if (elmer_dir / "proposals" / f"{slug}.md").exists():
+        if (elmer_dir / "logs" / f"{slug}.log").exists():
             return True
         return False
 

@@ -1,5 +1,6 @@
 """Approval gate — approve (merge) or decline (discard) explorations."""
 
+import re
 import shlex
 import shutil
 import subprocess
@@ -14,6 +15,52 @@ import click
 from . import config, explore as explore_mod, generate as gen_mod, insights, state, synthesize as synth_mod, worker, worktree
 
 
+def _archive_has_id(path: Path, exploration_id: str) -> bool:
+    """Check if an archived proposal contains the given exploration ID in metadata."""
+    try:
+        with open(path) as f:
+            head = f.read(500)
+        return f"\n  id: {exploration_id}\n" in head
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def _resolve_archive_path(archive_dir: Path, exp: dict) -> tuple[Path, bool]:
+    """Resolve the archive path for a proposal (ADR-036: topic-derived filenames).
+
+    Returns (path, already_archived). Uses the exploration topic to generate
+    a human-readable filename instead of the exploration ID.
+    """
+    topic = exp['topic']
+    # Strip [synthesis] prefix added by synthesize_ensemble()
+    clean_topic = re.sub(r'^\[synthesis\]\s*', '', topic)
+    slug = explore_mod.slugify(clean_topic, max_length=140)
+    if not slug:
+        slug = "exploration"
+
+    ens_role = exp.get("ensemble_role")
+    if ens_role == "synthesis":
+        slug = f"{slug}-synthesis"
+
+    base_path = archive_dir / f"{slug}.md"
+
+    # Idempotency: if file exists with same ID, it's a crash-recovery re-archive
+    if base_path.exists():
+        if _archive_has_id(base_path, exp['id']):
+            return base_path, True
+        # Collision with different exploration — add counter
+        counter = 2
+        while True:
+            candidate = archive_dir / f"{slug}-{counter}.md"
+            if not candidate.exists():
+                return candidate, False
+            if _archive_has_id(candidate, exp['id']):
+                return candidate, True
+            counter += 1
+
+    return base_path, False
+
+
 def _archive_proposal(
     elmer_dir: Path, exp: dict, final_status: str, *,
     project_dir: Optional[Path] = None,
@@ -22,8 +69,9 @@ def _archive_proposal(
 ) -> Optional[Path]:
     """Archive PROPOSAL.md before worktree cleanup. Returns archive path or None.
 
-    Copies the proposal to .elmer/proposals/<id>.md with a metadata header.
-    If decline_reason is provided, it is included in the archive metadata.
+    Copies the proposal to .elmer/proposals/ with a topic-derived filename
+    and a metadata header (ADR-036). If decline_reason is provided, it is
+    included in the archive metadata.
 
     Recovery strategies (ADR-033):
     1. Return existing archive if present (idempotency for crash recovery)
@@ -41,10 +89,10 @@ def _archive_proposal(
         exp = dict(exp)
 
     archive_dir = elmer_dir / "proposals"
-    archive_path = archive_dir / f"{exp['id']}.md"
 
-    # Idempotency: if archive already exists, return it (crash recovery)
-    if archive_path.exists():
+    # Resolve filename and check idempotency (ADR-036: topic-derived filenames)
+    archive_path, already_exists = _resolve_archive_path(archive_dir, exp)
+    if already_exists:
         return archive_path
 
     try:
@@ -227,7 +275,7 @@ def approve_exploration(
         worktree.remove_file_and_commit(
             project_dir,
             "PROPOSAL.md",
-            f"Remove PROPOSAL.md (archived to .elmer/proposals/{exploration_id}.md)",
+            f"Remove PROPOSAL.md (archived to .elmer/proposals/)",
         )
     except subprocess.CalledProcessError:
         pass  # Best-effort: file may not exist on branch or may not be committed
@@ -279,19 +327,17 @@ def approve_exploration(
     )
 
     # Ensemble cascade: when approving a synthesis, cleanup all replicas.
-    # Archive ALL replicas first, then destroy worktrees (ADR-033).
-    # Sleep between every worktree removal — including the first, since the
-    # synthesis worktree was just removed above. Prevents IDE inotify storms.
+    # Replica proposals are NOT archived — the synthesis is the permanent record
+    # and embeds all replica content (ADR-036). Sleep between worktree removals
+    # (including the first, since synthesis worktree was just removed above)
+    # to prevent IDE inotify storms.
     ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
     ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
     if ens_role == "synthesis" and ens_id:
         replicas = state.get_ensemble_replicas(conn, ens_id)
         for replica in replicas:
             if replica["status"] not in ("approved", "declined"):
-                _archive_proposal(elmer_dir, replica, "declined",
-                                  project_dir=project_dir, notify=notify,
-                                  decline_reason="Ensemble synthesis approved")
-                time.sleep(1.0)  # Always sleep — synthesis worktree just removed
+                time.sleep(1.0)
                 _cleanup_worktree(project_dir, replica)
                 state.update_exploration(
                     conn, replica["id"],
@@ -391,7 +437,7 @@ def decline_exploration(
     state.update_exploration(conn, exploration_id, **update_fields)
 
     # Ensemble cascade: when declining a synthesis, decline all replicas too.
-    # Archive ALL replicas, then destroy worktrees (ADR-033).
+    # Replica proposals are NOT archived — synthesis is the record (ADR-036).
     # Sleep before every worktree removal — including the first.
     ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
     ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
@@ -400,10 +446,7 @@ def decline_exploration(
         cascade_reason = reason or "Ensemble synthesis declined"
         for replica in replicas:
             if replica["status"] not in ("approved", "declined"):
-                _archive_proposal(elmer_dir, replica, "declined",
-                                  project_dir=project_dir, notify=notify,
-                                  decline_reason=cascade_reason)
-                time.sleep(1.0)  # Always sleep — synthesis worktree just removed
+                time.sleep(1.0)
                 _cleanup_worktree(project_dir, replica)
                 state.update_exploration(
                     conn, replica["id"],
