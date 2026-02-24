@@ -115,7 +115,7 @@ def start_exploration(
     auto_archetype: bool = False,
     budget_usd: Optional[float] = None,
     on_approve: Optional[str] = None,
-    on_reject: Optional[str] = None,
+    on_decline: Optional[str] = None,
 ) -> tuple[str, str]:
     """Start a new exploration. Returns (slug, archetype_used).
 
@@ -131,7 +131,7 @@ def start_exploration(
 
     If budget_usd is set, passes --max-budget-usd to the claude session.
 
-    on_approve/on_reject are shell commands executed after approval/rejection.
+    on_approve/on_decline are shell commands executed after approval/declining.
     $ID and $TOPIC are substituted with the exploration ID and topic.
     """
     if not worker.check_claude_available():
@@ -223,7 +223,7 @@ def start_exploration(
             generate_prompt=generate_prompt,
             budget_usd=budget_usd,
             on_approve=on_approve,
-            on_reject=on_reject,
+            on_decline=on_decline,
         )
         for dep_id in depends_on:
             state.add_dependency(conn, slug, dep_id)
@@ -235,7 +235,7 @@ def start_exploration(
         conn.close()
         raise RuntimeError(
             f"Branch '{branch}' already exists. "
-            f"Use 'elmer clean' or 'elmer reject {slug}' first."
+            f"Use 'elmer clean' or 'elmer decline {slug}' first."
         )
 
     agent_config = None
@@ -288,7 +288,7 @@ def start_exploration(
         generate_prompt=generate_prompt,
         budget_usd=budget_usd,
         on_approve=on_approve,
-        on_reject=on_reject,
+        on_decline=on_decline,
     )
 
     # Record dependencies even if all satisfied (for lineage tracking)

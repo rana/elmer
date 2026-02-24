@@ -17,15 +17,15 @@ def show_all_projects() -> None:
         click.echo("Run 'elmer init' in your projects to register them.")
         return
 
-    # Fixed columns: run(4)+done(5)+pend(5)+appr(5)+rej(5)+fail(5)+total(6)+cost(10)+gaps(7) = 52
+    # Fixed columns: run(4)+done(5)+pend(5)+appr(5)+decl(5)+fail(5)+total(6)+cost(10)+gaps(7) = 52
     tw = shutil.get_terminal_size((90, 24)).columns
     name_w = max(16, tw - 52)
 
-    click.echo(f"{'PROJECT':<{name_w}} {'RUN':>4} {'DONE':>5} {'PEND':>5} {'APPR':>5} {'REJ':>5} {'FAIL':>5} {'TOTAL':>6} {'COST':>10}")
+    click.echo(f"{'PROJECT':<{name_w}} {'RUN':>4} {'DONE':>5} {'PEND':>5} {'APPR':>5} {'DECL':>5} {'FAIL':>5} {'TOTAL':>6} {'COST':>10}")
     click.echo("-" * tw)
 
     grand_totals = {"running": 0, "done": 0, "pending": 0, "approved": 0,
-                    "rejected": 0, "failed": 0, "total": 0, "cost": 0.0}
+                    "declined": 0, "failed": 0, "total": 0, "cost": 0.0}
 
     for project_dir in projects:
         elmer_dir = project_dir / ".elmer"
@@ -42,7 +42,7 @@ def show_all_projects() -> None:
             continue
 
         counts = {"running": 0, "done": 0, "pending": 0, "approved": 0,
-                  "rejected": 0, "failed": 0}
+                  "declined": 0, "failed": 0}
         total_cost = 0.0
 
         for exp in explorations:
@@ -57,7 +57,7 @@ def show_all_projects() -> None:
 
         click.echo(
             f"{name:<{name_w}} {counts['running']:>4} {counts['done']:>5} "
-            f"{counts['pending']:>5} {counts['approved']:>5} {counts['rejected']:>5} "
+            f"{counts['pending']:>5} {counts['approved']:>5} {counts['declined']:>5} "
             f"{counts['failed']:>5} {total:>6} "
             f"{'$' + f'{total_cost:.2f}':>10}"
         )
@@ -73,7 +73,7 @@ def show_all_projects() -> None:
         click.echo(
             f"{'TOTAL':<{name_w}} {grand_totals['running']:>4} {grand_totals['done']:>5} "
             f"{grand_totals['pending']:>5} {grand_totals['approved']:>5} "
-            f"{grand_totals['rejected']:>5} {grand_totals['failed']:>5} "
+            f"{grand_totals['declined']:>5} {grand_totals['failed']:>5} "
             f"{grand_totals['total']:>6} "
             f"{cost_str:>10}"
         )

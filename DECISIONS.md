@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-26 ADRs recorded.
+27 ADRs recorded.
 
 ## Domain Index
 
@@ -34,6 +34,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-024 | Integration | MCP server for structured tool access |
 | ADR-025 | Scaffolding | Event-driven document maintenance in scaffolding |
 | ADR-026 | Process | Exploration archetypes as Claude Code custom subagents |
+| ADR-027 | Terminology | Rename "reject/rejected" to "decline/declined" |
 
 ---
 
@@ -143,7 +144,7 @@ This reuses the exact process-checking pattern from `worker.is_running()` (ADR-0
 
 ## ADR-012: Chain Actions as Shell Commands
 
-**Decision:** `--on-approve` and `--on-reject` execute user-specified shell commands with `$ID` and `$TOPIC` variable substitution.
+**Decision:** `--on-approve` and `--on-decline` execute user-specified shell commands with `$ID` and `$TOPIC` variable substitution.
 
 This provides maximum composability — chain actions can call `elmer generate`, `elmer explore`, or any other tool. The user is responsible for the commands they configure. Chain actions run synchronously with a 5-minute timeout and are best-effort (failures are logged, not fatal).
 
@@ -185,7 +186,7 @@ The five-document pattern is the same one that makes Elmer's own project effecti
 
 **Decision:** `elmer archetypes stats` computes archetype effectiveness metrics (approval rate, average cost, follow-up count) by querying the existing `explorations` table. No new tables, no new columns, no tracking changes.
 
-All the data needed for archetype analytics already exists in the explorations table: `archetype`, `status`, `cost_usd`. The approval rate (approved / (approved + rejected)) is the primary signal. Stats are computed on-demand, not cached, because the exploration table is small enough that aggregation is instant.
+All the data needed for archetype analytics already exists in the explorations table: `archetype`, `status`, `cost_usd`. The approval rate (approved / (approved + declined)) is the primary signal. Stats are computed on-demand, not cached, because the exploration table is small enough that aggregation is instant.
 
 **Alternatives considered:** A dedicated `archetype_stats` table updated on each status change (premature optimization — the explorations table is sufficient), per-archetype scoring models (insufficient data in early use to justify complexity), human feedback collection (valuable but adds UI complexity — deferred).
 
@@ -215,7 +216,7 @@ The AI both checks and fixes — if an invariant fails, it edits the file to res
 
 The registry is a simple JSON array of absolute paths. Stale entries (projects where `.elmer/` no longer exists) are pruned automatically on read. This reuses the `~/.elmer/` global directory established by ADR-013 (insights database).
 
-The dashboard aggregates counts by status (running, done, pending, approved, rejected, failed) and total cost per project. When multiple projects are registered, a totals row is shown. This addresses the Phase Gate requirement: "attention routing helps a user managing 10+ pending proposals across 2+ projects."
+The dashboard aggregates counts by status (running, done, pending, approved, declined, failed) and total cost per project. When multiple projects are registered, a totals row is shown. This addresses the Phase Gate requirement: "attention routing helps a user managing 10+ pending proposals across 2+ projects."
 
 **Alternatives considered:** Scanning filesystem for `.elmer/` directories (slow, unpredictable depth), per-project config pointing to other projects (fragile cross-references), SQLite table in `~/.elmer/insights.db` (mixing concerns — project registry isn't an insight).
 
@@ -275,13 +276,13 @@ Adopted from the SRF Yogananda Teachings project's ADR governance model.
 
 Elmer's CLI returns formatted text tables that Claude Code must parse as unstructured text — lossy, brittle, and prone to misinterpretation. The MCP server wraps the same module functions (`state.py`, `costs.py`, `insights.py`, `config.py`, `explore.py`, `gate.py`) and returns structured JSON that Claude Code reasons about natively.
 
-10 tools total: 6 read-only (status, review, costs, tree, archetypes, insights) + 4 mutation (explore, approve, reject, cancel). Mutation tools catch `SystemExit` from gate functions (which use `sys.exit(1)` for validation) and convert to structured error responses — the server never crashes.
+17 tools total: 6 read-only (status, review, costs, tree, archetypes, insights) + 7 mutation (explore, approve, decline, cancel, retry, clean, pr) + 3 intelligence (generate, validate, mine-questions) + 1 batch. Mutation tools catch `SystemExit` from gate functions (which use `sys.exit(1)` for validation) and convert to structured error responses — the server never crashes.
 
 The server is a presentation layer. Each tool opens a DB connection, queries, closes, and returns JSON — the same per-call pattern as CLI commands. No connection pooling, no persistent state between tool calls.
 
 **Alternatives considered:** REST API (adds web framework dependency, requires port management, conflicts with no-web-framework constraint), enhancing CLI with `--json` output flags (per-command work, doesn't provide tool discovery or schema introspection that MCP gives for free).
 
-*Revised: 2026-02-23, added Phase 2 mutation tools*
+*Revised: 2026-02-23, expanded to 17 tools, reject→decline rename (ADR-027)*
 
 ## ADR-025: Event-Driven Document Maintenance in Scaffolding
 
@@ -327,3 +328,24 @@ Claude Code custom subagents (`.claude/agents/` markdown files with YAML frontma
 **Backwards compatibility:** When no agent definition exists for an archetype, the system falls back to the existing `$TOPIC` template substitution. All existing archetypes continue to work.
 
 **Alternatives considered:** Filesystem-based agents only (breaks in worktrees where `.claude/agents/` isn't visible), Agent Teams for parallel explorations (session-scoped, don't persist — consistent with ADR-002), prompt-only approach with tool restrictions in prompt text (unenforceable, wastes tokens), separate agent runner binary (unnecessary complexity when `claude -p` already supports `--agents`).
+
+## ADR-027: Rename "Reject/Rejected" to "Decline/Declined"
+
+**Decision:** Rename all user-facing occurrences of "reject"/"rejected" to "decline"/"declined" across CLI commands, MCP tools, status values, database columns, function names, and documentation.
+
+"Reject" carries a harsh, judgmental connotation that doesn't match the actual operation: the user is simply choosing not to merge a proposal. "Decline" is softer and more accurate — it conveys "not this time" rather than "this is bad." Since Elmer is designed for autonomous research where many proposals are expected to be discarded (broad surveys, dead-end analysis), the terminal state label should feel routine, not punitive.
+
+**Scope of change:**
+
+- CLI: `elmer reject` → `elmer decline`, `--on-reject` → `--on-decline`
+- MCP: `elmer_reject` → `elmer_decline`
+- State: status value `"rejected"` → `"declined"` in SQLite
+- Database: column `on_reject` → `on_decline` (with migration)
+- Functions: `reject_exploration()` → `decline_exploration()`
+- All documentation updated
+
+**Intentionally unchanged:** The AI review gate protocol keyword `VERDICT: REJECT` in `autoapprove.py` and the `review-gate` meta-agent. These are instructions to the AI model, not user-facing terminology. The AI protocol uses a binary APPROVE/REJECT vocabulary that the model recognizes reliably — renaming it risks parsing failures without user benefit.
+
+**Migration:** SQLite schema migration renames the `on_reject` column to `on_decline` and updates all status values from `"rejected"` to `"declined"`. Both operations are idempotent (wrapped in try/except for re-run safety).
+
+**Alternatives considered:** Keeping "reject" (functional but tonally misaligned with the tool's philosophy), "skip" (implies the proposal might be revisited), "discard" (accurate but already used for the git operation description), "pass" (ambiguous — could mean "approve without review").

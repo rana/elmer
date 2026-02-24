@@ -95,7 +95,7 @@ def evaluate(
         gate.approve_exploration(elmer_dir, project_dir, exploration_id)
         return True
 
-    # Rejected or unparseable — leave for human review, store reason
+    # Declined or unparseable — leave for human review, store reason
     if reason:
         current = state.get_exploration(conn, exploration_id)
         summary = current["proposal_summary"] or ""

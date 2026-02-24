@@ -28,14 +28,14 @@ def show_archetype_stats(elmer_dir: Path) -> None:
     for arch, exps in sorted(by_archetype.items()):
         total = len(exps)
         approved = sum(1 for e in exps if e["status"] == "approved")
-        rejected = sum(1 for e in exps if e["status"] == "rejected")
+        declined = sum(1 for e in exps if e["status"] == "declined")
         done = sum(1 for e in exps if e["status"] == "done")
         failed = sum(1 for e in exps if e["status"] == "failed")
         running = sum(1 for e in exps if e["status"] == "running")
         pending = sum(1 for e in exps if e["status"] == "pending")
 
-        # Approval rate: approved / (approved + rejected), ignoring incomplete
-        decided = approved + rejected
+        # Approval rate: approved / (approved + declined), ignoring incomplete
+        decided = approved + declined
         approval_rate = (approved / decided * 100) if decided > 0 else None
 
         # Average cost (only for explorations with cost data)
@@ -50,7 +50,7 @@ def show_archetype_stats(elmer_dir: Path) -> None:
             "archetype": arch,
             "total": total,
             "approved": approved,
-            "rejected": rejected,
+            "declined": declined,
             "done": done,
             "failed": failed,
             "running": running,
@@ -65,7 +65,7 @@ def show_archetype_stats(elmer_dir: Path) -> None:
 
     # Display
     click.echo(
-        f"{'ARCHETYPE':<22} {'TOTAL':>5} {'APPR':>5} {'REJ':>5} "
+        f"{'ARCHETYPE':<22} {'TOTAL':>5} {'APPR':>5} {'DECL':>5} "
         f"{'DONE':>5} {'FAIL':>5} {'RATE':>7} {'AVG COST':>9}"
     )
     click.echo("-" * 72)
@@ -75,15 +75,15 @@ def show_archetype_stats(elmer_dir: Path) -> None:
         cost = f"${s['avg_cost']:.2f}" if s['avg_cost'] is not None else "-"
         click.echo(
             f"{s['archetype']:<22} {s['total']:>5} {s['approved']:>5} "
-            f"{s['rejected']:>5} {s['done']:>5} {s['failed']:>5} "
+            f"{s['declined']:>5} {s['done']:>5} {s['failed']:>5} "
             f"{rate:>7} {cost:>9}"
         )
 
     click.echo()
     total_all = sum(s["total"] for s in stats)
     approved_all = sum(s["approved"] for s in stats)
-    rejected_all = sum(s["rejected"] for s in stats)
-    decided_all = approved_all + rejected_all
+    declined_all = sum(s["declined"] for s in stats)
+    decided_all = approved_all + declined_all
     rate_all = f"{approved_all / decided_all * 100:.0f}%" if decided_all > 0 else "-"
     click.echo(
         f"{total_all} exploration(s) across {len(stats)} archetype(s). "

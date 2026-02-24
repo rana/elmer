@@ -49,11 +49,20 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                          ("num_turns_actual", "INTEGER"),
                          ("budget_usd", "REAL"),
                          ("on_approve", "TEXT"),
-                         ("on_reject", "TEXT")]:
+                         ("on_decline", "TEXT")]:
         try:
             conn.execute(f"ALTER TABLE explorations ADD COLUMN {col} {coltype}")
         except sqlite3.OperationalError:
             pass  # Column already exists
+
+    # Migrate legacy column name: on_reject -> on_decline (ADR-027)
+    try:
+        conn.execute("ALTER TABLE explorations RENAME COLUMN on_reject TO on_decline")
+    except sqlite3.OperationalError:
+        pass  # Column already renamed or never existed
+
+    # Migrate legacy status value: rejected -> declined (ADR-027)
+    conn.execute("UPDATE explorations SET status = 'declined' WHERE status = 'rejected'")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS dependencies (
@@ -116,19 +125,19 @@ def create_exploration(
     generate_prompt: bool = False,
     budget_usd: Optional[float] = None,
     on_approve: Optional[str] = None,
-    on_reject: Optional[str] = None,
+    on_decline: Optional[str] = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO explorations
             (id, topic, archetype, branch, worktree_path, status, model, pid,
              created_at, parent_id, max_turns, auto_approve, generate_prompt,
-             budget_usd, on_approve, on_reject)
+             budget_usd, on_approve, on_decline)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (id, topic, archetype, branch, worktree_path, status, model, pid,
          _now(), parent_id, max_turns, int(auto_approve), int(generate_prompt),
-         budget_usd, on_approve, on_reject),
+         budget_usd, on_approve, on_decline),
     )
     conn.commit()
 

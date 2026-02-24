@@ -19,7 +19,7 @@ def cli():
 
     Create git branches, spawn Claude Code sessions to explore topics
     autonomously, and queue proposals for review. Approve to merge.
-    Reject to discard.
+    Decline to discard.
     """
 
 
@@ -190,8 +190,8 @@ def init(docs, skills, agents):
 @click.option("--no-generate", is_flag=True, default=False, help="Use static template (skip two-stage prompt generation)")
 @click.option("--budget", "budget_usd", default=None, type=float, help="Max cost in USD for this exploration")
 @click.option("--on-approve", default=None, help="Shell command to run on approval ($ID, $TOPIC substituted)")
-@click.option("--on-reject", default=None, help="Shell command to run on rejection ($ID, $TOPIC substituted)")
-def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_approve, auto_archetype, generate_prompt, no_generate, budget_usd, on_approve, on_reject):
+@click.option("--on-decline", default=None, help="Shell command to run on decline ($ID, $TOPIC substituted)")
+def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_approve, auto_archetype, generate_prompt, no_generate, budget_usd, on_approve, on_decline):
     """Start an exploration on a new branch.
 
     Each exploration gets its own git worktree and a background Claude
@@ -264,7 +264,7 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
                 generate_prompt=use_generate,
                 budget_usd=budget_usd,
                 on_approve=on_approve,
-                on_reject=on_reject,
+                on_decline=on_decline,
             )
             click.echo(f"Started: {slug}")
             click.echo(f"  Branch:    elmer/{slug}")
@@ -280,8 +280,8 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
                 click.echo(f"  Budget:    ${budget_usd:.2f}")
             if on_approve:
                 click.echo(f"  On approve: {on_approve}")
-            if on_reject:
-                click.echo(f"  On reject:  {on_reject}")
+            if on_decline:
+                click.echo(f"  On decline: {on_decline}")
             click.echo(f"  Log:       .elmer/logs/{slug}.log")
             click.echo()
         except (RuntimeError, FileNotFoundError) as e:
@@ -773,17 +773,17 @@ def _run_invariants(elmer_dir: Path, project_dir: Path, cfg: dict) -> None:
 
 @cli.command()
 @click.argument("exploration_id")
-def reject(exploration_id):
-    """Reject and discard an exploration.
+def decline(exploration_id):
+    """Decline and discard an exploration.
 
-    Deletes the branch and worktree. The exploration is marked as rejected
+    Deletes the branch and worktree. The exploration is marked as declined
     in state but the log file is preserved.
     """
     project_dir = _require_project()
     elmer_dir = _require_elmer(project_dir)
 
-    gate.reject_exploration(elmer_dir, project_dir, exploration_id)
-    click.echo(f"Rejected: {exploration_id}")
+    gate.decline_exploration(elmer_dir, project_dir, exploration_id)
+    click.echo(f"Declined: {exploration_id}")
 
 
 @cli.command()
@@ -792,10 +792,10 @@ def cancel(exploration_id):
     """Cancel a running or pending exploration.
 
     Stops the Claude session (if running), removes the worktree and branch,
-    and marks the exploration as rejected. The log file is preserved.
+    and marks the exploration as declined. The log file is preserved.
 
     Use this to stop explorations that are burning money on the wrong topic
-    or archetype. For completed explorations, use 'elmer reject' instead.
+    or archetype. For completed explorations, use 'elmer decline' instead.
     """
     project_dir = _require_project()
     elmer_dir = _require_elmer(project_dir)
@@ -845,7 +845,7 @@ def retry(exploration_id, failed, max_concurrent):
 def clean():
     """Clean up finished explorations.
 
-    Removes worktrees and state entries for approved, rejected, and failed
+    Removes worktrees and state entries for approved, declined, and failed
     explorations. Running and pending explorations are not affected.
     """
     project_dir = _require_project()
@@ -906,7 +906,7 @@ def tree():
         "running": "~",
         "done": "*",
         "approved": "+",
-        "rejected": "-",
+        "declined": "-",
         "failed": "!",
     }
 
@@ -941,7 +941,7 @@ def tree():
         _print_tree(root)
 
     click.echo()
-    click.echo(". pending  ~ running  * review ready  + approved  - rejected  ! failed")
+    click.echo(". pending  ~ running  * review ready  + approved  - declined  ! failed")
 
 
 @cli.command()

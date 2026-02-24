@@ -15,7 +15,7 @@ elmer explore "should we use WebSockets or SSE for real-time updates"
 # ... wait for Claude to finish ...
 elmer status
 elmer review should-we-use-websockets
-elmer approve should-we-use-websockets   # or: elmer reject
+elmer approve should-we-use-websockets   # or: elmer decline
 ```
 
 That's it. Everything else is automation around this loop.
@@ -323,16 +323,16 @@ elmer costs --exploration my-topic # detail for one exploration
 
 ```
 pending → running → done → approved
-                         → rejected
-                  → failed → rejected
+                         → declined
+                  → failed → declined
 ```
 
 - **pending**: Waiting for a dependency to be approved. No worktree yet. Will start automatically when unblocked.
 - **running**: Claude session active. Check `.elmer/logs/<id>.log` for progress.
 - **done**: Session finished. PROPOSAL.md exists on the branch. Ready for review.
-- **failed**: Session finished but no PROPOSAL.md. Check the log. You can still approve (to merge any other changes) or reject.
+- **failed**: Session finished but no PROPOSAL.md. Check the log. You can still approve (to merge any other changes) or decline.
 - **approved**: Branch merged. Worktree cleaned up.
-- **rejected**: Branch deleted. Worktree cleaned up. Log preserved.
+- **declined**: Branch deleted. Worktree cleaned up. Log preserved.
 
 ## Patterns That Work Well
 

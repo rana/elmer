@@ -1,4 +1,4 @@
-"""Approval gate — approve (merge) or reject (discard) explorations."""
+"""Approval gate — approve (merge) or decline (discard) explorations."""
 
 import shlex
 import subprocess
@@ -182,10 +182,10 @@ def approve_exploration(
             notify(f"Follow-up generation failed: {e}")
 
 
-def reject_exploration(
+def decline_exploration(
     elmer_dir: Path, project_dir: Path, exploration_id: str, *, notify=None,
 ) -> None:
-    """Reject an exploration: delete branch and clean up."""
+    """Decline an exploration: delete branch and clean up."""
     if notify is None:
         notify = click.echo
 
@@ -197,28 +197,28 @@ def reject_exploration(
         sys.exit(1)
 
     if exp["status"] == "approved":
-        click.echo("Cannot reject an already-approved exploration.", err=True)
+        click.echo("Cannot decline an already-approved exploration.", err=True)
         sys.exit(1)
 
     _cleanup_worktree(project_dir, exp)
 
-    state.update_exploration(conn, exploration_id, status="rejected")
+    state.update_exploration(conn, exploration_id, status="declined")
 
     _warn_orphaned_dependents(conn, exploration_id, notify=notify)
     conn.close()
 
-    # Execute on_reject chain action
-    on_reject = exp["on_reject"] if "on_reject" in exp.keys() else None
-    if on_reject:
+    # Execute on_decline chain action
+    on_decline = exp["on_decline"] if "on_decline" in exp.keys() else None
+    if on_decline:
         _execute_chain_action(
-            on_reject, exploration_id, exp["topic"], project_dir, notify=notify,
+            on_decline, exploration_id, exp["topic"], project_dir, notify=notify,
         )
 
 
 def _warn_orphaned_dependents(
     conn, exploration_id: str, notify=None,
 ) -> None:
-    """Warn about pending explorations that depend on a rejected/cancelled exploration."""
+    """Warn about pending explorations that depend on a declined/cancelled exploration."""
     if notify is None:
         notify = click.echo
 
@@ -244,7 +244,7 @@ def _warn_orphaned_dependents(
         )
         for oid in orphaned:
             notify(f"  {oid}")
-        notify("Use 'elmer reject ID' to discard them.")
+        notify("Use 'elmer decline ID' to discard them.")
 
 
 def cancel_exploration(
@@ -295,22 +295,22 @@ def cancel_exploration(
         state.update_exploration(
             conn,
             exploration_id,
-            status="rejected",
+            status="declined",
             completed_at=datetime.now(timezone.utc).isoformat(),
             **cost_fields,
         )
     else:
         # Pending — no process or worktree to clean
-        state.update_exploration(conn, exploration_id, status="rejected")
+        state.update_exploration(conn, exploration_id, status="declined")
 
     _warn_orphaned_dependents(conn, exploration_id, notify=notify)
     conn.close()
 
-    # Execute on_reject chain action
-    on_reject = exp["on_reject"] if "on_reject" in exp.keys() else None
-    if on_reject:
+    # Execute on_decline chain action
+    on_decline = exp["on_decline"] if "on_decline" in exp.keys() else None
+    if on_decline:
         _execute_chain_action(
-            on_reject, exploration_id, exp["topic"], project_dir, notify=notify,
+            on_decline, exploration_id, exp["topic"], project_dir, notify=notify,
         )
 
 
@@ -474,7 +474,7 @@ def clean_all(elmer_dir: Path, project_dir: Path) -> int:
 
     cleaned = 0
     for exp in explorations:
-        if exp["status"] in ("approved", "rejected", "failed"):
+        if exp["status"] in ("approved", "declined", "failed"):
             worktree_path = Path(exp["worktree_path"])
             if worktree_path.exists():
                 _cleanup_worktree(project_dir, exp)

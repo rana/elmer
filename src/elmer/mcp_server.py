@@ -1,17 +1,30 @@
-"""Elmer MCP Server — expose Elmer state as structured MCP tools.
+"""Elmer MCP Server — expose Elmer state and operations as structured MCP tools.
 
-Phase 1 (read-only): status, review, costs, tree, archetypes, insights.
-Phase 2 (mutation): explore, approve, reject, cancel.
+Read-only: status, review, costs, tree, archetypes, insights.
+Mutation: explore, approve, decline, cancel, retry, clean, pr.
+Intelligence: generate, validate, mine_questions.
+Batch: batch (structured topic list).
 Communicates via stdio JSON-RPC for Claude Code integration.
 """
 
-import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from . import config, explore as explore_mod, gate, insights as insights_mod, state, worktree as wt
+from . import (
+    config,
+    explore as explore_mod,
+    gate,
+    generate as gen_mod,
+    insights as insights_mod,
+    invariants as inv_mod,
+    pr as pr_mod,
+    questions as questions_mod,
+    state,
+    worktree as wt,
+)
 
 mcp = FastMCP("elmer")
 
@@ -31,21 +44,23 @@ def _row_to_dict(row) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Tools
+# Read-Only Tools
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool()
-def elmer_status(status: Optional[str] = None) -> dict:
+def elmer_status(status_filter: Optional[str] = None) -> dict:
     """List all explorations with their current state.
 
     Returns structured exploration data and a status summary.
-    Optional status filter: pending, running, done, approved, rejected, failed.
+    Use this to check what's running, what's done, and what needs review.
+
+    Optional status_filter: pending, running, done, approved, declined, failed.
     """
     try:
         _, elmer_dir = _find_project()
         conn = state.get_db(elmer_dir)
-        explorations = state.list_explorations(conn, status=status)
+        explorations = state.list_explorations(conn, status=status_filter)
 
         result = []
         counts: dict[str, int] = {}
@@ -74,7 +89,7 @@ def elmer_status(status: Optional[str] = None) -> dict:
                 "done": counts.get("done", 0),
                 "pending": counts.get("pending", 0),
                 "approved": counts.get("approved", 0),
-                "rejected": counts.get("rejected", 0),
+                "declined": counts.get("declined", 0),
                 "failed": counts.get("failed", 0),
             },
         }
@@ -83,14 +98,58 @@ def elmer_status(status: Optional[str] = None) -> dict:
 
 
 @mcp.tool()
-def elmer_review(exploration_id: str) -> dict:
-    """Read a proposal with full metadata.
+def elmer_review(
+    exploration_id: Optional[str] = None,
+    prioritize: bool = False,
+) -> dict:
+    """Review exploration proposals.
 
-    Returns the PROPOSAL.md content, exploration metadata, and dependency info.
+    Without exploration_id: lists all proposals pending review (status=done or failed).
+    With exploration_id: returns full PROPOSAL.md content, metadata, and dependencies.
+    With prioritize=true: ranks pending proposals by review priority (blockers,
+    staleness, diff size). Use this to decide what to review next.
     """
     try:
-        _, elmer_dir = _find_project()
+        project_dir, elmer_dir = _find_project()
         conn = state.get_db(elmer_dir)
+
+        # List mode: no specific exploration requested
+        if exploration_id is None:
+            done = state.list_explorations(conn, status="done")
+            failed = state.list_explorations(conn, status="failed")
+            proposals = list(done) + list(failed)
+
+            if prioritize and proposals:
+                scored = []
+                for exp in proposals:
+                    score, reasons = _score_proposal(exp, conn, project_dir)
+                    scored.append({
+                        "id": exp["id"],
+                        "topic": exp["topic"],
+                        "status": exp["status"],
+                        "archetype": exp["archetype"],
+                        "created_at": exp["created_at"],
+                        "priority_score": score,
+                        "priority_reasons": reasons,
+                    })
+                scored.sort(key=lambda x: -x["priority_score"])
+                conn.close()
+                return {"proposals": scored, "count": len(scored), "prioritized": True}
+
+            result = [
+                {
+                    "id": exp["id"],
+                    "topic": exp["topic"],
+                    "status": exp["status"],
+                    "archetype": exp["archetype"],
+                    "created_at": exp["created_at"],
+                }
+                for exp in proposals
+            ]
+            conn.close()
+            return {"proposals": result, "count": len(result), "prioritized": False}
+
+        # Detail mode: specific exploration
         exp = state.get_exploration(conn, exploration_id)
 
         if exp is None:
@@ -128,6 +187,43 @@ def elmer_review(exploration_id: str) -> dict:
         }
     except Exception as exc:
         return {"error": str(exc)}
+
+
+def _score_proposal(exp, conn, project_dir: Path) -> tuple[float, list[str]]:
+    """Score a proposal for prioritized review. Returns (score, reasons).
+
+    Higher score = review first. Scoring factors:
+    - Blockers: is anything waiting on this? (+30 per dependent)
+    - Staleness: older proposals get priority (+1 per hour, max 24)
+    - Failed status: failed explorations need attention (+5)
+    """
+    score = 0.0
+    reasons = []
+
+    # Factor 1: Dependents — other explorations are blocked on this
+    dependents = state.get_dependents(conn, exp["id"])
+    if dependents:
+        score += 30 * len(dependents)
+        reasons.append(f"blocks {len(dependents)}")
+
+    # Factor 2: Staleness — older proposals get priority
+    try:
+        created = datetime.fromisoformat(exp["created_at"])
+        now = datetime.now(timezone.utc)
+        hours = (now - created).total_seconds() / 3600
+        staleness = min(hours, 24)
+        score += staleness
+        if hours > 12:
+            reasons.append("stale")
+    except (ValueError, TypeError):
+        pass
+
+    # Factor 3: Failed status — needs attention
+    if exp["status"] == "failed":
+        score += 5
+        reasons.append("failed")
+
+    return score, reasons
 
 
 @mcp.tool()
@@ -231,7 +327,8 @@ def elmer_tree() -> dict:
     """Dependency tree of explorations as structured data.
 
     Returns a tree with root explorations and their children (dependents),
-    nested recursively.
+    nested recursively. Use this to understand exploration relationships
+    and find blocked work.
     """
     try:
         _, elmer_dir = _find_project()
@@ -281,6 +378,7 @@ def elmer_archetypes(include_stats: bool = False) -> dict:
 
     Lists both bundled and project-local archetypes. When include_stats is true,
     includes approval rates and cost data computed from exploration history.
+    Use this to choose an archetype before starting an exploration.
     """
     try:
         _, elmer_dir = _find_project()
@@ -315,13 +413,13 @@ def elmer_archetypes(include_stats: bool = False) -> dict:
             for arch, exps in by_arch.items():
                 total = len(exps)
                 approved = sum(1 for e in exps if e["status"] == "approved")
-                rejected = sum(1 for e in exps if e["status"] == "rejected")
-                decided = approved + rejected
+                declined = sum(1 for e in exps if e["status"] == "declined")
+                decided = approved + declined
                 costs = [e["cost_usd"] for e in exps if e["cost_usd"] is not None]
                 stats_by_arch[arch] = {
                     "total": total,
                     "approved": approved,
-                    "rejected": rejected,
+                    "declined": declined,
                     "approval_rate": round(approved / decided, 2) if decided > 0 else None,
                     "avg_cost_usd": round(sum(costs) / len(costs), 4) if costs else None,
                 }
@@ -342,7 +440,8 @@ def elmer_insights(keywords: Optional[str] = None) -> dict:
     """Cross-project insights from the global insight log.
 
     Without keywords: returns all insights. With keywords: returns insights
-    matching the keywords, ranked by relevance.
+    matching the keywords, ranked by relevance. Insights are generalizable
+    findings extracted from approved explorations across all projects.
     """
     try:
         if keywords:
@@ -377,7 +476,7 @@ def elmer_insights(keywords: Optional[str] = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 — Mutation Tools
+# Mutation Tools
 # ---------------------------------------------------------------------------
 
 
@@ -388,8 +487,13 @@ def elmer_explore(
     model: Optional[str] = None,
     max_turns: Optional[int] = None,
     auto_approve: bool = False,
+    auto_archetype: bool = False,
+    generate_prompt: bool = False,
     budget_usd: Optional[float] = None,
     depends_on: Optional[str] = None,
+    parent_id: Optional[str] = None,
+    on_approve: Optional[str] = None,
+    on_decline: Optional[str] = None,
 ) -> dict:
     """Start a new exploration on a git branch.
 
@@ -397,25 +501,36 @@ def elmer_explore(
     investigate the topic, and tracks it in Elmer's state. The session
     writes a PROPOSAL.md when done.
 
-    Requires the claude CLI in PATH. This spawns a real background process.
+    Use after elmer_generate to spawn AI-generated topics, or directly
+    for specific research questions.
 
     Parameters:
         topic: What to explore (required).
-        archetype: Prompt template to use (default: from config, usually explore-act).
-        model: Claude model (default: from config, usually opus).
-        max_turns: Turn limit for the claude session (default: from config, usually 50).
-        auto_approve: If true, AI reviews the proposal when done.
+        archetype: Prompt template (default: from config). Overrides auto_archetype.
+        model: Claude model — sonnet, opus, haiku (default: from config).
+        max_turns: Turn limit for the claude session (default: from config).
+        auto_approve: If true, AI reviews the proposal on completion.
+        auto_archetype: If true, AI selects the best archetype for the topic.
+        generate_prompt: If true, uses two-stage AI prompt generation.
         budget_usd: Cost cap in USD for the claude session.
         depends_on: Comma-separated exploration IDs this depends on.
+        parent_id: Parent exploration ID (for follow-ups).
+        on_approve: Shell command to run on approval ($ID, $TOPIC substituted).
+        on_decline: Shell command to run on decline ($ID, $TOPIC substituted).
     """
     try:
         project_dir, elmer_dir = _find_project()
         cfg = config.load_config(elmer_dir)
         defaults = cfg.get("defaults", {})
 
+        # -a forces a specific archetype and disables auto-selection
+        use_auto_archetype = auto_archetype and archetype is None
         use_archetype = archetype or defaults.get("archetype", "explore-act")
         use_model = model or defaults.get("model", "opus")
         use_max_turns = max_turns or defaults.get("max_turns", 50)
+
+        # Resolve generate_prompt from config if not explicitly set
+        use_generate = generate_prompt or defaults.get("generate_prompt", False)
 
         dep_list = None
         if depends_on:
@@ -429,11 +544,16 @@ def elmer_explore(
             elmer_dir=elmer_dir,
             project_dir=project_dir,
             auto_approve=auto_approve,
+            auto_archetype=use_auto_archetype,
+            generate_prompt=use_generate,
             budget_usd=budget_usd,
             depends_on=dep_list,
+            parent_id=parent_id,
+            on_approve=on_approve,
+            on_decline=on_decline,
         )
 
-        # Read actual status from DB (deps may already be approved → running)
+        # Read actual status from DB (deps may already be approved -> running)
         conn = state.get_db(elmer_dir)
         exp = state.get_exploration(conn, slug)
         conn.close()
@@ -446,34 +566,76 @@ def elmer_explore(
             "model": use_model,
             "status": actual_status,
             "budget_usd": budget_usd,
+            "auto_archetype": use_auto_archetype,
+            "generate_prompt": use_generate,
         }
     except Exception as exc:
         return {"error": str(exc)}
 
 
 @mcp.tool()
-def elmer_approve(exploration_id: str) -> dict:
+def elmer_approve(
+    exploration_id: Optional[str] = None,
+    approve_all: bool = False,
+    auto_followup: bool = False,
+    followup_count: int = 3,
+    validate_invariants: bool = False,
+) -> dict:
     """Approve and merge an exploration.
 
     Merges the exploration's git branch into the current branch, cleans up
     the worktree, and marks the exploration as approved. If other explorations
     depend on this one, they will be unblocked and started.
 
-    The exploration must be in 'done' or 'failed' status.
+    With approve_all=true: approves all explorations in 'done' status.
+    With auto_followup=true: generates follow-up topics after approval.
+    With validate_invariants=true: runs document consistency checks after merge.
+
+    Parameters:
+        exploration_id: ID of the exploration to approve (required unless approve_all).
+        approve_all: Approve all pending proposals at once.
+        auto_followup: Generate follow-up topics after approval.
+        followup_count: Number of follow-up topics to generate (default: 3).
+        validate_invariants: Run document invariant checks after merge.
     """
     try:
         project_dir, elmer_dir = _find_project()
         messages: list[str] = []
 
+        if approve_all:
+            try:
+                approved = gate.approve_all(
+                    elmer_dir, project_dir,
+                    auto_followup=auto_followup,
+                    followup_count=followup_count,
+                )
+            except SystemExit:
+                return {"error": "Batch approval failed. Check for merge conflicts."}
+
+            result: dict = {
+                "approved": approved if approved else [],
+                "count": len(approved) if approved else 0,
+                "messages": messages,
+            }
+
+            if validate_invariants and approved:
+                inv_result = _run_invariants(elmer_dir, project_dir)
+                if inv_result is not None:
+                    result["invariants"] = inv_result
+
+            return result
+
+        if not exploration_id:
+            return {"error": "Provide exploration_id or set approve_all=true."}
+
         try:
             gate.approve_exploration(
                 elmer_dir, project_dir, exploration_id,
+                auto_followup=auto_followup,
+                followup_count=followup_count,
                 notify=messages.append,
             )
         except SystemExit:
-            # gate.py uses sys.exit(1) for validation errors — the last
-            # click.echo(err=True) call has the error message. Collect
-            # what we can from the state.
             conn = state.get_db(elmer_dir)
             exp = state.get_exploration(conn, exploration_id)
             conn.close()
@@ -483,20 +645,54 @@ def elmer_approve(exploration_id: str) -> dict:
                 return {"error": f"Cannot approve exploration in status '{exp['status']}'. Must be 'done' or 'failed'."}
             return {"error": f"Merge failed for '{exploration_id}'. Resolve conflicts manually."}
 
-        return {
+        result = {
             "approved": exploration_id,
             "messages": messages,
         }
+
+        if validate_invariants:
+            inv_result = _run_invariants(elmer_dir, project_dir)
+            if inv_result is not None:
+                result["invariants"] = inv_result
+
+        return result
     except Exception as exc:
         return {"error": str(exc)}
 
 
+def _run_invariants(elmer_dir: Path, project_dir: Path) -> Optional[dict]:
+    """Run document invariant validation. Returns structured result or None on error."""
+    try:
+        cfg = config.load_config(elmer_dir)
+        inv_cfg = cfg.get("invariants", {})
+        inv_model = inv_cfg.get("model", "sonnet")
+        inv_max_turns = inv_cfg.get("max_turns", 5)
+
+        vr = inv_mod.validate_invariants(
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=inv_model,
+            max_turns=inv_max_turns,
+        )
+
+        return {
+            "all_passed": vr.all_passed,
+            "checks": [
+                {"invariant": c.invariant, "passed": c.passed, "detail": c.detail}
+                for c in vr.checks
+            ],
+            "fixes": vr.fixes,
+        }
+    except Exception:
+        return None
+
+
 @mcp.tool()
-def elmer_reject(exploration_id: str) -> dict:
-    """Reject and discard an exploration.
+def elmer_decline(exploration_id: str) -> dict:
+    """Decline and discard an exploration.
 
     Deletes the exploration's git branch and worktree. The exploration is
-    marked as rejected. Log files are preserved. Cannot reject an
+    marked as declined. Log files are preserved. Cannot decline an
     already-approved exploration.
     """
     try:
@@ -504,7 +700,7 @@ def elmer_reject(exploration_id: str) -> dict:
         messages: list[str] = []
 
         try:
-            gate.reject_exploration(
+            gate.decline_exploration(
                 elmer_dir, project_dir, exploration_id,
                 notify=messages.append,
             )
@@ -515,11 +711,11 @@ def elmer_reject(exploration_id: str) -> dict:
             if exp is None:
                 return {"error": f"Exploration '{exploration_id}' not found."}
             if exp["status"] == "approved":
-                return {"error": "Cannot reject an already-approved exploration."}
-            return {"error": f"Failed to reject '{exploration_id}'."}
+                return {"error": "Cannot decline an already-approved exploration."}
+            return {"error": f"Failed to decline '{exploration_id}'."}
 
         return {
-            "rejected": exploration_id,
+            "declined": exploration_id,
             "messages": messages,
         }
     except Exception as exc:
@@ -531,7 +727,7 @@ def elmer_cancel(exploration_id: str) -> dict:
     """Cancel a running or pending exploration.
 
     Stops the Claude session (if running), removes the worktree and branch,
-    and marks the exploration as rejected. Log files are preserved.
+    and marks the exploration as declined. Log files are preserved.
 
     The exploration must be in 'running' or 'pending' status.
     """
@@ -558,6 +754,452 @@ def elmer_cancel(exploration_id: str) -> dict:
             "cancelled": exploration_id,
             "messages": messages,
         }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def elmer_retry(
+    exploration_id: Optional[str] = None,
+    retry_all_failed: bool = False,
+    max_concurrent: Optional[int] = None,
+) -> dict:
+    """Retry failed explorations.
+
+    Re-spawns a failed exploration with the same topic, archetype, model,
+    and budget. The old failed entry is cleaned up and a new exploration
+    is created.
+
+    With retry_all_failed=true: retries all explorations in 'failed' status.
+
+    Parameters:
+        exploration_id: ID of the failed exploration to retry.
+        retry_all_failed: Retry all failed explorations at once.
+        max_concurrent: Max parallel retries (excess queued as pending).
+    """
+    try:
+        project_dir, elmer_dir = _find_project()
+
+        if not exploration_id and not retry_all_failed:
+            return {"error": "Provide exploration_id or set retry_all_failed=true."}
+
+        if exploration_id and retry_all_failed:
+            return {"error": "Cannot combine a specific ID with retry_all_failed."}
+
+        if retry_all_failed:
+            new_slugs = gate.retry_all_failed(
+                elmer_dir, project_dir, max_concurrent=max_concurrent,
+            )
+            return {
+                "retried": new_slugs,
+                "count": len(new_slugs),
+            }
+
+        new_slug = gate.retry_exploration(elmer_dir, project_dir, exploration_id)
+        return {"retried": new_slug}
+
+    except (SystemExit, RuntimeError) as exc:
+        return {"error": str(exc)}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def elmer_clean() -> dict:
+    """Clean up finished explorations.
+
+    Removes worktrees and state entries for approved, declined, and failed
+    explorations. Running and pending explorations are not affected.
+    Use this periodically to free disk space and declutter status output.
+    """
+    try:
+        project_dir, elmer_dir = _find_project()
+        count = gate.clean_all(elmer_dir, project_dir)
+        return {"cleaned": count}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def elmer_pr(exploration_id: str) -> dict:
+    """Create a GitHub PR from an exploration.
+
+    Pushes the exploration branch to the remote and creates a PR using
+    the gh CLI. The PROPOSAL.md content becomes the PR body.
+
+    Requires the gh CLI (https://cli.github.com/) in PATH.
+    The exploration must have a branch (status: done, failed, or running).
+    """
+    try:
+        project_dir, elmer_dir = _find_project()
+
+        try:
+            pr_url = pr_mod.create_pr_for_exploration(
+                elmer_dir, project_dir, exploration_id,
+            )
+        except SystemExit:
+            conn = state.get_db(elmer_dir)
+            exp = state.get_exploration(conn, exploration_id)
+            conn.close()
+            if exp is None:
+                return {"error": f"Exploration '{exploration_id}' not found."}
+            return {"error": f"Cannot create PR for exploration in status '{exp['status']}'."}
+
+        return {"pr_url": pr_url, "exploration_id": exploration_id}
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Intelligence Tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def elmer_generate(
+    count: Optional[int] = None,
+    follow_up_id: Optional[str] = None,
+    model: Optional[str] = None,
+    spawn: bool = True,
+    archetype: Optional[str] = None,
+    auto_approve: bool = False,
+    auto_archetype: bool = False,
+    budget_usd: Optional[float] = None,
+) -> dict:
+    """Generate research topics using AI and optionally spawn explorations.
+
+    Reads project documentation and exploration history to propose topics
+    worth exploring. This is the main way to discover what to research next.
+
+    With spawn=true (default): generates topics AND starts explorations.
+    With spawn=false: generates topics only (dry run).
+    With follow_up_id: generates follow-up topics for a completed exploration.
+
+    Parameters:
+        count: Number of topics to generate (default: 5).
+        follow_up_id: Generate follow-ups for this completed exploration.
+        model: Model for topic generation (default: from config, usually sonnet).
+        spawn: If true, spawns explorations from generated topics (default: true).
+        archetype: Archetype for spawned explorations (default: from config).
+        auto_approve: Auto-approve spawned explorations via AI review.
+        auto_archetype: AI selects the best archetype per spawned topic.
+        budget_usd: Total budget in USD (divided across spawned explorations).
+    """
+    try:
+        project_dir, elmer_dir = _find_project()
+        cfg = config.load_config(elmer_dir)
+        gen_cfg = cfg.get("generate", {})
+        defaults = cfg.get("defaults", {})
+
+        gen_model = model or gen_cfg.get("model", defaults.get("model", "sonnet"))
+        gen_count = count or gen_cfg.get("count", 5)
+        gen_max_turns = gen_cfg.get("max_turns", 5)
+
+        topics = gen_mod.generate_topics(
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            count=gen_count,
+            follow_up_id=follow_up_id,
+            model=gen_model,
+            max_turns=gen_max_turns,
+        )
+
+        result: dict = {"topics": topics, "count": len(topics)}
+
+        if not spawn:
+            result["spawned"] = False
+            return result
+
+        # Spawn explorations from generated topics
+        use_auto_archetype = auto_archetype and archetype is None
+        explore_archetype = archetype or defaults.get("archetype", "explore-act")
+        explore_model = defaults.get("model", "sonnet")
+        explore_max_turns = defaults.get("max_turns", 50)
+
+        per_topic_budget = None
+        if budget_usd is not None and topics:
+            per_topic_budget = budget_usd / len(topics)
+
+        spawned = []
+        errors = []
+        for topic in topics:
+            try:
+                slug, archetype_used = explore_mod.start_exploration(
+                    topic=topic,
+                    archetype=explore_archetype,
+                    model=explore_model,
+                    max_turns=explore_max_turns,
+                    elmer_dir=elmer_dir,
+                    project_dir=project_dir,
+                    parent_id=follow_up_id,
+                    auto_approve=auto_approve,
+                    auto_archetype=use_auto_archetype,
+                    budget_usd=per_topic_budget,
+                )
+                spawned.append({"id": slug, "archetype": archetype_used})
+            except (RuntimeError, FileNotFoundError) as e:
+                errors.append({"topic": topic, "error": str(e)})
+
+        result["spawned"] = True
+        result["explorations"] = spawned
+        if errors:
+            result["errors"] = errors
+
+        return result
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def elmer_validate(model: Optional[str] = None) -> dict:
+    """Validate document invariants.
+
+    Checks that project documentation is internally consistent. Default rules
+    check ADR counts, phase status, and feature claims. Auto-fixes mechanical
+    violations (counts, status labels).
+
+    Use after approving explorations that modify project documents, or
+    periodically to catch documentation drift.
+
+    Parameters:
+        model: Model for validation (default: sonnet).
+    """
+    try:
+        project_dir, elmer_dir = _find_project()
+        cfg = config.load_config(elmer_dir)
+        inv_cfg = cfg.get("invariants", {})
+        inv_model = model or inv_cfg.get("model", "sonnet")
+        inv_max_turns = inv_cfg.get("max_turns", 5)
+
+        vr = inv_mod.validate_invariants(
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=inv_model,
+            max_turns=inv_max_turns,
+        )
+
+        return {
+            "all_passed": vr.all_passed,
+            "checks": [
+                {"invariant": c.invariant, "passed": c.passed, "detail": c.detail}
+                for c in vr.checks
+            ],
+            "fixes": vr.fixes,
+            "cost_usd": vr.cost_usd,
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def elmer_mine_questions(
+    model: Optional[str] = None,
+    cluster_filter: Optional[str] = None,
+    spawn: bool = False,
+    max_per_cluster: int = 3,
+    archetype: Optional[str] = None,
+    auto_approve: bool = False,
+) -> dict:
+    """Extract open questions from project documentation.
+
+    Parses CONTEXT.md, DESIGN.md, ROADMAP.md, DECISIONS.md for explicit
+    questions and implicit gaps. Groups them by theme.
+
+    Use this to discover what the project's documentation doesn't yet answer.
+    With spawn=true, converts questions to explorations automatically.
+
+    Parameters:
+        model: Model for question mining (default: from config).
+        cluster_filter: Only return questions from clusters matching this name.
+        spawn: If true, converts questions to explorations (default: false).
+        max_per_cluster: Max questions per cluster to spawn (default: 3).
+        archetype: Archetype for spawned explorations (default: from config).
+        auto_approve: Auto-approve spawned explorations via AI review.
+    """
+    try:
+        project_dir, elmer_dir = _find_project()
+        cfg = config.load_config(elmer_dir)
+        q_cfg = cfg.get("questions", {})
+        defaults = cfg.get("defaults", {})
+        q_model = model or q_cfg.get("model", defaults.get("model", "opus"))
+
+        clusters = questions_mod.mine_questions(
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=q_model,
+            max_turns=q_cfg.get("max_turns", 5),
+        )
+
+        # Apply cluster filter for display
+        filtered: dict[str, list[str]] = {}
+        for name, questions in clusters.items():
+            if cluster_filter and cluster_filter.lower() not in name.lower():
+                continue
+            filtered[name] = questions
+
+        total_questions = sum(len(qs) for qs in filtered.values())
+        result: dict = {
+            "clusters": filtered,
+            "total_questions": total_questions,
+            "cluster_count": len(filtered),
+        }
+
+        if not spawn:
+            return result
+
+        # Convert to topics and spawn
+        topics = questions_mod.clusters_to_topics(
+            clusters,
+            cluster_filter=cluster_filter,
+            max_per_cluster=max_per_cluster,
+        )
+
+        if not topics:
+            result["spawned"] = []
+            return result
+
+        explore_archetype = archetype or defaults.get("archetype", "explore-act")
+        explore_model = defaults.get("model", "opus")
+        explore_max_turns = defaults.get("max_turns", 50)
+
+        spawned = []
+        errors = []
+        for topic in topics:
+            try:
+                slug, archetype_used = explore_mod.start_exploration(
+                    topic=topic,
+                    archetype=explore_archetype,
+                    model=explore_model,
+                    max_turns=explore_max_turns,
+                    elmer_dir=elmer_dir,
+                    project_dir=project_dir,
+                    auto_approve=auto_approve,
+                )
+                spawned.append({"id": slug, "archetype": archetype_used})
+            except (RuntimeError, FileNotFoundError) as e:
+                errors.append({"topic": topic, "error": str(e)})
+
+        result["spawned"] = spawned
+        if errors:
+            result["errors"] = errors
+
+        return result
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Batch Tool
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def elmer_batch(
+    topics: str,
+    archetype: Optional[str] = None,
+    model: Optional[str] = None,
+    max_turns: Optional[int] = None,
+    chain: bool = False,
+    auto_approve: bool = False,
+    auto_archetype: bool = False,
+    budget_usd: Optional[float] = None,
+    max_concurrent: Optional[int] = None,
+) -> dict:
+    """Run multiple explorations from a list of topics.
+
+    Structured alternative to the CLI 'elmer batch' command. Takes a
+    newline-separated list of topics instead of a file path.
+
+    With chain=true: topics run sequentially, each depending on the previous.
+    This prevents merge conflicts when topics touch overlapping files.
+
+    With max_concurrent: limits parallel explorations. Excess are queued
+    and launch as running ones complete.
+
+    Parameters:
+        topics: Newline-separated list of topics to explore (required).
+        archetype: Archetype for all explorations (default: from config).
+        model: Claude model (default: from config).
+        max_turns: Turn limit per exploration (default: from config).
+        chain: Run topics sequentially, each depending on the previous.
+        auto_approve: Auto-approve via AI review when done.
+        auto_archetype: AI selects the best archetype per topic.
+        budget_usd: Total budget in USD (divided across topics).
+        max_concurrent: Max parallel explorations.
+    """
+    try:
+        project_dir, elmer_dir = _find_project()
+        cfg = config.load_config(elmer_dir)
+        defaults = cfg.get("defaults", {})
+
+        topic_list = [t.strip() for t in topics.strip().split("\n") if t.strip()]
+        if not topic_list:
+            return {"error": "No topics provided."}
+
+        use_auto_archetype = auto_archetype and archetype is None
+        use_archetype = archetype or defaults.get("archetype", "explore-act")
+        use_model = model or defaults.get("model", "sonnet")
+        use_max_turns = max_turns or defaults.get("max_turns", 50)
+
+        per_topic_budget = None
+        if budget_usd is not None:
+            per_topic_budget = budget_usd / len(topic_list)
+
+        spawned_slugs: list[str] = []
+        spawned: list[dict] = []
+        errors: list[dict] = []
+        previous_slug = None
+
+        for i, topic in enumerate(topic_list):
+            dep_list = None
+            if chain and previous_slug is not None:
+                dep_list = [previous_slug]
+            elif max_concurrent is not None and i >= max_concurrent:
+                dep_list = [spawned_slugs[i - max_concurrent]]
+
+            try:
+                slug, archetype_used = explore_mod.start_exploration(
+                    topic=topic,
+                    archetype=use_archetype,
+                    model=use_model,
+                    max_turns=use_max_turns,
+                    elmer_dir=elmer_dir,
+                    project_dir=project_dir,
+                    depends_on=dep_list,
+                    auto_approve=auto_approve,
+                    auto_archetype=use_auto_archetype,
+                    budget_usd=per_topic_budget,
+                )
+                spawned_slugs.append(slug)
+                spawned.append({
+                    "id": slug,
+                    "topic": topic,
+                    "archetype": archetype_used,
+                    "depends_on": dep_list,
+                })
+                previous_slug = slug
+            except (RuntimeError, FileNotFoundError) as e:
+                errors.append({"topic": topic, "error": str(e)})
+                if chain:
+                    errors.append({"topic": "(chain broken)", "error": "Stopped due to previous error."})
+                    break
+
+        result: dict = {
+            "total_topics": len(topic_list),
+            "spawned": spawned,
+            "spawned_count": len(spawned),
+            "chain": chain,
+        }
+        if errors:
+            result["errors"] = errors
+        if max_concurrent is not None:
+            launched = min(max_concurrent, len(spawned))
+            result["launched_immediately"] = launched
+            result["queued"] = len(spawned) - launched
+
+        return result
     except Exception as exc:
         return {"error": str(exc)}
 

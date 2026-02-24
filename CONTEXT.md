@@ -2,7 +2,7 @@
 
 ## What Elmer Is
 
-Elmer is an autonomous research tool for AI-assisted software development. It uses git branches as isolation boundaries and Claude Code sessions (`claude -p`) as workers. You ask a question or describe a task, Elmer explores it on a branch, and you review the result — approve to merge, reject to discard.
+Elmer is an autonomous research tool for AI-assisted software development. It uses git branches as isolation boundaries and Claude Code sessions (`claude -p`) as workers. You ask a question or describe a task, Elmer explores it on a branch, and you review the result — approve to merge, decline to discard.
 
 Elmer changes what a "session" means. Claude Code is the interactive layer for steering and review. Elmer is the autonomous layer that runs between sessions — start explorations, close your terminal, review tomorrow.
 
@@ -25,7 +25,7 @@ Elmer embodies a clear division of responsibility:
 **Human decides:**
 - What questions to explore (topics)
 - How to explore them (archetype selection, model choice, budget)
-- Whether to accept the result (approve/reject)
+- Whether to accept the result (approve/decline)
 - When to grant autonomy (opt-in `--auto-approve`, `--auto-followup`, daemon mode)
 
 **AI executes:**
@@ -59,9 +59,9 @@ All five development phases complete:
 2. **Phase 2 (Intelligence):** AI topic generation, DAG dependencies, auto-approve, cost controls.
 3. **Phase 3 (Autonomy):** Daemon, chain actions, cross-project insights, question mining.
 4. **Phase 4 (Meta):** Scaffolding, archetype stats, attention routing, invariant enforcement, multi-project dashboard, PR creation, batch topics, skill scaffolding.
-5. **Phase 5 (Integration):** MCP server — 10 tools over stdio JSON-RPC for structured Claude Code access.
+5. **Phase 5 (Integration):** MCP server — 17 tools over stdio JSON-RPC for structured Claude Code access, covering all intelligence features.
 
-The tool is functional and in active use. 25 ADRs recorded.
+The tool is functional and in active use. 26 ADRs recorded.
 
 ## What's Working
 
@@ -79,4 +79,4 @@ The tool is functional and in active use. 25 ADRs recorded.
 - **Elmer-on-Elmer recursion** — running explorations on Elmer's own codebase (meta-tool use)
 - **Scaffolding template quality** — generated CONTEXT.md is structural but not philosophical; could better teach the institutional memory pattern
 
-*Last updated: 2026-02-23, created from cross-project methodology analysis*
+*Last updated: 2026-02-23, MCP server expanded to 17 tools*

@@ -156,7 +156,7 @@ def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
         "running": "~",
         "done": "*",
         "approved": "+",
-        "rejected": "-",
+        "declined": "-",
         "failed": "!",
     }
 
@@ -181,7 +181,7 @@ def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
 
     # Legend
     click.echo()
-    click.echo(". pending  ~ running  * review ready  + approved  - rejected  ! failed")
+    click.echo(". pending  ~ running  * review ready  + approved  - declined  ! failed")
 
 
 def list_proposals(elmer_dir: Path) -> None:

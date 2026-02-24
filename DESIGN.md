@@ -14,7 +14,7 @@ Elmer is an autonomous research tool that uses git branches as isolation boundar
               ┌───────┴───────┐
               │               │
         ┌─────▼─────┐  ┌─────▼─────┐
-        │  APPROVE   │  │  REJECT   │
+        │  APPROVE   │  │  DECLINE  │
         │ git merge  │  │ git rm    │
         └───────────┘  └───────────┘
 ```
@@ -38,7 +38,7 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `cli.py` | Click CLI entry point, argument parsing |
 | `explore.py` | Orchestration: create worktree, assemble prompt, spawn worker |
 | `review.py` | Read proposals, display status, attention routing |
-| `gate.py` | Approve (merge) or reject (discard) explorations |
+| `gate.py` | Approve (merge) or decline (discard) explorations |
 | `worktree.py` | Git worktree and branch operations |
 | `worker.py` | Claude CLI invocation, process management, agent flag building |
 | `state.py` | SQLite state tracking |
@@ -79,10 +79,10 @@ approve → git merge branch into current branch
         → remove worktree, delete branch
         → update SQLite
 
-reject  → remove worktree, delete branch
+decline → remove worktree, delete branch
         → update SQLite
 
-clean   → remove worktrees/state for approved/rejected explorations
+clean   → remove worktrees/state for approved/declined explorations
         → git worktree prune
 ```
 
@@ -90,8 +90,8 @@ clean   → remove worktrees/state for approved/rejected explorations
 
 ```
 pending → running → done → approved
-                        → rejected
-                  → failed → rejected
+                        → declined
+                  → failed → declined
 ```
 
 - **pending**: Blocked by unmet dependencies (no worktree yet)
@@ -99,7 +99,7 @@ pending → running → done → approved
 - **done**: Session finished, PROPOSAL.md exists
 - **failed**: Session finished, no PROPOSAL.md
 - **approved**: Branch merged, worktree removed
-- **rejected**: Branch deleted, worktree removed
+- **declined**: Branch deleted, worktree removed
 
 ### Storage
 
@@ -112,7 +112,7 @@ explorations (
     archetype TEXT,            -- template used
     branch TEXT,               -- git branch name
     worktree_path TEXT,        -- absolute path to worktree
-    status TEXT,               -- pending|running|done|approved|rejected|failed
+    status TEXT,               -- pending|running|done|approved|declined|failed
     model TEXT,                -- sonnet|opus|haiku
     pid INTEGER,               -- OS process ID
     created_at TEXT,           -- ISO timestamp
@@ -123,7 +123,7 @@ explorations (
     max_turns INTEGER,         -- turn limit for claude session
     auto_approve INTEGER DEFAULT 0, -- 1 = trigger AI review on completion
     on_approve TEXT,               -- shell command on approval ($ID, $TOPIC)
-    on_reject TEXT                 -- shell command on rejection ($ID, $TOPIC)
+    on_decline TEXT                -- shell command on declining ($ID, $TOPIC)
 )
 
 dependencies (
@@ -185,7 +185,7 @@ Meta-operation agents (7): generate-topics, prompt-gen, review-gate, select-arch
 - Each exploration creates a branch `elmer/<slug>` and a worktree at `.elmer/worktrees/<slug>/`
 - Worktrees share the `.git` directory — instant creation, space-efficient
 - Approve merges into whatever branch HEAD currently points to
-- Reject deletes the branch and worktree
+- Decline deletes the branch and worktree
 - Remote operations (`elmer pr`) available for GitHub integration via `gh` CLI
 
 ### Claude Invocation
@@ -212,7 +212,7 @@ Both use `claude [--agents JSON --agent name] -p <prompt> --output-format json -
 │  ┌─────────┐    ┌─────────┐    ┌─────────┐      │
 │  │  LEARN  │◀───│  GATE   │◀───│HARVEST  │      │
 │  │(feed DAG)│   │approve/ │    │proposals│      │
-│  └─────────┘    │reject   │    └─────────┘      │
+│  └─────────┘    │decline  │    └─────────┘      │
 │                  └─────────┘                      │
 └──────────────────────────────────────────────────┘
 ```
@@ -228,13 +228,13 @@ seed topic
 ├── exploration A (approved, merged)
 │   ├── follow-up A1 (approved, merged)
 │   │   └── follow-up A1a (running...)
-│   └── follow-up A2 (rejected — dead end)
+│   └── follow-up A2 (declined — dead end)
 ├── exploration B (approved, merged)
 │   └── follow-up B1 (pending review)
 └── exploration C (running...)
 ```
 
-`--on-approve` / `--on-reject` chain actions execute user-specified shell commands with `$ID` and `$TOPIC` substitution (ADR-012). `--auto-followup` generates follow-up topics post-merge via `generate_topics()`.
+`--on-approve` / `--on-decline` chain actions execute user-specified shell commands with `$ID` and `$TOPIC` substitution (ADR-012). `--auto-followup` generates follow-up topics post-merge via `generate_topics()`.
 
 ### Two-Stage Prompt Generation
 
@@ -250,10 +250,10 @@ The archetype becomes a hint to Stage 1, not a rigid template. Fallback: static 
 After exploration completes, if `--auto-approve` is set:
 
 1. Synchronous `claude -p` evaluates the proposal against configurable criteria
-2. Output: APPROVE or REJECT with reasoning
-3. If APPROVE → auto-merge. If REJECT → queue for human review with reasoning attached.
+2. Output: APPROVE or REJECT verdict with reasoning
+3. If APPROVE → auto-merge. If REJECT → queue for human review with reasoning attached (status becomes "done", not auto-declined).
 
-Conservative default: reject when uncertain. Criteria configurable in `.elmer/config.toml`.
+Conservative default: decline when uncertain. Criteria configurable in `.elmer/config.toml`.
 
 ### Cross-Project Layout
 
@@ -292,32 +292,49 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 
 ### MCP Server
 
-`mcp_server.py` exposes Elmer state as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP).
+`mcp_server.py` exposes Elmer state and operations as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP). 17 tools total.
 
-**Read-only tools:**
+**Read-only tools (6):**
 
 | Tool | Wraps | Returns |
 |------|-------|---------|
 | `elmer_status` | `state.list_explorations()` | Explorations + status summary |
-| `elmer_review` | `state.get_exploration()` + PROPOSAL.md | Proposal content + metadata + dependencies |
+| `elmer_review` | `state.get_exploration()` + PROPOSAL.md | Proposal list (with optional prioritization) or full proposal content + metadata + dependencies |
 | `elmer_costs` | `state.list_explorations()` + `state.get_all_costs()` | Cost data per exploration + meta-ops + totals |
 | `elmer_tree` | `state.list_explorations()` + `state.get_dependencies()` | Recursive dependency tree |
 | `elmer_archetypes` | `config.ARCHETYPES_DIR` glob + optional stats | Archetype list with optional approval rates |
 | `elmer_insights` | `insights.list_all_insights()` / `get_relevant_insights()` | Cross-project insights |
 
-**Mutation tools:**
+**Mutation tools (7):**
 
 | Tool | Wraps | Effect |
 |------|-------|--------|
-| `elmer_explore` | `explore.start_exploration()` | Creates branch, spawns background claude session |
-| `elmer_approve` | `gate.approve_exploration()` | Merges branch, cleans up, unblocks dependents |
-| `elmer_reject` | `gate.reject_exploration()` | Deletes branch and worktree |
+| `elmer_explore` | `explore.start_exploration()` | Creates branch, spawns background claude session. Supports auto-archetype, two-stage prompt generation, chain actions. |
+| `elmer_approve` | `gate.approve_exploration()` / `gate.approve_all()` | Merges branch, cleans up, unblocks dependents. Supports approve-all, auto-followup, invariant validation. |
+| `elmer_decline` | `gate.decline_exploration()` | Deletes branch and worktree |
 | `elmer_cancel` | `gate.cancel_exploration()` | Stops process, deletes branch and worktree |
+| `elmer_retry` | `gate.retry_exploration()` / `gate.retry_all_failed()` | Re-spawns failed explorations with same parameters |
+| `elmer_clean` | `gate.clean_all()` | Removes worktrees/state for finished explorations |
+| `elmer_pr` | `pr.create_pr_for_exploration()` | Pushes branch, creates GitHub PR via gh CLI |
+
+**Intelligence tools (3):**
+
+| Tool | Wraps | Effect |
+|------|-------|--------|
+| `elmer_generate` | `generate.generate_topics()` + optional spawn | AI topic generation from project context. Optionally spawns explorations. |
+| `elmer_validate` | `invariants.validate_invariants()` | Document invariant checking with auto-fix |
+| `elmer_mine_questions` | `questions.mine_questions()` + optional spawn | Extracts open questions from docs. Optionally spawns explorations. |
+
+**Batch tool (1):**
+
+| Tool | Wraps | Effect |
+|------|-------|--------|
+| `elmer_batch` | `explore.start_exploration()` loop | Multiple explorations from a structured topic list. Supports chaining and concurrency limits. |
 
 Each tool opens a DB connection per call, matching the CLI pattern. Mutation tools catch `SystemExit` from gate functions (which use `sys.exit(1)` for validation errors) and convert to structured error responses.
 
 ## Design Decisions
 
-26 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+27 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-23, custom subagent integration (ADR-026)*
+*Last updated: 2026-02-23, reject→decline rename (ADR-027), MCP server expanded to 17 tools*

@@ -4,7 +4,7 @@ Autonomous research with branching.
 
 *"Be vewy vewy quiet, I'm hunting insights."*
 
-Elmer creates git branches, spawns Claude Code sessions to explore topics autonomously, and queues proposals for your review. Approve to merge. Reject to discard. Let it run overnight.
+Elmer creates git branches, spawns Claude Code sessions to explore topics autonomously, and queues proposals for your review. Approve to merge. Decline to discard. Let it run overnight.
 
 ## How It Works
 
@@ -12,7 +12,7 @@ Elmer creates git branches, spawns Claude Code sessions to explore topics autono
 topic → git worktree → claude -p → PROPOSAL.md → human review → merge or discard
 ```
 
-Each exploration gets its own git branch and worktree. A background Claude Code session runs against the worktree, reads the project's documentation, investigates the topic, and writes a PROPOSAL.md. You review proposals and approve or reject them.
+Each exploration gets its own git branch and worktree. A background Claude Code session runs against the worktree, reads the project's documentation, investigates the topic, and writes a PROPOSAL.md. You review proposals and approve or decline them.
 
 ## Install
 
@@ -43,9 +43,9 @@ elmer review                          # list pending
 elmer review --prioritize             # rank by review priority
 elmer review evaluate-cot-positioning # read full proposal
 
-# Approve or reject
+# Approve or decline
 elmer approve evaluate-cot-positioning
-elmer reject prototype-hybrid-search
+elmer decline prototype-hybrid-search
 
 # Clean up
 elmer clean
@@ -74,7 +74,7 @@ elmer clean
 | `elmer approve --all` | Approve all pending proposals |
 | `elmer approve ID --auto-followup` | Approve and generate follow-up topics |
 | `elmer approve ID --validate-invariants` | Check doc consistency after merge |
-| `elmer reject ID` | Discard branch and clean up |
+| `elmer decline ID` | Discard branch and clean up |
 | `elmer cancel ID` | Stop a running or pending exploration |
 | `elmer retry ID` | Retry a failed exploration with same parameters |
 | `elmer retry --failed` | Retry all failed explorations |
@@ -105,7 +105,7 @@ elmer explore "topic" --auto-approve   # AI reviews proposal when done
 elmer explore "topic" --generate-prompt # AI generates the exploration prompt
 elmer explore "topic" --budget 2.00    # Cap cost at $2
 elmer explore "topic" --on-approve "elmer generate --follow-up \$ID"  # Chain on approval
-elmer explore "topic" --on-reject "elmer explore 'alternative to \$TOPIC'"  # Chain on rejection
+elmer explore "topic" --on-decline "elmer explore 'alternative to \$TOPIC'"  # Chain on declining
 
 # Review options
 elmer review --prioritize              # Rank by blockers, staleness, diff size
@@ -288,7 +288,7 @@ Agents define exploration methodology as Claude Code custom subagents with tool 
 4. Claude reads project docs, investigates the topic, writes `PROPOSAL.md`
 5. `elmer status` detects when the session finishes
 6. `elmer review <id>` shows the proposal
-7. `elmer approve <id>` merges the branch; `elmer reject <id>` discards it
+7. `elmer approve <id>` merges the branch; `elmer decline <id>` discards it
 
 ## Using Elmer from Claude Code
 
@@ -309,10 +309,12 @@ Add to your `.claude/mcp.json` (project-level) or `~/.claude/mcp.json` (global):
 }
 ```
 
-This gives Claude Code 10 tools, all returning structured JSON:
+This gives Claude Code 17 tools in 4 categories, all returning structured JSON:
 
-- **Read-only:** `elmer_status`, `elmer_review`, `elmer_costs`, `elmer_tree`, `elmer_archetypes`, `elmer_insights`
-- **Mutation:** `elmer_explore`, `elmer_approve`, `elmer_reject`, `elmer_cancel`
+- **Read-only (6):** `elmer_status`, `elmer_review`, `elmer_costs`, `elmer_tree`, `elmer_archetypes`, `elmer_insights`
+- **Mutation (7):** `elmer_explore`, `elmer_approve`, `elmer_decline`, `elmer_cancel`, `elmer_retry`, `elmer_clean`, `elmer_pr`
+- **Intelligence (3):** `elmer_generate`, `elmer_validate`, `elmer_mine_questions`
+- **Batch (1):** `elmer_batch`
 
 ### CLI Fallback
 
