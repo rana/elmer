@@ -63,11 +63,16 @@ def check_claude_available() -> bool:
     return shutil.which("claude") is not None
 
 
-def _build_agent_flags(agent_config: Optional[dict]) -> list[str]:
+def _build_agent_flags(
+    agent_config: Optional[dict], *, model_override: Optional[str] = None,
+) -> list[str]:
     """Build --agents/--agent CLI flags from an agent config dict.
 
     agent_config should have: name, description, prompt, and optionally
     tools (list), model (str).
+
+    If model_override is provided, the agent's own model field is omitted
+    so that the caller's --model flag takes precedence.
 
     Returns a list of CLI arguments to prepend to the command.
     """
@@ -83,7 +88,8 @@ def _build_agent_flags(agent_config: Optional[dict]) -> list[str]:
     }
     if "tools" in agent_config:
         agent_def["tools"] = agent_config["tools"]
-    if "model" in agent_config:
+    # Only embed agent model when caller doesn't override it
+    if not model_override and "model" in agent_config:
         agent_def["model"] = agent_config["model"]
 
     agents_json = json.dumps({name: agent_def})
@@ -109,15 +115,12 @@ def spawn_claude(
     log_fd = open(log_path, "w")
 
     cmd = ["claude"]
-    cmd.extend(_build_agent_flags(agent_config))
+    cmd.extend(_build_agent_flags(agent_config, model_override=model))
     cmd.extend([
         "-p", prompt,
         "--output-format", "json",
+        "--model", model,
     ])
-    # When using an agent, the model may be set in the agent config.
-    # Only add --model if not already specified by the agent.
-    if not (agent_config and agent_config.get("model")):
-        cmd.extend(["--model", model])
     cmd.extend(["--max-turns", str(max_turns)])
     if budget_usd is not None:
         cmd.extend(["--max-budget-usd", str(budget_usd)])
@@ -148,13 +151,12 @@ def run_claude(
     a custom Claude Code subagent definition.
     """
     cmd = ["claude"]
-    cmd.extend(_build_agent_flags(agent_config))
+    cmd.extend(_build_agent_flags(agent_config, model_override=model))
     cmd.extend([
         "-p", prompt,
         "--output-format", "json",
+        "--model", model,
     ])
-    if not (agent_config and agent_config.get("model")):
-        cmd.extend(["--model", model])
     cmd.extend(["--max-turns", str(max_turns)])
     if budget_usd is not None:
         cmd.extend(["--max-budget-usd", str(budget_usd)])

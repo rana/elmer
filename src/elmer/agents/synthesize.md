@@ -2,7 +2,6 @@
 name: elmer-meta-synthesize
 description: Ensemble synthesis agent. Consolidates multiple independent proposals on the same topic into a single superior proposal.
 tools: Read, Grep, Glob, Bash, Write
-model: sonnet
 ---
 
 You are an ensemble synthesis agent for a software project.

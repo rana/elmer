@@ -552,13 +552,14 @@ def retry_exploration(
     conn.close()
 
     # Re-spawn: synthesis retries re-trigger synthesize_ensemble(),
-    # replica/standalone retries use start_exploration()
+    # replica/standalone retries use start_exploration().
+    # Synthesis model is resolved from config (not replayed from the failed run)
+    # so that config changes take effect on retry.
     if ensemble_role == "synthesis" and ensemble_id:
         slug = synth_mod.synthesize_ensemble(
             ensemble_id=ensemble_id,
             elmer_dir=elmer_dir,
             project_dir=project_dir,
-            model=model,
             max_turns=max_turns,
         )
     else:
