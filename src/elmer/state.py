@@ -49,7 +49,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                          ("num_turns_actual", "INTEGER"),
                          ("budget_usd", "REAL"),
                          ("on_approve", "TEXT"),
-                         ("on_decline", "TEXT")]:
+                         ("on_decline", "TEXT"),
+                         ("decline_reason", "TEXT")]:
         try:
             conn.execute(f"ALTER TABLE explorations ADD COLUMN {col} {coltype}")
         except sqlite3.OperationalError:

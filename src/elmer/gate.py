@@ -13,10 +13,14 @@ import click
 from . import config, explore as explore_mod, generate as gen_mod, insights, state, worker, worktree
 
 
-def _archive_proposal(elmer_dir: Path, exp: dict, final_status: str) -> Optional[Path]:
+def _archive_proposal(
+    elmer_dir: Path, exp: dict, final_status: str, *,
+    decline_reason: Optional[str] = None,
+) -> Optional[Path]:
     """Archive PROPOSAL.md before worktree cleanup. Returns archive path or None.
 
     Copies the proposal to .elmer/proposals/<id>.md with a metadata header.
+    If decline_reason is provided, it is included in the archive metadata.
     Best-effort: never blocks the approval/decline flow.
     """
     try:
@@ -35,6 +39,7 @@ def _archive_proposal(elmer_dir: Path, exp: dict, final_status: str) -> Optional
 
         # Prepend metadata as HTML comment (invisible in rendered markdown)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        reason_line = f"  decline_reason: {decline_reason}\n" if decline_reason else ""
         meta = (
             f"<!-- elmer:archive\n"
             f"  id: {exp['id']}\n"
@@ -42,6 +47,7 @@ def _archive_proposal(elmer_dir: Path, exp: dict, final_status: str) -> Optional
             f"  archetype: {exp['archetype']}\n"
             f"  model: {exp['model']}\n"
             f"  status: {final_status}\n"
+            f"{reason_line}"
             f"  archived: {now}\n"
             f"-->\n\n"
         )
@@ -237,9 +243,15 @@ def approve_exploration(
 
 
 def decline_exploration(
-    elmer_dir: Path, project_dir: Path, exploration_id: str, *, notify=None,
+    elmer_dir: Path, project_dir: Path, exploration_id: str, *,
+    reason: Optional[str] = None, notify=None,
 ) -> None:
-    """Decline an exploration: delete branch and clean up."""
+    """Decline an exploration: delete branch and clean up.
+
+    If reason is provided, it is stored in the decline_reason column
+    and included in the archive metadata. Decline reasons feed into
+    digest synthesis and future topic generation.
+    """
     if notify is None:
         notify = click.echo
 
@@ -255,11 +267,14 @@ def decline_exploration(
         sys.exit(1)
 
     # Archive proposal before cleanup
-    _archive_proposal(elmer_dir, exp, "declined")
+    _archive_proposal(elmer_dir, exp, "declined", decline_reason=reason)
 
     _cleanup_worktree(project_dir, exp)
 
-    state.update_exploration(conn, exploration_id, status="declined")
+    update_fields: dict = {"status": "declined"}
+    if reason:
+        update_fields["decline_reason"] = reason
+    state.update_exploration(conn, exploration_id, **update_fields)
 
     _warn_orphaned_dependents(conn, exploration_id, notify=notify)
     conn.close()

@@ -32,6 +32,9 @@ def generate_topics(
 
     conn.close()
 
+    # Read latest digest for context-aware generation (best-effort)
+    digest_context = _read_latest_digest(elmer_dir)
+
     # Try agent-aware invocation, fall back to template substitution
     agent_config = config.resolve_meta_agent(project_dir, "generate-topics")
 
@@ -41,6 +44,7 @@ def generate_topics(
             f"## Exploration History\n\n"
             f"{history or '(none yet)'}\n\n"
             f"{followup_context}"
+            f"{digest_context}"
         ).strip()
     else:
         template_path = config.resolve_archetype(elmer_dir, "generate-topics")
@@ -125,6 +129,35 @@ def _build_followup_context(conn, follow_up_id: str) -> str:
         f"### Proposal\n\n"
         f"{proposal_text}"
     )
+
+
+def _read_latest_digest(elmer_dir: Path) -> str:
+    """Read the most recent digest as a prompt section. Best-effort."""
+    try:
+        digests_dir = elmer_dir / "digests"
+        if not digests_dir.exists():
+            return ""
+        digest_files = sorted(digests_dir.glob("digest-*.md"), reverse=True)
+        if not digest_files:
+            return ""
+        content = digest_files[0].read_text()
+        # Strip metadata header
+        if content.startswith("<!--"):
+            try:
+                end = content.index("-->")
+                content = content[end + 3:].strip()
+            except ValueError:
+                pass
+        # Truncate to keep prompt manageable
+        if len(content) > 4000:
+            content = content[:4000] + "\n\n[...truncated...]"
+        return (
+            f"\n\n## Recent Digest (synthesis of prior work)\n\n"
+            f"Use this to avoid repeating explored territory and to "
+            f"prioritize filling identified gaps:\n\n{content}\n\n"
+        )
+    except Exception:
+        return ""  # Best-effort — never block generation
 
 
 def _parse_topics(output: str) -> list[str]:

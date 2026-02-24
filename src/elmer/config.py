@@ -67,6 +67,12 @@ max_turns = 3
 inject = true                   # inject cross-project insights into prompts
 inject_limit = 5                # max insights to inject per exploration
 
+[digest]
+model = "sonnet"
+max_turns = 5
+threshold = 5                   # approvals since last digest before synthesizing
+# daemon auto-triggers digest when approvals >= threshold
+
 [questions]
 model = "sonnet"
 max_turns = 5
@@ -108,6 +114,7 @@ opus_output = 75.00
 GITIGNORE = """\
 worktrees/
 logs/
+digests/
 state.db
 daemon.pid
 """

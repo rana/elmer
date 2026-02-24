@@ -219,6 +219,32 @@ Each topic is explored, AI-reviewed, and if approved, merged — then the next t
 
 Use this when you trust the archetype and the topics are well-defined (e.g., mechanical refactoring, documentation updates, test additions).
 
+### Workflow 7: Convergence Digest
+
+After a batch of explorations have been approved and declined, synthesize what was learned:
+
+```bash
+elmer digest                     # synthesize all recent work
+```
+
+The digest reads approved proposals and decline reasons to identify convergence themes, contradictions, gaps, and recommended directions. Then use it to steer the next round:
+
+```bash
+elmer generate                   # now digest-aware — fills identified gaps
+```
+
+For overnight runs, the daemon auto-triggers digests when approvals accumulate past the configured threshold (`[digest] threshold = 5`). This creates a two-timescale learning loop:
+
+- **Fast loop** (every cycle): explore → harvest → approve
+- **Slow loop** (every N approvals): digest → generate → explore
+
+When declining, record your reasoning — it feeds the digest:
+
+```bash
+elmer decline my-exploration "too broad — focus on JWT validation only"
+elmer decline my-exploration "already addressed by exploration X"
+```
+
 ## Writing Good Topics
 
 A topic is the question or task you give to Claude. It's the `$TOPIC` in the archetype template. Good topics produce good proposals.

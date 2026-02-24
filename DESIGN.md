@@ -58,6 +58,7 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `dashboard.py` | Multi-project status aggregation |
 | `batch.py` | Topic list file parsing for batch command |
 | `pr.py` | PR creation via gh CLI |
+| `digest.py` | Convergence digest synthesis from exploration history |
 | `mcp_server.py` | MCP server — structured tool access over stdio |
 
 ### Data Flow
@@ -84,7 +85,14 @@ approve → git merge branch into current branch
         → update SQLite
 
 decline → remove worktree, delete branch
+        → store decline_reason in SQLite (if provided)
         → update SQLite
+
+digest  → read approved proposals from .elmer/proposals/
+        → read decline reasons from SQLite
+        → read previous digest from .elmer/digests/
+        → run claude -p with digest meta-agent (synchronous)
+        → store result in .elmer/digests/
 
 clean   → remove worktrees/state for approved/declined explorations
         → git worktree prune
@@ -147,7 +155,8 @@ explorations (
     max_turns INTEGER,         -- turn limit for claude session
     auto_approve INTEGER DEFAULT 0, -- 1 = trigger AI review on completion
     on_approve TEXT,               -- shell command on approval ($ID, $TOPIC)
-    on_decline TEXT                -- shell command on declining ($ID, $TOPIC)
+    on_decline TEXT,               -- shell command on declining ($ID, $TOPIC)
+    decline_reason TEXT            -- why it was declined (feeds digest synthesis)
 )
 
 dependencies (
@@ -177,6 +186,7 @@ daemon_log (
     scheduled INTEGER DEFAULT 0,
     generated INTEGER DEFAULT 0,
     audits INTEGER DEFAULT 0,
+    digests INTEGER DEFAULT 0,
     cycle_cost_usd REAL,
     error TEXT
 )
@@ -202,7 +212,7 @@ Exploration archetypes (8): explore, explore-act, prototype, adr-proposal, quest
 
 Audit archetypes (8): consistency-audit, coherence-audit, architecture-audit, operational-audit, documentation-audit, opportunity-scan, workflow-audit, mission-audit. Tools: `Read, Grep, Glob, Bash, Write`.
 
-Meta-operation agents (8): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants, amend. Model: `sonnet`. The amend agent has `Read, Grep, Glob, Bash, Edit, Write` for editorial revision.
+Meta-operation agents (9): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants, amend, digest. Model: `sonnet`. The amend agent has `Read, Grep, Glob, Bash, Edit, Write` for editorial revision. The digest agent synthesizes convergence across approved/declined proposals.
 
 ### Git Integration
 
@@ -241,7 +251,7 @@ Both use `claude [--agents JSON --agent name] -p <prompt> --output-format json -
 └──────────────────────────────────────────────────┘
 ```
 
-The daemon calls existing functions in a loop — no new execution model (ADR-010). Each cycle: harvest completed → gate (auto/human) → merge approved → schedule unblocked → generate new topics. Interval-driven with cost budget per cycle. PID file at `.elmer/daemon.pid` for single-instance enforcement.
+The daemon calls existing functions in a loop — no new execution model (ADR-010). Each cycle: harvest completed → gate (auto/human) → merge approved → schedule unblocked → digest (if threshold met) → generate new topics. The digest step creates a two-timescale system: fast loop (explore → approve) and slow loop (digest → generate → explore). Interval-driven with cost budget per cycle. PID file at `.elmer/daemon.pid` for single-instance enforcement.
 
 ### Exploration DAG
 
@@ -295,6 +305,7 @@ Conservative default: decline when uncertain. Criteria configurable in `.elmer/c
 ├── archetypes/          # Project-specific templates (fallback)
 ├── state.db             # Project state
 ├── proposals/           # Archived PROPOSAL.md files (persistent)
+├── digests/             # Convergence digest files (timestamped)
 ├── worktrees/
 └── logs/
 
@@ -321,7 +332,7 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 
 ### MCP Server
 
-`mcp_server.py` exposes Elmer state and operations as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP). 18 tools total.
+`mcp_server.py` exposes Elmer state and operations as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP). 19 tools total.
 
 **Read-only tools (6):**
 
@@ -340,20 +351,21 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 |------|-------|--------|
 | `elmer_explore` | `explore.start_exploration()` | Creates branch, spawns background claude session. Supports auto-archetype, two-stage prompt generation, chain actions. |
 | `elmer_approve` | `gate.approve_exploration()` / `gate.approve_all()` | Merges branch, cleans up, unblocks dependents. Supports approve-all, auto-followup, invariant validation. |
-| `elmer_decline` | `gate.decline_exploration()` | Deletes branch and worktree |
+| `elmer_decline` | `gate.decline_exploration()` | Deletes branch and worktree. Accepts optional decline reason. |
 | `elmer_amend` | `explore.amend_exploration()` | Spawns revision session in existing worktree to revise PROPOSAL.md based on editorial feedback |
 | `elmer_cancel` | `gate.cancel_exploration()` | Stops process, deletes branch and worktree |
 | `elmer_retry` | `gate.retry_exploration()` / `gate.retry_all_failed()` | Re-spawns failed explorations with same parameters |
 | `elmer_clean` | `gate.clean_all()` | Removes worktrees/state for finished explorations |
 | `elmer_pr` | `pr.create_pr_for_exploration()` | Pushes branch, creates GitHub PR via gh CLI |
 
-**Intelligence tools (3):**
+**Intelligence tools (4):**
 
 | Tool | Wraps | Effect |
 |------|-------|--------|
-| `elmer_generate` | `generate.generate_topics()` + optional spawn | AI topic generation from project context. Optionally spawns explorations. |
+| `elmer_generate` | `generate.generate_topics()` + optional spawn | AI topic generation from project context. Digest-aware — reads latest digest for directed generation. |
 | `elmer_validate` | `invariants.validate_invariants()` | Document invariant checking with auto-fix |
 | `elmer_mine_questions` | `questions.mine_questions()` + optional spawn | Extracts open questions from docs. Optionally spawns explorations. |
+| `elmer_digest` | `digest.run_digest()` | Synthesizes convergence digest from approved/declined proposals. Optional time and topic filters. |
 
 **Batch tool (1):**
 
@@ -365,6 +377,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-11 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+13 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-23, added `elmer amend`, amending state (ADR-028)*
+*Last updated: 2026-02-23, convergence digests and decline reasons (ADR-030)*

@@ -2,7 +2,7 @@
 
 Read-only: status, review, costs, tree, archetypes, insights.
 Mutation: explore, approve, amend, decline, cancel, retry, clean, pr.
-Intelligence: generate, validate, mine_questions.
+Intelligence: generate, validate, mine_questions, digest.
 Batch: batch (structured topic list).
 Communicates via stdio JSON-RPC for Claude Code integration.
 """
@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 
 from . import (
     config,
+    digest as digest_mod,
     explore as explore_mod,
     gate,
     generate as gen_mod,
@@ -689,12 +690,15 @@ def _run_invariants(elmer_dir: Path, project_dir: Path) -> Optional[dict]:
 
 
 @mcp.tool()
-def elmer_decline(exploration_id: str) -> dict:
+def elmer_decline(exploration_id: str, reason: Optional[str] = None) -> dict:
     """Decline and discard an exploration.
 
     Deletes the exploration's git branch and worktree. The exploration is
     marked as declined. Log files are preserved. Cannot decline an
     already-approved exploration.
+
+    If reason is provided, it is stored and feeds into digest synthesis
+    and future topic generation.
     """
     try:
         project_dir, elmer_dir = _find_project()
@@ -703,6 +707,7 @@ def elmer_decline(exploration_id: str) -> dict:
         try:
             gate.decline_exploration(
                 elmer_dir, project_dir, exploration_id,
+                reason=reason,
                 notify=messages.append,
             )
         except SystemExit:
@@ -715,10 +720,13 @@ def elmer_decline(exploration_id: str) -> dict:
                 return {"error": "Cannot decline an already-approved exploration."}
             return {"error": f"Failed to decline '{exploration_id}'."}
 
-        return {
+        result = {
             "declined": exploration_id,
             "messages": messages,
         }
+        if reason:
+            result["reason"] = reason
+        return result
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -1037,6 +1045,59 @@ def elmer_validate(model: Optional[str] = None) -> dict:
             ],
             "fixes": vr.fixes,
             "cost_usd": vr.cost_usd,
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def elmer_digest(
+    model: Optional[str] = None,
+    since: Optional[str] = None,
+    topic_filter: Optional[str] = None,
+) -> dict:
+    """Synthesize a convergence digest from recent explorations.
+
+    Reads approved proposals, declined proposals with reasons, and the
+    exploration history to produce a synthesis document. The digest identifies
+    convergence themes, contradictions, gaps, decline patterns, and
+    recommended directions.
+
+    Digests feed into topic generation (the generate tool reads the latest
+    digest automatically) and the daemon loop (auto-triggered when approvals
+    accumulate past the configured threshold).
+
+    Optional filters:
+    - since: ISO date string — only include explorations after this date
+    - topic_filter: keyword — only include explorations matching this keyword
+    """
+    try:
+        project_dir, elmer_dir = _find_project()
+        cfg = config.load_config(elmer_dir)
+        d_cfg = cfg.get("digest", {})
+        digest_model = model or d_cfg.get("model", "sonnet")
+
+        digest_path = digest_mod.run_digest(
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=digest_model,
+            max_turns=d_cfg.get("max_turns", 5),
+            since=since,
+            topic_filter=topic_filter,
+        )
+
+        # Read the digest content for the response
+        content = digest_path.read_text()
+        if content.startswith("<!--"):
+            try:
+                end = content.index("-->")
+                content = content[end + 3:].strip()
+            except ValueError:
+                pass
+
+        return {
+            "digest_path": str(digest_path),
+            "content": content,
         }
     except Exception as exc:
         return {"error": str(exc)}

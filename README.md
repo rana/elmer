@@ -76,6 +76,10 @@ elmer clean
 | `elmer approve ID --validate-invariants` | Check doc consistency after merge |
 | `elmer amend ID "feedback"` | Revise proposal based on editorial direction |
 | `elmer decline ID` | Discard branch and clean up |
+| `elmer decline ID "reason"` | Decline with a reason (feeds digest synthesis) |
+| `elmer digest` | Synthesize convergence digest from recent explorations |
+| `elmer digest --since DATE` | Time-bounded digest |
+| `elmer digest --topic KEYWORD` | Filtered digest |
 | `elmer cancel ID` | Stop a running, pending, or amending exploration |
 | `elmer retry ID` | Retry a failed exploration with same parameters |
 | `elmer retry --failed` | Retry all failed explorations |
@@ -110,9 +114,19 @@ elmer explore "topic" --budget 2.00    # Cap cost at $2
 elmer explore "topic" --on-approve "elmer generate --follow-up \$ID"  # Chain on approval
 elmer explore "topic" --on-decline "elmer explore 'alternative to \$TOPIC'"  # Chain on declining
 
+# Decline with reasons (feeds digest synthesis)
+elmer decline ID "too broad — focus on JWT validation only"
+elmer decline ID "already addressed by exploration X"
+
 # Review options
 elmer review --prioritize              # Rank by blockers, staleness, diff size
 elmer approve ID --validate-invariants # Check doc consistency after merge
+
+# Digest — synthesize convergence across explorations
+elmer digest                           # Synthesize all recent work
+elmer digest --since "2026-02-01"      # Time-bounded
+elmer digest --topic "auth"            # Filtered by keyword
+elmer digest -m opus                   # Use opus for deeper synthesis
 
 # Amend proposals before approving
 elmer amend ID "Remove the Read-Aloud section"       # Revise proposal
@@ -225,6 +239,11 @@ max_turns = 50
 enabled = false          # Extract insights after approval
 inject = true            # Inject cross-project insights into prompts
 
+[digest]
+model = "sonnet"
+max_turns = 5
+threshold = 5            # Approvals since last digest before daemon auto-synthesizes
+
 [invariants]
 model = "sonnet"
 max_turns = 5
@@ -319,11 +338,11 @@ Add to your `.claude/mcp.json` (project-level) or `~/.claude/mcp.json` (global):
 }
 ```
 
-This gives Claude Code 18 tools in 4 categories, all returning structured JSON:
+This gives Claude Code 19 tools in 4 categories, all returning structured JSON:
 
 - **Read-only (6):** `elmer_status`, `elmer_review`, `elmer_costs`, `elmer_tree`, `elmer_archetypes`, `elmer_insights`
 - **Mutation (8):** `elmer_explore`, `elmer_approve`, `elmer_amend`, `elmer_decline`, `elmer_cancel`, `elmer_retry`, `elmer_clean`, `elmer_pr`
-- **Intelligence (3):** `elmer_generate`, `elmer_validate`, `elmer_mine_questions`
+- **Intelligence (4):** `elmer_generate`, `elmer_validate`, `elmer_mine_questions`, `elmer_digest`
 - **Batch (1):** `elmer_batch`
 
 ### CLI Fallback

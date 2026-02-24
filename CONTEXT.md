@@ -53,24 +53,27 @@ GUIDE.md and README.md add user-facing documentation (playbook and reference, re
 
 ## Current State
 
-All five development phases complete:
+All six development phases complete:
 
 1. **Phase 1 (Core Loop):** Manual explore/review/approve cycle. Proved the loop is useful.
 2. **Phase 2 (Intelligence):** AI topic generation, DAG dependencies, auto-approve, cost controls.
 3. **Phase 3 (Autonomy):** Daemon, chain actions, cross-project insights, question mining.
 4. **Phase 4 (Meta):** Scaffolding, archetype stats, attention routing, invariant enforcement, multi-project dashboard, PR creation, batch topics, skill scaffolding.
-5. **Phase 5 (Integration):** MCP server — 17 tools over stdio JSON-RPC for structured Claude Code access, covering all intelligence features.
+5. **Phase 5 (Integration):** MCP server — structured Claude Code access, custom subagent integration, proposal amendment.
+6. **Phase 6 (Convergence):** Decline reasons, convergence digests, digest-aware generation, daemon synthesis step. Closes the feedback loop.
 
-The tool is functional and in active use. 10 ADRs recorded.
+The tool is functional and in active use. 13 ADRs recorded.
 
 ## What's Working
 
 - Core exploration loop is reliable — worktree isolation, background workers, state tracking
 - Daemon mode runs overnight with budget caps
 - Cross-project insights accumulate across approved explorations
-- MCP server provides structured access for Claude Code integration
+- MCP server provides structured access for Claude Code integration (19 tools)
 - Batch topics with `--chain` handle sequential refactoring without merge conflicts
 - Five-document scaffolding (`elmer init --docs`) bootstraps effective AI-assisted projects
+- Convergence digests synthesize understanding across approved/declined work
+- Decline reasons create learning signals that steer future topic generation
 
 ## Open Questions
 
@@ -79,6 +82,6 @@ The tool is functional and in active use. 10 ADRs recorded.
 - **Elmer-on-Elmer recursion** — running explorations on Elmer's own codebase (meta-tool use)
 - **Scaffolding template quality** — generated CONTEXT.md is structural but not philosophical; could better teach the institutional memory pattern
 - **Agent Teams integration** — within a single exploration, the Claude session could use Agent Teams for parallel sub-tasks. Partially addressed by ADR-026 (custom subagents). Agent Teams remain session-scoped and don't persist.
-- **Sibling-aware exploration prompts** — explorations have no knowledge of other in-flight or completed explorations. Scope overlap between related topics is possible but occasional. Considered and removed: injecting sibling summaries into every exploration prompt risks over-constraining the AI and polluting prompts at scale. The better intervention point may be enriching `_format_history` in `generate.py` to prevent duplicate topics at generation time rather than burdening every exploration.
+- **Sibling-aware exploration prompts** — explorations have no knowledge of other in-flight or completed explorations. Partially addressed by convergence digests (ADR-030): the digest synthesizes cross-exploration understanding, which feeds into topic generation. Individual explorations remain independent by design. The remaining question is whether to inject digest context into exploration prompts (not just generation prompts).
 
-*Last updated: 2026-02-23, resolved proposal amendment (ADR-028), re-deferred sibling-aware prompts*
+*Last updated: 2026-02-23, Phase 6 convergence (ADR-030), updated sibling-awareness status*

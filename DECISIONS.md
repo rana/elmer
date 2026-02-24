@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-12 ADRs recorded.
+13 ADRs recorded.
 
 ## Domain Index
 
@@ -20,6 +20,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-026 | Process | Exploration archetypes as Claude Code custom subagents |
 | ADR-028 | Process | Proposal amendment workflow |
 | ADR-029 | Git | PROPOSAL.md merge hygiene and approve_all resilience |
+| ADR-030 | Intelligence | Convergence digests and decline reasons |
 
 ---
 
@@ -172,3 +173,28 @@ The amend agent is editorial, not exploratory: it applies directed changes and r
 **Context:** Discovered via real-world `elmer approve --all` in a project with multiple explorations. First approval succeeded but left PROPOSAL.md in main. Second approval conflicted on `both added: PROPOSAL.md`. The `approve_all` loop continued without aborting, leaving git in a merge state that blocked all subsequent operations. The project also lacked `.elmer/.gitignore` because it was initialized before that feature existed.
 
 **Alternatives considered:** Adding PROPOSAL.md to project `.gitignore` (imposes on user's project), instructing Claude not to commit PROPOSAL.md (unreliable — Claude has Bash/git access and may commit as part of explore-act workflow), squash-merge to avoid PROPOSAL.md entirely (loses branch history).
+
+## ADR-030: Convergence Digests and Decline Reasons
+
+**Decision:** Add two interconnected features that close the feedback loop in the daemon's autonomy cycle:
+
+1. **Decline reasons.** `elmer decline ID "reason"` stores a `decline_reason` in SQLite and in the proposal archive metadata. Decline reasons are learning signals — they tell the system (and future explorations) what the human reviewer cares about, what framing was wrong, and what directions to avoid.
+
+2. **Convergence digests.** `elmer digest` reads the proposal archive (approved proposals, declined proposals with reasons, exploration history) and synthesizes a convergence document via the `elmer-meta-digest` agent. The digest identifies themes where explorations agree, contradictions that need resolution, gaps no one has investigated, patterns in what gets declined, and 3-5 recommended next directions. Digests are stored in `.elmer/digests/` as timestamped markdown files.
+
+3. **Digest-aware generation.** `generate_topics()` reads the latest digest and includes it in the prompt context, so topic proposals fill identified gaps instead of random-walking through the problem space.
+
+4. **Daemon synthesis step.** The daemon loop gains a new step between scheduling and generation: when approvals since the last digest exceed a configurable threshold (`[digest] threshold = 5`), the daemon runs a synthesis before generating new topics. This creates a two-timescale system: fast loop (explore → approve) and slow loop (digest → generate → explore → digest).
+
+**Architecture:**
+- `digest.py`: Module for synthesis. Reads proposals from `.elmer/proposals/`, decline reasons from SQLite, prior digests from `.elmer/digests/`. Calls `run_claude()` with the `elmer-meta-digest` agent. Stores result with metadata header.
+- `agents/digest.md`: Meta-agent definition. Read-only tools (`Read, Grep, Glob, Bash`), sonnet model. Prompt instructs synthesis across convergence, contradictions, gaps, decline patterns, and recommendations.
+- `archetypes/digest.md`: Template fallback with `$HISTORY`, `$APPROVED_PROPOSALS`, `$DECLINED_PROPOSALS`, `$PREVIOUS_DIGEST` substitution.
+- Daemon step 5 (between schedule and generate): conditional on `approvals_since_last_digest() >= threshold`. Best-effort: digest failure never blocks the cycle.
+- Generate integration: `_read_latest_digest()` in `generate.py` reads the most recent digest file and injects it as a `## Recent Digest` prompt section. Best-effort: missing digest just means no injection.
+- MCP tool: `elmer_digest` with optional `model`, `since`, `topic_filter` parameters.
+- Config section: `[digest] model = "sonnet"`, `max_turns = 5`, `threshold = 5`.
+
+**Why this matters:** Without convergence, the autonomy loop is a random walk. Each exploration starts fresh from static project docs. The daemon can generate and approve work, but it doesn't learn between cycles — it can't tell that three explorations converged on the same bottleneck, or that every declined proposal was too broad. The digest is the slow feedback loop that turns the daemon from "busy" into "directed."
+
+**Alternatives considered:** Extending the insights system to handle synthesis (insights are per-proposal extractions, not cross-proposal synthesis — different operation), injecting all sibling proposal summaries into each new exploration (considered in CONTEXT.md and rejected: too noisy, dilutes topic focus, unbounded prompt growth), embedding-based semantic search across proposals (adds vector DB dependency), no explicit convergence — rely on the human to steer via topic generation (defeats the purpose of the autonomy loop).

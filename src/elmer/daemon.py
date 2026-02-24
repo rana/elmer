@@ -18,6 +18,7 @@ import click
 from . import (
     autoapprove,
     config,
+    digest as digest_mod,
     explore as explore_mod,
     gate,
     generate as gen_mod,
@@ -101,20 +102,28 @@ def _log_cycle(
     scheduled: int = 0,
     generated: int = 0,
     audits: int = 0,
+    digests: int = 0,
     cycle_cost_usd: Optional[float] = None,
     error: Optional[str] = None,
 ) -> None:
     """Record a daemon cycle in the daemon_log table."""
     conn = state.get_db(elmer_dir)
+
+    # Ensure digests column exists (migration for existing DBs)
+    try:
+        conn.execute("ALTER TABLE daemon_log ADD COLUMN digests INTEGER DEFAULT 0")
+    except Exception:
+        pass  # Column already exists
+
     conn.execute(
         """
         INSERT INTO daemon_log
             (cycle_number, started_at, completed_at, harvested, approved,
-             scheduled, generated, audits, cycle_cost_usd, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             scheduled, generated, audits, digests, cycle_cost_usd, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (cycle_number, started_at, state._now(), harvested, approved,
-         scheduled, generated, audits, cycle_cost_usd, error),
+         scheduled, generated, audits, digests, cycle_cost_usd, error),
     )
     conn.commit()
     conn.close()
@@ -270,7 +279,7 @@ def _run_cycle(
     audit_schedule: Optional[list[tuple[str, str]]] = None,
 ) -> dict:
     """Execute one daemon cycle. Returns stats dict."""
-    stats = {"harvested": 0, "approved": 0, "scheduled": 0, "generated": 0, "audits": 0}
+    stats = {"harvested": 0, "approved": 0, "scheduled": 0, "generated": 0, "audits": 0, "digests": 0}
 
     # Step 1: Harvest — check running PIDs, mark done/failed
     conn = state.get_db(elmer_dir)
@@ -347,7 +356,29 @@ def _run_cycle(
     for slug in launched:
         logger.info("Scheduled: %s", slug)
 
-    # Step 5: Check concurrency limit before generating or auditing
+    # Step 5: Digest — synthesize if enough approvals have accumulated
+    cfg = config.load_config(elmer_dir)
+    digest_cfg = cfg.get("digest", {})
+    digest_threshold = digest_cfg.get("threshold", 5)
+    try:
+        approvals_pending = digest_mod.approvals_since_last_digest(elmer_dir)
+        if approvals_pending >= digest_threshold:
+            logger.info(
+                "Digest threshold reached (%d >= %d), synthesizing...",
+                approvals_pending, digest_threshold,
+            )
+            digest_path = digest_mod.run_digest(
+                elmer_dir=elmer_dir,
+                project_dir=project_dir,
+                model=digest_cfg.get("model", "sonnet"),
+                max_turns=digest_cfg.get("max_turns", 5),
+            )
+            stats["digests"] = 1
+            logger.info("Digest written: %s", digest_path)
+    except Exception as e:
+        logger.warning("Digest synthesis failed: %s", e)
+
+    # Step 6: Check concurrency limit before generating or auditing
     conn = state.get_db(elmer_dir)
     running_count = conn.execute(
         "SELECT COUNT(*) FROM explorations WHERE status = 'running'"
@@ -360,7 +391,7 @@ def _run_cycle(
             running_count, max_concurrent,
         )
     else:
-        # Step 5a: Audit — spawn next scheduled audit (one per cycle, rotating)
+        # Step 6a: Audit — spawn next scheduled audit (one per cycle, rotating)
         if audit_schedule:
             audit_idx = (ds.cycle_count - 1) % len(audit_schedule)
             audit_arch, audit_topic = audit_schedule[audit_idx]
@@ -387,7 +418,7 @@ def _run_cycle(
             except (RuntimeError, FileNotFoundError) as e:
                 logger.warning("Audit failed for %s:%s — %s", audit_arch, audit_topic, e)
 
-        # Step 5b: Generate — replenish if below threshold
+        # Step 6b: Generate — replenish if below threshold
         if auto_generate:
             conn = state.get_db(elmer_dir)
             active = conn.execute(
@@ -426,7 +457,7 @@ def _run_cycle(
                 except RuntimeError as e:
                     logger.warning("Topic generation failed: %s", e)
 
-    # Step 6: Budget check
+    # Step 7: Budget check
     if budget_per_cycle is not None:
         cycle_cost = _get_cycle_cost(elmer_dir, cycle_start)
         if cycle_cost >= budget_per_cycle:

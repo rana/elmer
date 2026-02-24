@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from . import archstats, batch as batch_mod, config, costs as costs_mod, daemon as daemon_mod, dashboard, explore as explore_mod, gate, generate as gen_mod, insights as insights_mod, invariants as inv_mod, pr as pr_mod, questions as questions_mod, review as review_mod, scaffold, skill_scaffold, state, worktree as wt
+from . import archstats, batch as batch_mod, config, costs as costs_mod, daemon as daemon_mod, dashboard, digest as digest_mod, explore as explore_mod, gate, generate as gen_mod, insights as insights_mod, invariants as inv_mod, pr as pr_mod, questions as questions_mod, review as review_mod, scaffold, skill_scaffold, state, worktree as wt
 
 
 @click.group()
@@ -775,17 +775,29 @@ def _run_invariants(elmer_dir: Path, project_dir: Path, cfg: dict) -> None:
 
 @cli.command()
 @click.argument("exploration_id")
-def decline(exploration_id):
+@click.argument("reason", required=False, default=None)
+def decline(exploration_id, reason):
     """Decline and discard an exploration.
 
     Deletes the branch and worktree. The exploration is marked as declined
     in state but the log file is preserved.
+
+    Optionally provide a REASON to record why — this feeds into digest
+    synthesis and future topic generation.
+
+    \b
+    Examples:
+      elmer decline my-exploration
+      elmer decline my-exploration "too broad — focus on JWT validation only"
+      elmer decline my-exploration "already addressed by exploration X"
     """
     project_dir = _require_project()
     elmer_dir = _require_elmer(project_dir)
 
-    gate.decline_exploration(elmer_dir, project_dir, exploration_id)
+    gate.decline_exploration(elmer_dir, project_dir, exploration_id, reason=reason)
     click.echo(f"Declined: {exploration_id}")
+    if reason:
+        click.echo(f"  Reason: {reason}")
 
 
 @cli.command()
@@ -1208,6 +1220,70 @@ def insights():
         click.echo(f"{i:<4} {project:<20} {text}")
 
     click.echo(f"\n{len(all_insights)} insight(s) total.")
+
+
+@cli.command()
+@click.option("-m", "--model", default=None, help="Model for digest synthesis (default: from config)")
+@click.option("--since", default=None, help="Only include explorations after this date (ISO format)")
+@click.option("--topic", "topic_filter", default=None, help="Filter to explorations matching this keyword")
+def digest(model, since, topic_filter):
+    """Synthesize a convergence digest from recent explorations.
+
+    Reads approved proposals, declined proposals with reasons, and
+    the exploration history to produce a synthesis document. The digest
+    identifies convergence themes, contradictions, gaps, decline patterns,
+    and recommended directions.
+
+    Digests are stored in .elmer/digests/ and feed into topic generation
+    and the daemon loop.
+
+    \b
+    Examples:
+        elmer digest                     # synthesize all recent work
+        elmer digest --since 2026-02-01  # time-bounded
+        elmer digest --topic "auth"      # filtered by keyword
+        elmer digest -m opus             # use opus for deeper synthesis
+    """
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+
+    cfg = config.load_config(elmer_dir)
+    d_cfg = cfg.get("digest", {})
+    digest_model = model or d_cfg.get("model", "sonnet")
+    digest_max_turns = d_cfg.get("max_turns", 5)
+
+    click.echo(f"Synthesizing digest (model: {digest_model})...")
+    if since:
+        click.echo(f"  Since: {since}")
+    if topic_filter:
+        click.echo(f"  Topic filter: {topic_filter}")
+    click.echo()
+
+    try:
+        digest_path = digest_mod.run_digest(
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=digest_model,
+            max_turns=digest_max_turns,
+            since=since,
+            topic_filter=topic_filter,
+        )
+        click.echo(f"Digest written: {digest_path}")
+        click.echo()
+
+        # Display the digest
+        content = digest_path.read_text()
+        # Strip the metadata header for display
+        if content.startswith("<!--"):
+            try:
+                end = content.index("-->")
+                content = content[end + 3:].strip()
+            except ValueError:
+                pass
+        click.echo(content)
+    except RuntimeError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 # --- Archetypes ---
