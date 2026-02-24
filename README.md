@@ -74,8 +74,9 @@ elmer clean
 | `elmer approve --all` | Approve all pending proposals |
 | `elmer approve ID --auto-followup` | Approve and generate follow-up topics |
 | `elmer approve ID --validate-invariants` | Check doc consistency after merge |
+| `elmer amend ID "feedback"` | Revise proposal based on editorial direction |
 | `elmer decline ID` | Discard branch and clean up |
-| `elmer cancel ID` | Stop a running or pending exploration |
+| `elmer cancel ID` | Stop a running, pending, or amending exploration |
 | `elmer retry ID` | Retry a failed exploration with same parameters |
 | `elmer retry --failed` | Retry all failed explorations |
 | `elmer costs` | Show cost summary for all explorations |
@@ -112,6 +113,11 @@ elmer explore "topic" --on-decline "elmer explore 'alternative to \$TOPIC'"  # C
 # Review options
 elmer review --prioritize              # Rank by blockers, staleness, diff size
 elmer approve ID --validate-invariants # Check doc consistency after merge
+
+# Amend proposals before approving
+elmer amend ID "Remove the Read-Aloud section"       # Revise proposal
+elmer amend ID "Narrow scope to API layer" -m opus   # Use a specific model
+elmer amend ID "Split into two proposals" --budget 1  # Cost-capped
 
 # Archetype analysis
 elmer archetypes list                  # Show all archetypes
@@ -313,10 +319,10 @@ Add to your `.claude/mcp.json` (project-level) or `~/.claude/mcp.json` (global):
 }
 ```
 
-This gives Claude Code 17 tools in 4 categories, all returning structured JSON:
+This gives Claude Code 18 tools in 4 categories, all returning structured JSON:
 
 - **Read-only (6):** `elmer_status`, `elmer_review`, `elmer_costs`, `elmer_tree`, `elmer_archetypes`, `elmer_insights`
-- **Mutation (7):** `elmer_explore`, `elmer_approve`, `elmer_decline`, `elmer_cancel`, `elmer_retry`, `elmer_clean`, `elmer_pr`
+- **Mutation (8):** `elmer_explore`, `elmer_approve`, `elmer_amend`, `elmer_decline`, `elmer_cancel`, `elmer_retry`, `elmer_clean`, `elmer_pr`
 - **Intelligence (3):** `elmer_generate`, `elmer_validate`, `elmer_mine_questions`
 - **Batch (1):** `elmer_batch`
 

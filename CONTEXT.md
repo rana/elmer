@@ -79,5 +79,6 @@ The tool is functional and in active use. 10 ADRs recorded.
 - **Elmer-on-Elmer recursion** — running explorations on Elmer's own codebase (meta-tool use)
 - **Scaffolding template quality** — generated CONTEXT.md is structural but not philosophical; could better teach the institutional memory pattern
 - **Agent Teams integration** — within a single exploration, the Claude session could use Agent Teams for parallel sub-tasks. Partially addressed by ADR-026 (custom subagents). Agent Teams remain session-scoped and don't persist.
+- **Sibling-aware exploration prompts** — explorations have no knowledge of other in-flight or completed explorations. Scope overlap between related topics is possible but occasional. Considered and removed: injecting sibling summaries into every exploration prompt risks over-constraining the AI and polluting prompts at scale. The better intervention point may be enriching `_format_history` in `generate.py` to prevent duplicate topics at generation time rather than burdening every exploration.
 
-*Last updated: 2026-02-23, open questions consolidated as canonical home for deferred features*
+*Last updated: 2026-02-23, resolved proposal amendment (ADR-028), re-deferred sibling-aware prompts*

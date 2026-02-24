@@ -1,7 +1,7 @@
 """Elmer MCP Server — expose Elmer state and operations as structured MCP tools.
 
 Read-only: status, review, costs, tree, archetypes, insights.
-Mutation: explore, approve, decline, cancel, retry, clean, pr.
+Mutation: explore, approve, amend, decline, cancel, retry, clean, pr.
 Intelligence: generate, validate, mine_questions.
 Batch: batch (structured topic list).
 Communicates via stdio JSON-RPC for Claude Code integration.
@@ -86,6 +86,7 @@ def elmer_status(status_filter: Optional[str] = None) -> dict:
             "explorations": result,
             "summary": {
                 "running": counts.get("running", 0),
+                "amending": counts.get("amending", 0),
                 "done": counts.get("done", 0),
                 "pending": counts.get("pending", 0),
                 "approved": counts.get("approved", 0),
@@ -723,13 +724,61 @@ def elmer_decline(exploration_id: str) -> dict:
 
 
 @mcp.tool()
-def elmer_cancel(exploration_id: str) -> dict:
-    """Cancel a running or pending exploration.
+def elmer_amend(
+    exploration_id: str,
+    feedback: str,
+    model: Optional[str] = None,
+    max_turns: int = 10,
+    budget_usd: Optional[float] = None,
+) -> dict:
+    """Amend a completed exploration's proposal.
 
-    Stops the Claude session (if running), removes the worktree and branch,
+    Spawns a Claude session in the existing worktree to revise PROPOSAL.md
+    based on editorial direction. The exploration transitions to 'amending'
+    while the revision runs, then back to 'done' for re-review.
+
+    Use this when a proposal needs changes before approval — removing sections,
+    narrowing scope, fixing cross-references, or adjusting emphasis. The amend
+    agent re-evaluates coherence after applying changes.
+
+    Parameters:
+        exploration_id: ID of the exploration to amend (must be done or failed).
+        feedback: Editorial direction — what to change, remove, or adjust.
+        model: Model for the amend session (default: same as original exploration).
+        max_turns: Turn limit for the amend session (default: 10).
+        budget_usd: Cost cap in USD for the amend session.
+    """
+    try:
+        project_dir, elmer_dir = _find_project()
+
+        pid = explore_mod.amend_exploration(
+            exploration_id=exploration_id,
+            feedback=feedback,
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=model,
+            max_turns=max_turns,
+            budget_usd=budget_usd,
+        )
+
+        return {
+            "id": exploration_id,
+            "status": "amending",
+            "pid": pid,
+            "feedback": feedback[:200],
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def elmer_cancel(exploration_id: str) -> dict:
+    """Cancel a running, pending, or amending exploration.
+
+    Stops the Claude session (if running/amending), removes the worktree and branch,
     and marks the exploration as declined. Log files are preserved.
 
-    The exploration must be in 'running' or 'pending' status.
+    The exploration must be in 'running', 'pending', or 'amending' status.
     """
     try:
         project_dir, elmer_dir = _find_project()
@@ -746,8 +795,8 @@ def elmer_cancel(exploration_id: str) -> dict:
             conn.close()
             if exp is None:
                 return {"error": f"Exploration '{exploration_id}' not found."}
-            if exp["status"] not in ("running", "pending"):
-                return {"error": f"Cannot cancel exploration in status '{exp['status']}'. Must be 'running' or 'pending'."}
+            if exp["status"] not in ("running", "pending", "amending"):
+                return {"error": f"Cannot cancel exploration in status '{exp['status']}'. Must be 'running', 'pending', or 'amending'."}
             return {"error": f"Failed to cancel '{exploration_id}'."}
 
         return {

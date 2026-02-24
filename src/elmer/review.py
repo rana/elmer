@@ -216,6 +216,40 @@ def _refresh_running(
                     proposal_summary=reason,
                     **cost_fields,
                 )
+
+    # Check amending explorations — transition back to done when finished
+    amending = state.list_explorations(conn, status="amending")
+    for exp in amending:
+        pid = exp["pid"]
+        if not worker.is_running(pid):
+            worktree_path = Path(exp["worktree_path"])
+            proposal_path = worktree_path / "PROPOSAL.md"
+
+            # Record amend cost (best-effort)
+            log_path = elmer_dir / "logs" / f"{exp['id']}.log"
+            cost_result = worker.parse_log_costs(log_path)
+            if cost_result and cost_result.cost_usd is not None:
+                state.record_meta_cost(
+                    conn,
+                    operation="amend",
+                    model=exp["model"],
+                    input_tokens=cost_result.input_tokens,
+                    output_tokens=cost_result.output_tokens,
+                    cost_usd=cost_result.cost_usd,
+                    exploration_id=exp["id"],
+                )
+
+            # Update summary from revised proposal
+            if proposal_path.exists():
+                summary = _extract_summary(proposal_path)
+                state.update_exploration(
+                    conn, exp["id"],
+                    status="done",
+                    proposal_summary=summary,
+                )
+            else:
+                state.update_exploration(conn, exp["id"], status="done")
+
     conn.close()
 
     if project_dir:
@@ -251,6 +285,7 @@ def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
     status_icons = {
         "pending": ".",
         "running": "~",
+        "amending": "~",
         "done": "*",
         "approved": "+",
         "declined": "-",
@@ -278,7 +313,7 @@ def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
 
     # Legend
     click.echo()
-    click.echo(". pending  ~ running  * review ready  + approved  - declined  ! failed")
+    click.echo(". pending  ~ running/amending  * review ready  + approved  - declined  ! failed")
 
 
 def list_proposals(elmer_dir: Path) -> None:

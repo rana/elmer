@@ -400,6 +400,92 @@ def launch_pending(
     conn.close()
 
 
+def amend_exploration(
+    *,
+    exploration_id: str,
+    feedback: str,
+    elmer_dir: Path,
+    project_dir: Path,
+    model: Optional[str] = None,
+    max_turns: int = 10,
+    budget_usd: Optional[float] = None,
+) -> int:
+    """Amend a completed exploration's proposal based on editorial feedback.
+
+    Spawns a Claude session in the existing worktree to revise PROPOSAL.md.
+    The exploration must be in 'done' or 'failed' status.
+    Returns the PID of the spawned process.
+    """
+    if not worker.check_claude_available():
+        raise RuntimeError(
+            "claude CLI not found in PATH. Install Claude Code first."
+        )
+
+    conn = state.get_db(elmer_dir)
+    exp = state.get_exploration(conn, exploration_id)
+
+    if exp is None:
+        conn.close()
+        raise RuntimeError(f"Exploration '{exploration_id}' not found.")
+
+    if exp["status"] not in ("done", "failed"):
+        conn.close()
+        raise RuntimeError(
+            f"Cannot amend exploration in status '{exp['status']}'. "
+            f"Must be 'done' or 'failed'."
+        )
+
+    worktree_path = Path(exp["worktree_path"])
+    if not worktree_path.exists():
+        conn.close()
+        raise RuntimeError(
+            f"Worktree not found at {worktree_path}. "
+            f"Cannot amend — the branch may have been cleaned up."
+        )
+
+    # Read current proposal for context in the prompt
+    proposal_path = worktree_path / "PROPOSAL.md"
+    if proposal_path.exists():
+        proposal_text = proposal_path.read_text()
+    else:
+        proposal_text = "(no PROPOSAL.md found)"
+
+    # Resolve the amend agent
+    agent_config = config.resolve_meta_agent(project_dir, "amend")
+
+    use_model = model or exp["model"]
+    log_path = elmer_dir / "logs" / f"{exploration_id}.log"
+
+    if agent_config is not None:
+        prompt = (
+            f"## Current PROPOSAL.md\n\n{proposal_text}\n\n"
+            f"## Editorial Direction\n\n{feedback}"
+        )
+    else:
+        # Fallback: direct prompt without agent
+        prompt = (
+            f"Revise the PROPOSAL.md in the current directory based on "
+            f"this editorial direction:\n\n{feedback}\n\n"
+            f"Current content:\n\n{proposal_text}\n\n"
+            f"Apply the changes, update cross-references, and ensure coherence."
+        )
+
+    pid = worker.spawn_claude(
+        prompt=prompt,
+        cwd=worktree_path,
+        model=use_model,
+        log_path=log_path,
+        max_turns=max_turns,
+        budget_usd=budget_usd,
+        agent_config=agent_config,
+    )
+
+    state.update_exploration(conn, exploration_id, status="amending", pid=pid)
+    conn.close()
+
+    return pid
+
+
 def schedule_ready(elmer_dir: Path, project_dir: Path) -> list[str]:
     """Find pending explorations with all dependencies met and launch them."""
     conn = state.get_db(elmer_dir)

@@ -788,10 +788,57 @@ def decline(exploration_id):
 
 @cli.command()
 @click.argument("exploration_id")
-def cancel(exploration_id):
-    """Cancel a running or pending exploration.
+@click.argument("feedback")
+@click.option("-m", "--model", default=None, help="Model for the amend session (default: same as exploration)")
+@click.option("--max-turns", default=10, type=int, help="Max turns for the amend session (default: 10)")
+@click.option("--budget", "budget_usd", default=None, type=float, help="Max cost in USD for the amend session")
+def amend(exploration_id, feedback, model, max_turns, budget_usd):
+    """Amend a completed exploration's proposal.
 
-    Stops the Claude session (if running), removes the worktree and branch,
+    Spawns a Claude session in the existing worktree to revise PROPOSAL.md
+    based on your editorial direction. The exploration transitions to
+    'amending' while the revision runs, then back to 'done' for re-review.
+
+    Use this instead of manual editing when changes require coherence
+    re-evaluation (removing sections, adjusting cross-references, etc.).
+
+    \b
+    Examples:
+        elmer amend my-exploration "Remove the Read-Aloud section"
+        elmer amend my-exploration "Narrow scope to only the API layer"
+        elmer amend my-exploration "Split into two proposals" -m opus
+    """
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+
+    try:
+        pid = explore_mod.amend_exploration(
+            exploration_id=exploration_id,
+            feedback=feedback,
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=model,
+            max_turns=max_turns,
+            budget_usd=budget_usd,
+        )
+        click.echo(f"Amending: {exploration_id}")
+        click.echo(f"  PID:       {pid}")
+        click.echo(f"  Feedback:  {feedback[:80]}{'...' if len(feedback) > 80 else ''}")
+        click.echo(f"  Log:       .elmer/logs/{exploration_id}.log")
+        click.echo()
+        click.echo("Use 'elmer status' to check when the amendment finishes.")
+        click.echo("Then 'elmer review' to see the revised proposal.")
+    except RuntimeError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("exploration_id")
+def cancel(exploration_id):
+    """Cancel a running, pending, or amending exploration.
+
+    Stops the Claude session (if running/amending), removes the worktree and branch,
     and marks the exploration as declined. The log file is preserved.
 
     Use this to stop explorations that are burning money on the wrong topic
@@ -927,6 +974,7 @@ def tree():
     status_icons = {
         "pending": ".",
         "running": "~",
+        "amending": "~",
         "done": "*",
         "approved": "+",
         "declined": "-",
@@ -964,7 +1012,7 @@ def tree():
         _print_tree(root)
 
     click.echo()
-    click.echo(". pending  ~ running  * review ready  + approved  - declined  ! failed")
+    click.echo(". pending  ~ running/amending  * review ready  + approved  - declined  ! failed")
 
 
 @cli.command()

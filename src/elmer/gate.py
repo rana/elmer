@@ -307,16 +307,16 @@ def cancel_exploration(
         click.echo(f"Exploration '{exploration_id}' not found.", err=True)
         sys.exit(1)
 
-    if exp["status"] not in ("running", "pending"):
+    if exp["status"] not in ("running", "pending", "amending"):
         click.echo(
             f"Cannot cancel exploration in status '{exp['status']}'. "
-            f"Must be 'running' or 'pending'.",
+            f"Must be 'running', 'pending', or 'amending'.",
             err=True,
         )
         sys.exit(1)
 
-    # Stop the process if running
-    if exp["status"] == "running" and exp["pid"]:
+    # Stop the process if running or amending
+    if exp["status"] in ("running", "amending") and exp["pid"]:
         stopped = worker.terminate(exp["pid"])
         if stopped:
             notify(f"Stopped process {exp['pid']}")

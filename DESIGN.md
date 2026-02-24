@@ -69,11 +69,15 @@ explore → slugify(topic)
         → spawn claude -p --agents/--agent in worktree (background, PID tracked)
         → record in SQLite
 
-status  → for each running: check PID alive
+status  → for each running/amending: check PID alive
         → if dead: check PROPOSAL.md exists → mark done or failed
         → display table
 
 review  → read PROPOSAL.md from worktree
+
+amend   → read current PROPOSAL.md
+        → spawn claude -p with amend agent + editorial feedback in existing worktree
+        → mark status amending → done when finished
 
 approve → git merge branch into current branch
         → remove worktree, delete branch
@@ -91,12 +95,15 @@ clean   → remove worktrees/state for approved/declined explorations
 ```
 pending → running → done → approved
                         → declined
+                        → amending → done
                   → failed → declined
+                           → amending → done
 ```
 
 - **pending**: Blocked by unmet dependencies (no worktree yet)
 - **running**: Claude session active (PID alive)
 - **done**: Session finished, PROPOSAL.md exists
+- **amending**: Revision session active — `elmer amend` spawned a Claude session to revise the proposal based on editorial feedback. Transitions back to `done` when finished.
 - **failed**: Session finished, no PROPOSAL.md in worktree. Failure reason diagnosed from session log (wrong write path, claude error, permission denials, or normal completion without output).
 - **approved**: Branch merged, worktree removed
 - **declined**: Branch deleted, worktree removed
@@ -195,7 +202,7 @@ Exploration archetypes (8): explore, explore-act, prototype, adr-proposal, quest
 
 Audit archetypes (8): consistency-audit, coherence-audit, architecture-audit, operational-audit, documentation-audit, opportunity-scan, workflow-audit, mission-audit. Tools: `Read, Grep, Glob, Bash, Write`.
 
-Meta-operation agents (7): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants. Model: `sonnet`.
+Meta-operation agents (8): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants, amend. Model: `sonnet`. The amend agent has `Read, Grep, Glob, Bash, Edit, Write` for editorial revision.
 
 ### Git Integration
 
@@ -314,7 +321,7 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 
 ### MCP Server
 
-`mcp_server.py` exposes Elmer state and operations as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP). 17 tools total.
+`mcp_server.py` exposes Elmer state and operations as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP). 18 tools total.
 
 **Read-only tools (6):**
 
@@ -327,13 +334,14 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 | `elmer_archetypes` | `config.ARCHETYPES_DIR` glob + optional stats | Archetype list with optional approval rates |
 | `elmer_insights` | `insights.list_all_insights()` / `get_relevant_insights()` | Cross-project insights |
 
-**Mutation tools (7):**
+**Mutation tools (8):**
 
 | Tool | Wraps | Effect |
 |------|-------|--------|
 | `elmer_explore` | `explore.start_exploration()` | Creates branch, spawns background claude session. Supports auto-archetype, two-stage prompt generation, chain actions. |
 | `elmer_approve` | `gate.approve_exploration()` / `gate.approve_all()` | Merges branch, cleans up, unblocks dependents. Supports approve-all, auto-followup, invariant validation. |
 | `elmer_decline` | `gate.decline_exploration()` | Deletes branch and worktree |
+| `elmer_amend` | `explore.amend_exploration()` | Spawns revision session in existing worktree to revise PROPOSAL.md based on editorial feedback |
 | `elmer_cancel` | `gate.cancel_exploration()` | Stops process, deletes branch and worktree |
 | `elmer_retry` | `gate.retry_exploration()` / `gate.retry_all_failed()` | Re-spawns failed explorations with same parameters |
 | `elmer_clean` | `gate.clean_all()` | Removes worktrees/state for finished explorations |
@@ -357,6 +365,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-10 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+11 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-23, added proposal archive, failure diagnosis, `elmer logs` command*
+*Last updated: 2026-02-23, added `elmer amend`, amending state (ADR-028)*

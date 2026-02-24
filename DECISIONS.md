@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-10 ADRs recorded.
+11 ADRs recorded.
 
 ## Domain Index
 
@@ -18,6 +18,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-022 | Scaffolding | Claude Code skill scaffolding as Elmer feature |
 | ADR-024 | Integration | MCP server for structured tool access |
 | ADR-026 | Process | Exploration archetypes as Claude Code custom subagents |
+| ADR-028 | Process | Proposal amendment workflow |
 
 ---
 
@@ -146,3 +147,13 @@ Claude Code custom subagents (`.claude/agents/` markdown files with YAML frontma
 **Alternatives considered:** Filesystem-based agents only (breaks in worktrees where `.claude/agents/` isn't visible), Agent Teams for parallel explorations (session-scoped, don't persist — consistent with ADR-002), prompt-only approach with tool restrictions in prompt text (unenforceable, wastes tokens), separate agent runner binary (unnecessary complexity when `claude -p` already supports `--agents`).
 
 *ADR-027 (reject→decline rename) retired: completed migration, rationale preserved in git history. The AI review gate protocol retains REJECT (see DESIGN.md, Auto-Approve Gate section).*
+
+## ADR-028: Proposal Amendment Workflow
+
+**Decision:** Add `elmer amend ID "feedback"` as a first-class lifecycle operation.
+
+Elmer's model was binary — approve (merge as-is) or decline (discard entirely). Real editorial workflows need a refinement loop. `elmer amend` spawns a Claude session in the existing worktree to revise PROPOSAL.md based on editorial direction. The dedicated `elmer-meta-amend` agent has `Read, Grep, Glob, Bash, Edit, Write` — it can both read and edit existing files, unlike analysis agents. State transition: `done → amending → done`. The exploration re-enters the review queue after amendment. Multiple amendment rounds are supported — amend is idempotent on the worktree.
+
+The amend agent is editorial, not exploratory: it applies directed changes and re-evaluates coherence, but does not expand scope. This distinction prevents amendment from becoming a second exploration.
+
+**Alternatives considered:** Manual proposal editing (works but misses cascading cross-reference cleanup), decline-and-re-explore with scoped topic (wastes good generated content), storing amendment history in SQLite (adds complexity — git history on the branch already tracks revisions).
