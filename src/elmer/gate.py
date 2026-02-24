@@ -31,16 +31,17 @@ def _resolve_archive_path(archive_dir: Path, exp: dict) -> tuple[Path, bool]:
     Returns (path, already_archived). Uses the exploration topic to generate
     a human-readable filename instead of the exploration ID.
     """
-    topic = exp['topic']
-    # Strip [synthesis] prefix added by synthesize_ensemble()
-    clean_topic = re.sub(r'^\[synthesis\]\s*', '', topic)
-    slug = explore_mod.slugify(clean_topic, max_length=140)
-    if not slug:
-        slug = "exploration"
-
     ens_role = exp.get("ensemble_role")
-    if ens_role == "synthesis":
-        slug = f"{slug}-synthesis"
+    if ens_role == "synthesis" and exp.get("ensemble_id"):
+        # Use ensemble_id (already a bounded slug) for synthesis archives
+        slug = f"{exp['ensemble_id']}-synthesis"
+    else:
+        topic = exp['topic']
+        # Strip [synthesis] prefix added by synthesize_ensemble()
+        clean_topic = re.sub(r'^\[synthesis\]\s*', '', topic)
+        slug = explore_mod.slugify(clean_topic, max_length=60)
+        if not slug:
+            slug = "exploration"
 
     base_path = archive_dir / f"{slug}.md"
 

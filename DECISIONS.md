@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-19 ADRs recorded.
+20 ADRs recorded.
 
 ## Domain Index
 
@@ -27,6 +27,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-034 | Safety | Commit PROPOSAL.md to branch on completion |
 | ADR-035 | UX | Topic visibility in status display |
 | ADR-036 | Storage | Topic-derived proposal archive filenames |
+| ADR-037 | Naming | Shorter slugs, explicit replica numbering, bounded archive filenames |
 
 ---
 
@@ -342,3 +343,32 @@ Archiving 5 replica proposals alongside the synthesis also created noise. The sy
 **Interaction with ADR-033:** The archive-before-destroy safety chain is unchanged for standalone explorations and synthesis. For replicas in the cascade path, destruction proceeds without archiving — this is intentional, not a gap.
 
 **Alternatives considered:** Increasing `slugify()` max_length only (partial fix — replicas still get meaningless suffixes), `{id}--{archetype}.md` format (helps multi-archetype ensembles but not same-archetype replicas), subdirectories per ensemble (premature structure for current scale).
+
+## ADR-037: Shorter Slugs, Explicit Replica Numbering, Bounded Archive Filenames
+
+**Decision:** Three changes to naming:
+
+1. **Slug default max_length reduced from 60 to 40 characters (~5-6 words).** The previous 60-char limit produced 10+ word slugs that were always truncated in status display and painful to type in commands. At 40 chars, slugs preserve enough discriminating words to distinguish topics at a glance while staying manageable as identifiers. The full topic text is always available via ADR-035 subtitles and the DB. Collision risk is handled by `_make_unique_slug()` counters.
+
+2. **Ensemble replicas are explicitly numbered `-1` through `-N`.** `start_ensemble()` passes a `slug_override` to `start_exploration()` for each replica, producing `{ensemble_id}-1`, `{ensemble_id}-2`, etc. Previously, the first replica inherited the bare slug through collision-free resolution while replicas 2+ got `-2`, `-3` suffixes via `_make_unique_slug()` counter starting at 2.
+
+3. **Synthesis archive filenames use `ensemble_id`, not topic text.** `_resolve_archive_path()` generates synthesis archive filenames as `{ensemble_id}-synthesis.md` instead of `slugify(topic, max_length=140) + "-synthesis"`. The `ensemble_id` is already a bounded slug (max 40 chars from `slugify()`), giving synthesis archives a maximum filename of ~53 characters. Non-synthesis archive filenames use `max_length=60`.
+
+**Problems fixed:**
+- Slugs were too long to type or scan, but too short to preserve full topics — a dead zone.
+- Visual inconsistency: replica 1 lacked a suffix while replicas 2+ had one.
+- Identity collision: `ensemble_id` and replica 1's `id` were the same string.
+- Topic subtitle inconsistency: `_topic_adds_info()` suppressed the subtitle for replica 1 but showed it for replicas 2+ — now consistent across all replicas.
+- Synthesis archive filenames exceeded reasonable filesystem length limits.
+
+**Implementation:**
+- `explore.py`: `slugify()` default `max_length` changed from 60 to 40. `start_exploration()` gains `slug_override` parameter. `start_ensemble()` generates `{ensemble_id}-{i+1}` for each replica.
+- `gate.py`: `_resolve_archive_path()` uses `ensemble_id` for synthesis archives. Non-synthesis archive `max_length` set to 60.
+
+**Solo explorations unaffected by replica numbering.** They still use collision-based naming via `_make_unique_slug()`. The shorter slugs apply universally.
+
+**No migration required.** Existing explorations keep their names. New ones get shorter slugs. Status display groups by `ensemble_id` and `ensemble_role`, not by slug pattern.
+
+**Interaction with ADR-035:** Shorter slugs mean `_topic_adds_info()` triggers more often (truncated slug ≠ full topic slug), surfacing topic subtitles where they're most useful.
+
+**Interaction with ADR-036:** Archive filenames bounded at 60 chars (non-synthesis) or ~53 chars (synthesis via ensemble_id), down from the previous 140+.

@@ -7,7 +7,7 @@ from typing import Optional
 from . import archselect, config, insights, promptgen, state, worker, worktree
 
 
-def slugify(text: str, max_length: int = 60) -> str:
+def slugify(text: str, max_length: int = 40) -> str:
     """Convert topic text to a URL/branch-safe slug."""
     slug = text.lower()
     slug = re.sub(r"[^a-z0-9\s-]", "", slug)
@@ -147,6 +147,7 @@ def start_exploration(
     budget_usd: Optional[float] = None,
     on_approve: Optional[str] = None,
     on_decline: Optional[str] = None,
+    slug_override: Optional[str] = None,
 ) -> tuple[str, str]:
     """Start a new exploration. Returns (slug, archetype_used).
 
@@ -200,11 +201,14 @@ def start_exploration(
     # Resolve archetype template (validate it exists even if deferred)
     archetype_path = config.resolve_archetype(elmer_dir, archetype)
 
-    # Generate unique slug
-    base_slug = slugify(topic)
-    if not base_slug:
-        base_slug = "exploration"
-    slug = _make_unique_slug(conn, base_slug, elmer_dir)
+    # Generate unique slug (or use explicit override for ensemble replicas)
+    if slug_override:
+        slug = slug_override
+    else:
+        base_slug = slugify(topic)
+        if not base_slug:
+            base_slug = "exploration"
+        slug = _make_unique_slug(conn, base_slug, elmer_dir)
 
     branch = f"elmer/{slug}"
     worktree_path = elmer_dir / "worktrees" / slug
@@ -375,6 +379,9 @@ def start_ensemble(
 
     results = []
     for i in range(replicas):
+        # Explicit numbered slug: ensemble_id-1, ensemble_id-2, etc.
+        replica_slug = f"{ensemble_id}-{i + 1}"
+
         # Rotate archetypes if provided
         use_archetype = archetype
         use_auto_archetype = auto_archetype
@@ -398,6 +405,7 @@ def start_ensemble(
             generate_prompt=generate_prompt,
             auto_archetype=use_auto_archetype,
             budget_usd=per_replica_budget,
+            slug_override=replica_slug,
         )
 
         # Set ensemble metadata on the created exploration
