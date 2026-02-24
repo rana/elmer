@@ -392,10 +392,15 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
 
     file_path = P(file)
     if not file_path.exists():
-        # Check .elmer/ as a default location
-        elmer_candidate = elmer_dir / file_path.name
-        if elmer_candidate.exists():
-            file_path = elmer_candidate
+        # Resolution order: .elmer/<name>, <name>.md, .elmer/<name>.md
+        candidates = [
+            elmer_dir / file_path.name,
+            file_path.with_suffix(".md"),
+            elmer_dir / (file_path.name + ".md"),
+        ]
+        resolved = next((c for c in candidates if c.exists()), None)
+        if resolved:
+            file_path = resolved
         else:
             click.echo(f"Error: Path '{file}' does not exist.", err=True)
             sys.exit(1)
