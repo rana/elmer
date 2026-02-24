@@ -93,6 +93,7 @@ elmer clean
 | `elmer daemon` | Start the daemon for continuous operation |
 | `elmer daemon status` | Check if the daemon is running |
 | `elmer daemon stop` | Gracefully stop the daemon |
+| `elmer status -v` | Show topics for all explorations |
 | `elmer status --all-projects` | Show status across all registered projects |
 | `elmer logs ID` | Show parsed session log (diagnostics, errors, cost) |
 | `elmer logs ID --raw` | Show raw JSON session log |

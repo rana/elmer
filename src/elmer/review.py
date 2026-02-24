@@ -10,6 +10,7 @@ from typing import Callable, Optional
 import click
 
 from . import autoapprove, explore as explore_mod, state, synthesize as synth_mod, worker, worktree as wt_mod
+from .explore import slugify
 
 
 def _is_ensemble_replica(exp) -> bool:
@@ -292,8 +293,21 @@ def _refresh_running(
             pass  # Best-effort — never block the refresh
 
 
-def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
-    """Display status of all explorations."""
+def _topic_adds_info(topic: str, exploration_id: str) -> bool:
+    """Check whether the topic text provides information beyond the ID slug.
+
+    Returns True when the ID has a collision suffix or differs from the
+    raw slugified topic — meaning the slug has lost information.
+    """
+    return slugify(topic) != exploration_id
+
+
+def show_status(elmer_dir: Path, project_dir: Path = None, verbose: bool = False) -> None:
+    """Display status of all explorations.
+
+    When verbose is True (or the topic adds info the ID doesn't convey),
+    a topic subtitle line is shown beneath each exploration.
+    """
     _refresh_running(elmer_dir, project_dir)
 
     conn = state.get_db(elmer_dir)
@@ -331,6 +345,7 @@ def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
     for exp in explorations:
         ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
         ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
+        topic = exp["topic"]
 
         # Ensemble header — print once when we first encounter an ensemble
         if ens_id and ens_id not in seen_ensembles:
@@ -339,8 +354,11 @@ def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
             ens_status = state.get_ensemble_status(conn2, ens_id)
             replicas = state.get_ensemble_replicas(conn2, ens_id)
             conn2.close()
+            # Show the original topic in the header (from any replica)
+            ens_topic = replicas[0]["topic"] if replicas else ens_id
+            ens_label = _truncate(ens_topic, id_w - 12)  # room for "ENSEMBLE: "
             click.echo(
-                f"  {'ENSEMBLE: ' + ens_id:<{id_w - 2}} "
+                f"  {'ENSEMBLE: ' + ens_label:<{id_w - 2}} "
                 f"{ens_status:<10} "
                 f"{'':<14} {'':<8} "
                 f"{len(replicas)} replica(s)"
@@ -368,6 +386,10 @@ def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
                 f"{icon} {eid:<{id_w - 2}} {exp['status']:<10} "
                 f"{exp['archetype']:<14} {exp['model']:<8} {age:<6}"
             )
+            # Topic subtitle — shown when it adds info the ID doesn't convey
+            if verbose or _topic_adds_info(topic, exp["id"]):
+                topic_display = _truncate(topic, tw - 6)
+                click.echo(f"      {topic_display}")
 
     # Legend
     click.echo()

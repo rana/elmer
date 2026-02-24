@@ -713,8 +713,14 @@ def generate(count, follow_up_id, model, archetype, max_turns, dry_run, auto_app
 
 @cli.command()
 @click.option("--all-projects", is_flag=True, help="Show status across all registered projects")
-def status(all_projects):
+@click.option("-v", "--verbose", is_flag=True, help="Show topic text for all explorations")
+def status(all_projects, verbose):
     """Show exploration status.
+
+    Shows exploration ID, status, archetype, model, and age. When an
+    exploration's topic provides information beyond its ID (e.g., the
+    ID has a collision suffix), a topic subtitle line is shown automatically.
+    Use -v/--verbose to always show topic lines.
 
     With --all-projects, shows a summary across all registered Elmer projects
     (projects where 'elmer init' has been run).
@@ -722,6 +728,7 @@ def status(all_projects):
     \b
     Examples:
         elmer status                    # Current project status
+        elmer status -v                 # Show topics for all explorations
         elmer status --all-projects     # All projects summary
     """
     if all_projects:
@@ -729,7 +736,7 @@ def status(all_projects):
         return
     project_dir = _require_project()
     elmer_dir = _require_elmer(project_dir)
-    review_mod.show_status(elmer_dir, project_dir)
+    review_mod.show_status(elmer_dir, project_dir, verbose=verbose)
 
 
 @cli.command()

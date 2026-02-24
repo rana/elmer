@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-17 ADRs recorded.
+18 ADRs recorded.
 
 ## Domain Index
 
@@ -25,6 +25,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-032 | Storage | Archive as source of truth for completed explorations |
 | ADR-033 | Safety | Archive-before-destroy and crash-recovery resilience |
 | ADR-034 | Safety | Commit PROPOSAL.md to branch on completion |
+| ADR-035 | UX | Topic visibility in status display |
 
 ---
 
@@ -299,3 +300,21 @@ This was the root cause of unrecoverable data loss in the ensemble incident: eve
 **Interaction with ADR-033:** The git-branch fallback in `_archive_proposal()` is now operational. If the worktree is gone but the branch survives (crash between `git worktree remove` and `git branch -D`), the proposal is recoverable from the branch. This closes the last gap in the archive-before-destroy safety chain.
 
 **Alternatives considered:** Instructing agents to commit PROPOSAL.md in their prompts (unreliable — agents may forget or commit to wrong branch), committing at archive time instead of completion time (too late — the point is to ensure the file is tracked before any cleanup can run), committing all files in the worktree (over-broad — scratch files shouldn't be committed).
+
+## ADR-035: Topic Visibility in Status Display
+
+**Decision:** Make the original topic text visible in `elmer status` and ensure all MCP tools return topic data consistently. Three changes:
+
+1. **Ensemble headers show topic text.** The `ENSEMBLE:` header in `show_status()` now displays the original topic from the first replica instead of the ensemble_id slug. The slug is a lossy transformation (lowercased, punctuation-stripped, truncated to 60 chars) — the original topic is always more informative.
+
+2. **Topic subtitle for standalone explorations.** When an exploration's `slugify(topic) != id` — meaning the ID acquired a collision suffix or differs from the raw slug — a second indented line displays the original topic text. This triggers automatically: no user action needed, no extra flag required. Covers the exact cases where the ID has lost differentiating information (e.g., `explore-act-2` and `explore-act-3` exploring different questions).
+
+3. **`-v/--verbose` flag.** `elmer status -v` always shows topic subtitles for all explorations, even when the slug matches the ID. For users who want full context at a glance.
+
+4. **MCP consistency.** `elmer_explore()` now returns `topic` in single-exploration mode (it already did in ensemble mode). All read tools (`elmer_status`, `elmer_review`, `elmer_tree`) already returned topic.
+
+**Context:** The exploration ID is `slugify(topic)` — a URL/branch-safe transformation of the topic text. When different explorations share the same archetype and have short or generic topics, their IDs become nearly identical (e.g., `explore-act`, `explore-act-2`, `explore-act-3`). The status display showed only the ID, never the original topic. The topic was stored in SQLite (`explorations.topic TEXT NOT NULL`) but the CLI display discarded it. The MCP server returned topic in most tools but inconsistently omitted it from single-exploration spawn results.
+
+**Heuristic:** `_topic_adds_info(topic, id)` compares `slugify(topic)` against the exploration ID. When they differ — collision suffix (`-2`, `-3`), truncation, or any slug mismatch — the topic subtitle appears automatically. This is deterministic, zero-configuration, and targets exactly the cases where differentiation is lost.
+
+**Alternatives considered:** Adding a TOPIC column to the status table (screen width already tight at 82 columns — a new column would compress ID to uselessness or require horizontal scrolling), user-supplied `--name` parameter for explorations (correct long-term solution but adds a new concept, schema column, and cognitive overhead — deferred), embedding archetype in the slug (makes branch names longer without solving the core readability problem), replacing the ID column with topic (users need the ID to type into commands like `elmer approve`).

@@ -736,6 +736,7 @@ def elmer_explore(
 
         return {
             "id": slug,
+            "topic": topic,
             "branch": f"elmer/{slug}",
             "archetype": archetype_used,
             "model": use_model,

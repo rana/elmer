@@ -6,7 +6,7 @@ Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, rules, conventions
 2. **CONTEXT.md** — project methodology, collaboration model, current state
 3. **DESIGN.md** — architecture, data model, module responsibilities
-4. **DECISIONS.md** — ADRs with full rationale (17 recorded)
+4. **DECISIONS.md** — ADRs with full rationale (18 recorded)
 5. **ROADMAP.md** — phase history and deferred features
 6. **README.md** — user-facing docs, install, full command reference
 7. **GUIDE.md** — practical usage playbook, workflows, patterns
@@ -34,7 +34,7 @@ Full options and examples in README.md. Core subcommands:
 | `elmer explore "topic"` | Start exploration on a new branch (`-a`, `-m`, `--auto-approve`, `--budget`, `--replicas`, `--archetypes`, `--models`) |
 | `elmer batch FILE` | Spawn from `---`-separated topic list file (`--chain`, `--dry-run`, `--item`, `--max-concurrent`, `--stagger`, `--replicas`) |
 | `elmer generate` | AI-generate research topics and spawn explorations (`--count`, `--follow-up`, `--dry-run`) |
-| `elmer status` | Show all explorations with state (`--all-projects` for dashboard) |
+| `elmer status` | Show all explorations with state (`-v` for topics, `--all-projects` for dashboard) |
 | `elmer tree` | Exploration dependency tree |
 | `elmer review [ID]` | List pending proposals or show one (`--prioritize` for ranked review) |
 | `elmer approve ID` | Merge branch, auto-clean (`--all`, `--auto-followup`, `--validate-invariants`, `--no-clean`) |
@@ -122,4 +122,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-24, ADR-034 commit PROPOSAL.md to branch on completion (17 ADRs)*
+*Last updated: 2026-02-24, ADR-035 topic visibility in status display (18 ADRs)*
