@@ -1,3 +1,5 @@
 worktrees/
 logs/
+digests/
 state.db
+daemon.pid
