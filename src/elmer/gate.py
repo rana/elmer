@@ -4,6 +4,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -42,6 +43,11 @@ def _archive_proposal(
         reason_line = f"  decline_reason: {decline_reason}\n" if decline_reason else ""
         merged_line = f"  merged_at: {exp['merged_at']}\n" if exp.get("merged_at") else ""
         completed_line = f"  completed_at: {exp['completed_at']}\n" if exp.get("completed_at") else ""
+        # Ensemble membership — preserved so digests and slug checks work after DB cleanup
+        ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
+        ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
+        ensemble_line = f"  ensemble_id: {ens_id}\n" if ens_id else ""
+        role_line = f"  ensemble_role: {ens_role}\n" if ens_role else ""
         meta = (
             f"<!-- elmer:archive\n"
             f"  id: {exp['id']}\n"
@@ -52,6 +58,8 @@ def _archive_proposal(
             f"{reason_line}"
             f"{merged_line}"
             f"{completed_line}"
+            f"{ensemble_line}"
+            f"{role_line}"
             f"  archived: {now}\n"
             f"-->\n\n"
         )
@@ -150,21 +158,25 @@ def approve_exploration(
         )
         sys.exit(1)
 
-    # Merge branch
+    # Merge branch (skip if already merged — crash recovery)
     branch = exp["branch"]
-    try:
-        worktree.merge_branch(
-            project_dir,
-            branch,
-            f"Merge elmer exploration: {exp['topic']}",
-        )
-    except subprocess.CalledProcessError as e:
-        click.echo(f"Merge failed (conflicts?):\n{e.stderr}", err=True)
-        click.echo(
-            f"Resolve manually, then run: elmer approve {exploration_id}",
-            err=True,
-        )
-        sys.exit(1)
+    already_merged = worktree.branch_exists(project_dir, branch) and worktree.is_ancestor(project_dir, branch)
+    if already_merged:
+        notify(f"Branch already merged, skipping merge step (crash recovery)")
+    else:
+        try:
+            worktree.merge_branch(
+                project_dir,
+                branch,
+                f"Merge elmer exploration: {exp['topic']}",
+            )
+        except subprocess.CalledProcessError as e:
+            click.echo(f"Merge failed (conflicts?):\n{e.stderr}", err=True)
+            click.echo(
+                f"Resolve manually, then run: elmer approve {exploration_id}",
+                err=True,
+            )
+            sys.exit(1)
 
     # Remove PROPOSAL.md from main — it's an elmer artifact, not a project deliverable.
     # The proposal is archived to .elmer/proposals/ before worktree cleanup.
@@ -207,15 +219,19 @@ def approve_exploration(
         merged_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    # Ensemble cascade: when approving a synthesis, cleanup all replicas
+    # Ensemble cascade: when approving a synthesis, cleanup all replicas.
+    # Sleep between worktree removals to avoid overwhelming IDE file watchers
+    # and the system inotify event queue (see ADR-029 merge hygiene).
     ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
     ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
     if ens_role == "synthesis" and ens_id:
         replicas = state.get_ensemble_replicas(conn, ens_id)
-        for replica in replicas:
+        for i, replica in enumerate(replicas):
             if replica["status"] not in ("approved", "declined"):
                 _archive_proposal(elmer_dir, replica, "declined",
                                   decline_reason="Ensemble synthesis approved")
+                if i > 0:
+                    time.sleep(0.5)  # Let IDE file watchers drain between removals
                 _cleanup_worktree(project_dir, replica)
                 state.update_exploration(
                     conn, replica["id"],
@@ -311,16 +327,19 @@ def decline_exploration(
         update_fields["decline_reason"] = reason
     state.update_exploration(conn, exploration_id, **update_fields)
 
-    # Ensemble cascade: when declining a synthesis, decline all replicas too
+    # Ensemble cascade: when declining a synthesis, decline all replicas too.
+    # Sleep between worktree removals to avoid inotify event storms.
     ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
     ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
     if ens_role == "synthesis" and ens_id:
         replicas = state.get_ensemble_replicas(conn, ens_id)
         cascade_reason = reason or "Ensemble synthesis declined"
-        for replica in replicas:
+        for i, replica in enumerate(replicas):
             if replica["status"] not in ("approved", "declined"):
                 _archive_proposal(elmer_dir, replica, "declined",
                                   decline_reason=cascade_reason)
+                if i > 0:
+                    time.sleep(0.5)  # Let IDE file watchers drain between removals
                 _cleanup_worktree(project_dir, replica)
                 state.update_exploration(
                     conn, replica["id"],
@@ -694,6 +713,7 @@ def clean_all(elmer_dir: Path, project_dir: Path) -> int:
     explorations = state.list_explorations(conn)
 
     cleaned = 0
+    worktrees_removed = 0
     for exp in explorations:
         if exp["status"] in ("approved", "declined", "failed"):
             # Archive proposal before cleanup
@@ -701,7 +721,10 @@ def clean_all(elmer_dir: Path, project_dir: Path) -> int:
 
             worktree_path = Path(exp["worktree_path"])
             if worktree_path.exists():
+                if worktrees_removed > 0:
+                    time.sleep(0.5)  # Let IDE file watchers drain between removals
                 _cleanup_worktree(project_dir, exp)
+                worktrees_removed += 1
                 cleaned += 1
             state.delete_exploration(conn, exp["id"])
             cleaned += 1

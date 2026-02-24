@@ -33,13 +33,19 @@ def _require_project() -> Path:
 
 
 def _require_elmer(project_dir: Path) -> Path:
-    """Find .elmer/ or exit. Self-heals missing gitignore for older projects."""
+    """Find .elmer/ or exit. Self-heals missing gitignore and watcher exclusions."""
     elmer_dir = project_dir / ".elmer"
     if not elmer_dir.exists():
         click.echo("Error: .elmer/ not found. Run 'elmer init' first.", err=True)
         sys.exit(1)
     # Self-heal: ensure gitignore exists (older projects may lack it)
     config.ensure_gitignore(elmer_dir)
+    # Self-heal: ensure config.toml exists with defaults (older projects may lack it)
+    config_path = elmer_dir / "config.toml"
+    if not config_path.exists():
+        config_path.write_text(config.DEFAULT_CONFIG)
+    # Self-heal: ensure IDE watcher exclusions exist (prevents inotify crashes)
+    config._ensure_vscode_watcher_exclusion(project_dir)
     # Ensure project is in global registry
     config.register_project(project_dir)
     return elmer_dir

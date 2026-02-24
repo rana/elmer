@@ -278,6 +278,8 @@ When you run `elmer init`, it creates:
 ├── worktrees/         # Git worktrees (gitignored)
 ├── logs/              # Claude session logs (gitignored)
 └── state.db           # SQLite state (gitignored)
+.vscode/
+└── settings.json      # Watcher exclusions for .elmer/ ephemeral dirs
 ```
 
 With `--docs`, also creates in the project root:

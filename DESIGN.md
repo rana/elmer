@@ -42,7 +42,7 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `worktree.py` | Git worktree and branch operations |
 | `worker.py` | Claude CLI invocation, process management, agent flag building |
 | `state.py` | SQLite state tracking |
-| `config.py` | Configuration loading, project initialization, agent resolution |
+| `config.py` | Configuration loading, project initialization, agent resolution, IDE watcher exclusion |
 | `generate.py` | AI topic generation orchestration |
 | `autoapprove.py` | AI review gate for auto-approval |
 | `promptgen.py` | Two-stage AI prompt generation |
@@ -356,7 +356,7 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 | Tool | Wraps | Effect |
 |------|-------|--------|
 | `elmer_explore` | `explore.start_exploration()` | Creates branch, spawns background claude session. Supports auto-archetype, two-stage prompt generation, chain actions. |
-| `elmer_approve` | `gate.approve_exploration()` / `gate.approve_all()` | Merges branch, cleans up, unblocks dependents. Supports approve-all, auto-followup, invariant validation. |
+| `elmer_approve` | `gate.approve_exploration()` / `gate.approve_all()` | Merges branch, cleans up, unblocks dependents. Skips merge if branch already merged (crash recovery). Sleeps between cascade worktree removals to avoid IDE inotify storms. Supports approve-all, auto-followup, invariant validation. |
 | `elmer_decline` | `gate.decline_exploration()` | Deletes branch and worktree. Accepts optional decline reason. |
 | `elmer_amend` | `explore.amend_exploration()` / `explore.preview_amend_prompt()` | Spawns revision session in existing worktree to revise PROPOSAL.md based on editorial feedback. `dry_run=true` returns prompt without spawning. |
 | `elmer_cancel` | `gate.cancel_exploration()` | Stops process, deletes branch and worktree |

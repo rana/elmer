@@ -132,6 +132,42 @@ def ensure_gitignore(elmer_dir: Path) -> None:
     gitignore_path.write_text(GITIGNORE)
 
 
+def _ensure_vscode_watcher_exclusion(project_dir: Path) -> None:
+    """Ensure .elmer/worktrees/ and logs/ are excluded from VSCode file watcher.
+
+    Prevents IDE crashes from inotify event storms when worktrees are
+    created/deleted rapidly during approve, decline, and clean operations.
+    Only writes if the exclusion is missing — safe to run repeatedly.
+    """
+    vscode_dir = project_dir / ".vscode"
+    settings_path = vscode_dir / "settings.json"
+
+    exclusions = {
+        ".elmer/worktrees/**": True,
+        ".elmer/logs/**": True,
+    }
+
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return  # Don't corrupt existing settings
+    else:
+        settings = {}
+
+    watcher = settings.get("files.watcherExclude", {})
+    changed = False
+    for pattern, value in exclusions.items():
+        if pattern not in watcher:
+            watcher[pattern] = value
+            changed = True
+
+    if changed:
+        settings["files.watcherExclude"] = watcher
+        vscode_dir.mkdir(exist_ok=True)
+        settings_path.write_text(json.dumps(settings, indent=4) + "\n")
+
+
 def init_project(project_dir: Path) -> Path:
     """Initialize .elmer/ in a project directory."""
     elmer_dir = project_dir / ".elmer"
@@ -156,6 +192,9 @@ def init_project(project_dir: Path) -> Path:
 
     # Gitignore for transient state (always overwrite to ensure current entries)
     ensure_gitignore(elmer_dir)
+
+    # Exclude ephemeral dirs from IDE file watchers (prevents inotify storms)
+    _ensure_vscode_watcher_exclusion(project_dir)
 
     # Register in global project registry
     register_project(project_dir)

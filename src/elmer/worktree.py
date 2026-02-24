@@ -79,6 +79,22 @@ def remove_file_and_commit(project_dir: Path, filename: str, message: str) -> No
     )
 
 
+def is_ancestor(project_dir: Path, branch_name: str) -> bool:
+    """Check if a branch is already merged (ancestor of HEAD).
+
+    Returns True if the branch tip is reachable from HEAD, meaning
+    its changes are already incorporated. Used to skip redundant merges
+    during crash recovery.
+    """
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", branch_name, "HEAD"],
+        cwd=str(project_dir),
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
 def branch_exists(project_dir: Path, branch_name: str) -> bool:
     """Check if a git branch exists."""
     result = subprocess.run(
