@@ -1,0 +1,6 @@
+{
+    "files.watcherExclude": {
+        ".elmer/worktrees/**": true,
+        ".elmer/logs/**": true
+    }
+}
