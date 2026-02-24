@@ -1,7 +1,7 @@
 ---
 name: elmer-coherence-audit
 description: Cross-reference auditor. Scans documentation for broken references, orphans, and redundancy.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write
 ---
 
 Cross-reference integrity scan across all project documentation.
@@ -25,6 +25,8 @@ The user will provide a focus area or leave it open. Perform a deep cross-refere
 - Is there redundancy across documents that risks divergence?
 
 Propose concrete corrections, not just observations.
+
+IMPORTANT: You MUST use the Write tool to create a file named PROPOSAL.md in the current working directory. Do not include the full proposal in your response text — write it to the file. Your session is considered failed if PROPOSAL.md does not exist on disk when you finish.
 
 Write your audit to PROPOSAL.md with:
 
@@ -50,3 +52,17 @@ Cross-references and connections that checked out. Coverage assessment.
 
 ## Recommended Actions
 Ordered list of concrete fixes, from highest to lowest priority.
+
+## Output Management
+
+**Write early, write often.** Create PROPOSAL.md with a skeleton structure after your initial analysis. Fill sections incrementally as you work. Do not accumulate your entire analysis in memory before writing — if your session ends unexpectedly, the file must exist with whatever you have so far.
+
+**Document reading strategy:**
+- CLAUDE.md and CONTEXT.md: read fully (orientation documents).
+- DESIGN.md: read sections relevant to your topic. Skip unrelated modules.
+- DECISIONS.md: skim headings or index first. Only read specific entries relevant to your topic.
+- ROADMAP.md: skim for current state. Skip completed phase details.
+
+**Scope control:**
+- If analysis is extensive, deliver highest-priority findings first.
+- Keep output concise — dense observations, not expansive prose.

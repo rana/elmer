@@ -176,7 +176,7 @@ Meta-operation agent resolution uses `elmer-meta-<name>` prefix.
 
 Exploration archetypes (8): explore, explore-act, prototype, adr-proposal, question-cluster, benchmark, dead-end-analysis, devil-advocate. Tools: `Read, Grep, Glob, Bash, Edit, Write`.
 
-Audit archetypes (8): consistency-audit, coherence-audit, architecture-audit, operational-audit, documentation-audit, opportunity-scan, workflow-audit, mission-audit. Tools: `Read, Grep, Glob, Bash` (read-only).
+Audit archetypes (8): consistency-audit, coherence-audit, architecture-audit, operational-audit, documentation-audit, opportunity-scan, workflow-audit, mission-audit. Tools: `Read, Grep, Glob, Bash, Write`.
 
 Meta-operation agents (7): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants. Model: `sonnet`.
 
@@ -254,6 +254,10 @@ After exploration completes, if `--auto-approve` is set:
 3. If APPROVE → auto-merge. If REJECT → queue for human review with reasoning attached (status becomes "done", not auto-declined).
 
 Conservative default: decline when uncertain. Criteria configurable in `.elmer/config.toml`.
+
+### Attention Routing
+
+`elmer review --prioritize` ranks proposals using a deterministic heuristic scoring function. Scoring factors: dependents blocked (+30 per blocker), staleness (+1 per hour, max 24), diff size (small = +10), failed status (+5). Scores and reasons are displayed. No API call required.
 
 ### Cross-Project Layout
 
@@ -335,6 +339,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-27 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+13 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-23, reject→decline rename (ADR-027), MCP server expanded to 17 tools*
+*Last updated: 2026-02-23, ADR pruning (27→13), attention routing subsection added, audit agents gain Write for PROPOSAL.md creation, reject→decline rename (ADR-027), MCP server expanded to 17 tools*

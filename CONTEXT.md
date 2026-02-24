@@ -61,7 +61,7 @@ All five development phases complete:
 4. **Phase 4 (Meta):** Scaffolding, archetype stats, attention routing, invariant enforcement, multi-project dashboard, PR creation, batch topics, skill scaffolding.
 5. **Phase 5 (Integration):** MCP server — 17 tools over stdio JSON-RPC for structured Claude Code access, covering all intelligence features.
 
-The tool is functional and in active use. 26 ADRs recorded.
+The tool is functional and in active use. 13 ADRs recorded.
 
 ## What's Working
 
@@ -79,4 +79,4 @@ The tool is functional and in active use. 26 ADRs recorded.
 - **Elmer-on-Elmer recursion** — running explorations on Elmer's own codebase (meta-tool use)
 - **Scaffolding template quality** — generated CONTEXT.md is structural but not philosophical; could better teach the institutional memory pattern
 
-*Last updated: 2026-02-23, MCP server expanded to 17 tools*
+*Last updated: 2026-02-23, ADR pruning (27→13), MCP server expanded to 17 tools*
