@@ -382,7 +382,12 @@ def _warn_orphaned_dependents(
 def cancel_exploration(
     elmer_dir: Path, project_dir: Path, exploration_id: str, *, notify=None,
 ) -> None:
-    """Cancel a running or pending exploration: stop the process, clean up."""
+    """Cancel a running or pending exploration: stop the process, clean up.
+
+    Sets status to 'failed' (not 'declined') so the exploration is retryable.
+    Cancelled explorations should not pollute digest synthesis or trigger
+    on_decline chain actions.
+    """
     if notify is None:
         notify = click.echo
 
@@ -430,23 +435,16 @@ def cancel_exploration(
         state.update_exploration(
             conn,
             exploration_id,
-            status="declined",
+            status="failed",
             completed_at=datetime.now(timezone.utc).isoformat(),
             **cost_fields,
         )
     else:
         # Pending — no process or worktree to clean
-        state.update_exploration(conn, exploration_id, status="declined")
+        state.update_exploration(conn, exploration_id, status="failed")
 
     _warn_orphaned_dependents(conn, exploration_id, notify=notify)
     conn.close()
-
-    # Execute on_decline chain action
-    on_decline = exp["on_decline"] if "on_decline" in exp.keys() else None
-    if on_decline:
-        _execute_chain_action(
-            on_decline, exploration_id, exp["topic"], project_dir, notify=notify,
-        )
 
 
 def approve_all(
@@ -666,6 +664,28 @@ def retry_all_failed(
             notify(f"Error retrying {exp['id']}: {e}")
 
     return retried
+
+
+def clean_preview(elmer_dir: Path) -> list[dict]:
+    """Preview what clean_all would remove. Returns list of items without executing.
+
+    Each item is a dict with 'id', 'status', 'topic', and 'has_worktree' fields.
+    """
+    conn = state.get_db(elmer_dir)
+    explorations = state.list_explorations(conn)
+    conn.close()
+
+    items = []
+    for exp in explorations:
+        if exp["status"] in ("approved", "declined", "failed"):
+            worktree_path = Path(exp["worktree_path"])
+            items.append({
+                "id": exp["id"],
+                "status": exp["status"],
+                "topic": exp["topic"],
+                "has_worktree": worktree_path.exists(),
+            })
+    return items
 
 
 def clean_all(elmer_dir: Path, project_dir: Path) -> int:

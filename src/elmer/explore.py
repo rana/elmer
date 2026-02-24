@@ -493,6 +493,75 @@ def launch_pending(
     conn.close()
 
 
+def _build_amend_prompt(
+    feedback: str,
+    proposal_text: str,
+    agent_config: Optional[dict],
+) -> str:
+    """Assemble the prompt for an amend session."""
+    if agent_config is not None:
+        return (
+            f"## Current PROPOSAL.md\n\n{proposal_text}\n\n"
+            f"## Editorial Direction\n\n{feedback}"
+        )
+    return (
+        f"Revise the PROPOSAL.md in the current directory based on "
+        f"this editorial direction:\n\n{feedback}\n\n"
+        f"Current content:\n\n{proposal_text}\n\n"
+        f"Apply the changes, update cross-references, and ensure coherence."
+    )
+
+
+def preview_amend_prompt(
+    *,
+    exploration_id: str,
+    feedback: str,
+    elmer_dir: Path,
+    project_dir: Path,
+) -> dict:
+    """Preview the amend prompt without spawning a session.
+
+    Returns a dict with the assembled prompt, agent config (if any),
+    and exploration metadata. Validates the same preconditions as
+    amend_exploration() but does not modify state or spawn a process.
+    """
+    conn = state.get_db(elmer_dir)
+    exp = state.get_exploration(conn, exploration_id)
+
+    if exp is None:
+        conn.close()
+        raise RuntimeError(f"Exploration '{exploration_id}' not found.")
+
+    if exp["status"] not in ("done", "failed"):
+        conn.close()
+        raise RuntimeError(
+            f"Cannot amend exploration in status '{exp['status']}'. "
+            f"Must be 'done' or 'failed'."
+        )
+
+    worktree_path = Path(exp["worktree_path"])
+    if not worktree_path.exists():
+        conn.close()
+        raise RuntimeError(
+            f"Worktree not found at {worktree_path}. "
+            f"Cannot amend — the branch may have been cleaned up."
+        )
+
+    conn.close()
+
+    proposal_path = worktree_path / "PROPOSAL.md"
+    proposal_text = proposal_path.read_text() if proposal_path.exists() else "(no PROPOSAL.md found)"
+
+    agent_config = config.resolve_meta_agent(project_dir, "amend")
+    prompt = _build_amend_prompt(feedback, proposal_text, agent_config)
+
+    return {
+        "prompt": prompt,
+        "agent": agent_config.get("name") if agent_config else None,
+        "model": exp["model"],
+    }
+
+
 def amend_exploration(
     *,
     exploration_id: str,
@@ -538,30 +607,14 @@ def amend_exploration(
 
     # Read current proposal for context in the prompt
     proposal_path = worktree_path / "PROPOSAL.md"
-    if proposal_path.exists():
-        proposal_text = proposal_path.read_text()
-    else:
-        proposal_text = "(no PROPOSAL.md found)"
+    proposal_text = proposal_path.read_text() if proposal_path.exists() else "(no PROPOSAL.md found)"
 
     # Resolve the amend agent
     agent_config = config.resolve_meta_agent(project_dir, "amend")
+    prompt = _build_amend_prompt(feedback, proposal_text, agent_config)
 
     use_model = model or exp["model"]
     log_path = elmer_dir / "logs" / f"{exploration_id}.log"
-
-    if agent_config is not None:
-        prompt = (
-            f"## Current PROPOSAL.md\n\n{proposal_text}\n\n"
-            f"## Editorial Direction\n\n{feedback}"
-        )
-    else:
-        # Fallback: direct prompt without agent
-        prompt = (
-            f"Revise the PROPOSAL.md in the current directory based on "
-            f"this editorial direction:\n\n{feedback}\n\n"
-            f"Current content:\n\n{proposal_text}\n\n"
-            f"Apply the changes, update cross-references, and ensure coherence."
-        )
 
     pid = worker.spawn_claude(
         prompt=prompt,

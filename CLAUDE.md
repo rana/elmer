@@ -52,7 +52,7 @@ Full options and examples in README.md. Core subcommands:
 | `elmer logs ID` | Session log diagnostics (`--raw` for JSON) |
 | `elmer pr ID` | Push branch, create GitHub PR |
 | `elmer clean` | Remove failed/orphaned worktrees + state entries (garbage collection) |
-| `elmer mcp` | Start MCP server — 19 tools for Claude Code integration |
+| `elmer mcp` | Start MCP server — 21 tools for Claude Code integration |
 
 ## Rules
 

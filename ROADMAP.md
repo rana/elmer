@@ -24,7 +24,7 @@ MCP server exposing full Elmer functionality as structured tools (ADR-024). 18 t
 
 ## Phase 6: Convergence — COMPLETE
 
-Decline reasons (`elmer decline ID "reason"`), convergence digests (`elmer digest`), digest-aware topic generation, daemon synthesis step with threshold trigger (ADR-030). Closes the feedback loop: explorations accumulate understanding, not just output. 19 MCP tools (added `elmer_digest`). Daemon loop gains a two-timescale architecture: fast loop (explore → approve) and slow loop (digest → generate → explore).
+Decline reasons (`elmer decline ID "reason"`), convergence digests (`elmer digest`), digest-aware topic generation, daemon synthesis step with threshold trigger (ADR-030). Closes the feedback loop: explorations accumulate understanding, not just output. 21 MCP tools (added `elmer_digest`, `elmer_config_get`, `elmer_recover_partial`; preview/dry-run modes on `elmer_clean`, `elmer_validate`, `elmer_amend`; progress indicators on `elmer_status`; stagger on `elmer_batch`; digest metadata on `elmer_generate`). Daemon loop gains a two-timescale architecture: fast loop (explore → approve) and slow loop (digest → generate → explore).
 
 Ensemble exploration (ADR-031): `--replicas N` on `explore` and `batch` runs the same topic N times with independent sessions, then auto-synthesizes into a single consolidated proposal. Archetype rotation (`--archetypes`) and model rotation (`--models`) maximize variance. Approval/decline cascades: approving synthesis cleans up replicas, declining synthesis declines all. New `synthesize.py` module, `elmer-meta-synthesize` agent, daemon integration. Two-scale convergence: ensemble (intra-topic) and digest (inter-topic).
 

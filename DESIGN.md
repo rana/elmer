@@ -336,18 +336,20 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 
 ### MCP Server
 
-`mcp_server.py` exposes Elmer state and operations as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP). 19 tools total.
+`mcp_server.py` exposes Elmer state and operations as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP). 21 tools total.
 
-**Read-only tools (6):**
+**Read-only tools (8):**
 
 | Tool | Wraps | Returns |
 |------|-------|---------|
-| `elmer_status` | `state.list_explorations()` | Explorations + status summary |
+| `elmer_status` | `state.list_explorations()` + `worker.is_running()` | Explorations + status summary. Running/amending explorations include progress indicators (elapsed_minutes, pid_alive, log_bytes). |
 | `elmer_review` | `state.get_exploration()` + PROPOSAL.md | Proposal list (with optional prioritization) or full proposal content + metadata + dependencies |
 | `elmer_costs` | `state.list_explorations()` + `state.get_all_costs()` | Cost data per exploration + meta-ops + totals |
 | `elmer_tree` | `state.list_explorations()` + `state.get_dependencies()` | Recursive dependency tree |
 | `elmer_archetypes` | `config.ARCHETYPES_DIR` glob + optional stats | Archetype list with optional approval rates |
 | `elmer_insights` | `insights.list_all_insights()` / `get_relevant_insights()` | Cross-project insights |
+| `elmer_config_get` | `config.load_config()` | Full config or specific key via dot notation |
+| `elmer_recover_partial` | Worktree glob for `*.md` | Partial artifacts from failed/active explorations. Content previews for salvaging work. |
 
 **Mutation tools (8):**
 
@@ -356,18 +358,18 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 | `elmer_explore` | `explore.start_exploration()` | Creates branch, spawns background claude session. Supports auto-archetype, two-stage prompt generation, chain actions. |
 | `elmer_approve` | `gate.approve_exploration()` / `gate.approve_all()` | Merges branch, cleans up, unblocks dependents. Supports approve-all, auto-followup, invariant validation. |
 | `elmer_decline` | `gate.decline_exploration()` | Deletes branch and worktree. Accepts optional decline reason. |
-| `elmer_amend` | `explore.amend_exploration()` | Spawns revision session in existing worktree to revise PROPOSAL.md based on editorial feedback |
+| `elmer_amend` | `explore.amend_exploration()` / `explore.preview_amend_prompt()` | Spawns revision session in existing worktree to revise PROPOSAL.md based on editorial feedback. `dry_run=true` returns prompt without spawning. |
 | `elmer_cancel` | `gate.cancel_exploration()` | Stops process, deletes branch and worktree |
 | `elmer_retry` | `gate.retry_exploration()` / `gate.retry_all_failed()` | Re-spawns failed explorations with same parameters |
-| `elmer_clean` | `gate.clean_all()` | Removes worktrees/state for finished explorations |
+| `elmer_clean` | `gate.clean_all()` / `gate.clean_preview()` | Removes worktrees/state for finished explorations. `preview=true` shows what would be cleaned without executing. |
 | `elmer_pr` | `pr.create_pr_for_exploration()` | Pushes branch, creates GitHub PR via gh CLI |
 
 **Intelligence tools (4):**
 
 | Tool | Wraps | Effect |
 |------|-------|--------|
-| `elmer_generate` | `generate.generate_topics()` + optional spawn | AI topic generation from project context. Digest-aware — reads latest digest for directed generation. |
-| `elmer_validate` | `invariants.validate_invariants()` | Document invariant checking with auto-fix |
+| `elmer_generate` | `generate.generate_topics()` + optional spawn | AI topic generation from project context. Digest-aware — reads latest digest for directed generation. Returns digest metadata when available. |
+| `elmer_validate` | `invariants.validate_invariants()` | Document invariant checking with auto-fix. `preview=true` reports violations without applying fixes. |
 | `elmer_mine_questions` | `questions.mine_questions()` + optional spawn | Extracts open questions from docs. Optionally spawns explorations. |
 | `elmer_digest` | `digest.run_digest()` | Synthesizes convergence digest from approved/declined proposals. Optional time and topic filters. |
 
@@ -375,12 +377,18 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 
 | Tool | Wraps | Effect |
 |------|-------|--------|
-| `elmer_batch` | `explore.start_exploration()` loop | Multiple explorations from a structured topic list. Supports chaining and concurrency limits. |
+| `elmer_batch` | `explore.start_exploration()` loop | Multiple explorations from a structured topic list. Supports chaining, concurrency limits, and stagger delays. |
 
 Each tool opens a DB connection per call, matching the CLI pattern. Mutation tools catch `SystemExit` from gate functions (which use `sys.exit(1)` for validation errors) and convert to structured error responses.
+
+**MCP Design Principles:**
+
+- **MCP tools don't have special powers.** Every tool wraps a core module function (`state.py`, `explore.py`, `gate.py`, etc.). New capabilities belong in the core engine first, then get exposed via both CLI and MCP. The MCP is a presentation layer, not a privileged API.
+- **State is data, not server memory.** The MCP server is stateless — each tool call opens a DB connection, queries, closes, and returns JSON. Any persistent state lives on disk (SQLite, archive files, digest files), never in server process memory.
+- **Value density over feature count.** When evaluating tool additions, the metric is value delivered per unit of complexity added. Small high-impact changes (preview modes, parameter parity with CLI) compound. Large niche features (workflow engines, semantic layers) fragment.
 
 ## Design Decisions
 
 15 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-24, ADR-032 archive as source of truth*
+*Last updated: 2026-02-24, MCP observability + safety enhancements (21 tools), design principles, recover_partial, preview/dry-run modes, progress indicators*

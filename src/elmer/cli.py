@@ -936,7 +936,7 @@ def cancel(exploration_id):
     """Cancel a running, pending, or amending exploration.
 
     Stops the Claude session (if running/amending), removes the worktree and branch,
-    and marks the exploration as declined. The log file is preserved.
+    and marks the exploration as failed (retryable). The log file is preserved.
 
     Use this to stop explorations that are burning money on the wrong topic
     or archetype. For completed explorations, use 'elmer decline' instead.

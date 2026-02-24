@@ -45,10 +45,15 @@ def validate_invariants(
     model: str = "sonnet",
     max_turns: int = 5,
     rules: Optional[list[str]] = None,
+    preview: bool = False,
 ) -> ValidationResult:
     """Run document invariant validation via AI.
 
     Returns ValidationResult with check outcomes and any fixes applied.
+
+    If preview is True, runs in check-only mode: reports violations but
+    does not apply fixes. The agent's Write and Edit tools are removed
+    to enforce this.
     """
     if not worker.check_claude_available():
         raise RuntimeError(
@@ -66,12 +71,27 @@ def validate_invariants(
     # Try agent-aware invocation, fall back to template substitution
     agent_config = config.resolve_meta_agent(project_dir, "validate-invariants")
 
+    preview_suffix = ""
+    if preview:
+        preview_suffix = (
+            "\n\nIMPORTANT: This is a preview/check-only run. "
+            "Report all violations but do NOT apply fixes. "
+            "Do NOT use Write or Edit tools. Only read and report."
+        )
+
     if agent_config is not None:
-        prompt = f"Check these invariant rules:\n\n{rules_text}"
+        prompt = f"Check these invariant rules:\n\n{rules_text}{preview_suffix}"
+        # Strip write tools in preview mode for enforcement
+        if preview and "tools" in agent_config:
+            agent_config = dict(agent_config)
+            agent_config["tools"] = [
+                t for t in agent_config["tools"]
+                if t not in ("Write", "Edit", "NotebookEdit")
+            ]
     else:
         template_path = config.resolve_archetype(elmer_dir, "validate-invariants")
         template = template_path.read_text()
-        prompt = template.replace("$RULES", rules_text)
+        prompt = template.replace("$RULES", rules_text) + preview_suffix
 
     # Run validation
     result = worker.run_claude(

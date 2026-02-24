@@ -344,9 +344,9 @@ Add to your `.claude/mcp.json` (project-level) or `~/.claude/mcp.json` (global):
 }
 ```
 
-This gives Claude Code 19 tools in 4 categories, all returning structured JSON:
+This gives Claude Code 21 tools in 4 categories, all returning structured JSON:
 
-- **Read-only (6):** `elmer_status`, `elmer_review`, `elmer_costs`, `elmer_tree`, `elmer_archetypes`, `elmer_insights`
+- **Read-only (8):** `elmer_status`, `elmer_review`, `elmer_costs`, `elmer_tree`, `elmer_archetypes`, `elmer_insights`, `elmer_config_get`, `elmer_recover_partial`
 - **Mutation (8):** `elmer_explore`, `elmer_approve`, `elmer_amend`, `elmer_decline`, `elmer_cancel`, `elmer_retry`, `elmer_clean`, `elmer_pr`
 - **Intelligence (4):** `elmer_generate`, `elmer_validate`, `elmer_mine_questions`, `elmer_digest`
 - **Batch (1):** `elmer_batch`

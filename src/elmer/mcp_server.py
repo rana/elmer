@@ -7,6 +7,7 @@ Batch: batch (structured topic list).
 Communicates via stdio JSON-RPC for Claude Code integration.
 """
 
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -24,6 +25,7 @@ from . import (
     pr as pr_mod,
     questions as questions_mod,
     state,
+    worker,
     worktree as wt,
 )
 
@@ -56,6 +58,9 @@ def elmer_status(status_filter: Optional[str] = None) -> dict:
     Returns structured exploration data and a status summary.
     Use this to check what's running, what's done, and what needs review.
 
+    For running and amending explorations, includes progress indicators:
+    elapsed_minutes, pid_alive, and log_bytes.
+
     Optional status_filter: pending, running, done, approved, declined, failed.
     """
     try:
@@ -65,10 +70,11 @@ def elmer_status(status_filter: Optional[str] = None) -> dict:
 
         result = []
         counts: dict[str, int] = {}
+        now = datetime.now(timezone.utc)
         for exp in explorations:
             s = exp["status"]
             counts[s] = counts.get(s, 0) + 1
-            result.append({
+            entry = {
                 "id": exp["id"],
                 "topic": exp["topic"],
                 "archetype": exp["archetype"],
@@ -80,7 +86,25 @@ def elmer_status(status_filter: Optional[str] = None) -> dict:
                 "cost_usd": exp["cost_usd"],
                 "parent_id": exp["parent_id"],
                 "has_proposal": exp["proposal_summary"] is not None,
-            })
+            }
+
+            # Progress indicators for active explorations
+            if s in ("running", "amending"):
+                try:
+                    created = datetime.fromisoformat(exp["created_at"])
+                    entry["elapsed_minutes"] = round(
+                        (now - created).total_seconds() / 60, 1
+                    )
+                except (ValueError, TypeError):
+                    pass
+                entry["pid_alive"] = worker.is_running(exp["pid"])
+                log_path = elmer_dir / "logs" / f"{exp['id']}.log"
+                try:
+                    entry["log_bytes"] = log_path.stat().st_size if log_path.exists() else 0
+                except OSError:
+                    entry["log_bytes"] = 0
+
+            result.append(entry)
 
         conn.close()
         return {
@@ -477,6 +501,116 @@ def elmer_insights(keywords: Optional[str] = None) -> dict:
         return {"error": str(exc)}
 
 
+@mcp.tool()
+def elmer_config_get(key: Optional[str] = None) -> dict:
+    """Read Elmer configuration values.
+
+    Returns the full config from .elmer/config.toml, or a specific key.
+    Use dot notation for nested keys (e.g., "defaults.model",
+    "auto_approve.criteria", "digest.threshold").
+
+    Without key: returns the entire config dict.
+    With key: returns just that value.
+
+    Parameters:
+        key: Dot-notation config key (e.g., "defaults.model"). Omit for full config.
+    """
+    try:
+        _, elmer_dir = _find_project()
+        cfg = config.load_config(elmer_dir)
+
+        if key is None:
+            return {"config": cfg}
+
+        # Navigate nested dict via dot notation
+        parts = key.split(".")
+        current = cfg
+        for part in parts:
+            if not isinstance(current, dict) or part not in current:
+                return {"key": key, "value": None, "found": False}
+            current = current[part]
+
+        return {"key": key, "value": current, "found": True}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def elmer_recover_partial(exploration_id: str) -> dict:
+    """Recover partial artifacts from a failed exploration.
+
+    Scans the exploration's worktree for markdown files that may contain
+    useful partial work (drafts, analysis fragments, partial proposals).
+    Only works if the worktree still exists (before cleanup).
+
+    Returns file paths and content previews. Use this to salvage work
+    from explorations that failed late (e.g., turn 48 of 50).
+
+    Parameters:
+        exploration_id: ID of the failed exploration.
+    """
+    try:
+        _, elmer_dir = _find_project()
+        conn = state.get_db(elmer_dir)
+        exp = state.get_exploration(conn, exploration_id)
+        conn.close()
+
+        if exp is None:
+            return {"error": f"Exploration '{exploration_id}' not found."}
+
+        if exp["status"] not in ("failed", "done", "running", "amending"):
+            return {"error": f"Recovery is for failed/active explorations, not '{exp['status']}'."}
+
+        worktree_path = Path(exp["worktree_path"])
+        if not worktree_path.exists():
+            return {
+                "error": "Worktree no longer exists. Run recovery before cleanup.",
+                "exploration_id": exploration_id,
+            }
+
+        # Known project docs to exclude (not exploration artifacts)
+        exclude = {
+            "CLAUDE.md", "CONTEXT.md", "DESIGN.md", "DECISIONS.md",
+            "ROADMAP.md", "README.md", "GUIDE.md", "CHANGELOG.md",
+            "CONTRIBUTING.md", "LICENSE.md",
+        }
+
+        artifacts = []
+        for md_file in sorted(worktree_path.rglob("*.md")):
+            # Skip .elmer/ internals and known project docs
+            try:
+                rel = md_file.relative_to(worktree_path)
+            except ValueError:
+                continue
+            if ".elmer" in rel.parts:
+                continue
+            if rel.name in exclude and len(rel.parts) == 1:
+                continue
+
+            try:
+                content = md_file.read_text()
+                preview = content[:1000]
+                if len(content) > 1000:
+                    preview += "\n\n[...truncated...]"
+                artifacts.append({
+                    "path": str(rel),
+                    "size_bytes": len(content),
+                    "preview": preview,
+                })
+            except OSError:
+                continue
+
+        return {
+            "exploration_id": exploration_id,
+            "status": exp["status"],
+            "worktree": str(worktree_path),
+            "artifacts": artifacts,
+            "artifact_count": len(artifacts),
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 # ---------------------------------------------------------------------------
 # Mutation Tools
 # ---------------------------------------------------------------------------
@@ -777,6 +911,7 @@ def elmer_amend(
     model: Optional[str] = None,
     max_turns: int = 10,
     budget_usd: Optional[float] = None,
+    dry_run: bool = False,
 ) -> dict:
     """Amend a completed exploration's proposal.
 
@@ -794,9 +929,26 @@ def elmer_amend(
         model: Model for the amend session (default: same as original exploration).
         max_turns: Turn limit for the amend session (default: 10).
         budget_usd: Cost cap in USD for the amend session.
+        dry_run: If true, returns the assembled prompt without spawning
+            a session. Use this to review what the amend agent would receive.
     """
     try:
         project_dir, elmer_dir = _find_project()
+
+        if dry_run:
+            preview = explore_mod.preview_amend_prompt(
+                exploration_id=exploration_id,
+                feedback=feedback,
+                elmer_dir=elmer_dir,
+                project_dir=project_dir,
+            )
+            return {
+                "id": exploration_id,
+                "dry_run": True,
+                "prompt": preview["prompt"],
+                "agent": preview["agent"],
+                "model": model or preview["model"],
+            }
 
         pid = explore_mod.amend_exploration(
             exploration_id=exploration_id,
@@ -823,7 +975,7 @@ def elmer_cancel(exploration_id: str) -> dict:
     """Cancel a running, pending, or amending exploration.
 
     Stops the Claude session (if running/amending), removes the worktree and branch,
-    and marks the exploration as declined. Log files are preserved.
+    and marks the exploration as failed (retryable). Log files are preserved.
 
     The exploration must be in 'running', 'pending', or 'amending' status.
     """
@@ -901,15 +1053,27 @@ def elmer_retry(
 
 
 @mcp.tool()
-def elmer_clean() -> dict:
+def elmer_clean(preview: bool = False) -> dict:
     """Clean up finished explorations.
 
     Removes worktrees and state entries for approved, declined, and failed
     explorations. Running and pending explorations are not affected.
     Use this periodically to free disk space and declutter status output.
+
+    Parameters:
+        preview: If true, returns what would be cleaned without executing.
+            Shows exploration IDs, statuses, topics, and whether worktrees
+            still exist. Use this to inspect before committing to cleanup.
     """
     try:
         project_dir, elmer_dir = _find_project()
+        if preview:
+            items = gate.clean_preview(elmer_dir)
+            return {
+                "preview": True,
+                "would_clean": len(items),
+                "items": items,
+            }
         count = gate.clean_all(elmer_dir, project_dir)
         return {"cleaned": count}
     except Exception as exc:
@@ -993,6 +1157,28 @@ def elmer_generate(
         gen_count = count or gen_cfg.get("count", 5)
         gen_max_turns = gen_cfg.get("max_turns", 5)
 
+        # Capture digest metadata before generation (best-effort)
+        digest_context = None
+        try:
+            digests_dir = elmer_dir / "digests"
+            if digests_dir.exists():
+                digest_files = sorted(digests_dir.glob("digest-*.md"), reverse=True)
+                if digest_files:
+                    latest = digest_files[0]
+                    mtime = datetime.fromtimestamp(
+                        latest.stat().st_mtime, tz=timezone.utc
+                    )
+                    age_hours = (
+                        datetime.now(timezone.utc) - mtime
+                    ).total_seconds() / 3600
+                    digest_context = {
+                        "path": str(latest.relative_to(elmer_dir)),
+                        "timestamp": mtime.isoformat(),
+                        "age_hours": round(age_hours, 1),
+                    }
+        except Exception:
+            pass  # Best-effort — never block generation
+
         topics = gen_mod.generate_topics(
             elmer_dir=elmer_dir,
             project_dir=project_dir,
@@ -1003,6 +1189,8 @@ def elmer_generate(
         )
 
         result: dict = {"topics": topics, "count": len(topics)}
+        if digest_context:
+            result["digest_used"] = digest_context
 
         if not spawn:
             result["spawned"] = False
@@ -1049,7 +1237,7 @@ def elmer_generate(
 
 
 @mcp.tool()
-def elmer_validate(model: Optional[str] = None) -> dict:
+def elmer_validate(model: Optional[str] = None, preview: bool = False) -> dict:
     """Validate document invariants.
 
     Checks that project documentation is internally consistent. Default rules
@@ -1061,6 +1249,9 @@ def elmer_validate(model: Optional[str] = None) -> dict:
 
     Parameters:
         model: Model for validation (default: sonnet).
+        preview: If true, reports violations without applying fixes.
+            The validation agent runs in check-only mode with write tools
+            removed. Use this to inspect what would be fixed first.
     """
     try:
         project_dir, elmer_dir = _find_project()
@@ -1074,9 +1265,10 @@ def elmer_validate(model: Optional[str] = None) -> dict:
             project_dir=project_dir,
             model=inv_model,
             max_turns=inv_max_turns,
+            preview=preview,
         )
 
-        return {
+        result = {
             "all_passed": vr.all_passed,
             "checks": [
                 {"invariant": c.invariant, "passed": c.passed, "detail": c.detail}
@@ -1085,6 +1277,9 @@ def elmer_validate(model: Optional[str] = None) -> dict:
             "fixes": vr.fixes,
             "cost_usd": vr.cost_usd,
         }
+        if preview:
+            result["preview"] = True
+        return result
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -1255,6 +1450,7 @@ def elmer_batch(
     auto_archetype: bool = False,
     budget_usd: Optional[float] = None,
     max_concurrent: Optional[int] = None,
+    stagger_seconds: Optional[int] = None,
     replicas: Optional[int] = None,
     archetypes: Optional[str] = None,
     models: Optional[str] = None,
@@ -1283,6 +1479,8 @@ def elmer_batch(
         auto_archetype: AI selects the best archetype per topic.
         budget_usd: Total budget in USD (divided across topics).
         max_concurrent: Max parallel explorations.
+        stagger_seconds: Delay in seconds between spawning each exploration.
+            Spreads out concurrent starts to avoid API rate limits.
         replicas: Ensemble — spawn N replicas per topic and auto-synthesize.
         archetypes: Ensemble — comma-separated archetype rotation per replica.
         models: Ensemble — comma-separated model rotation per replica.
@@ -1372,6 +1570,10 @@ def elmer_batch(
                 if chain:
                     errors.append({"topic": "(chain broken)", "error": "Stopped due to previous error."})
                     break
+
+            # Stagger: delay between spawns to avoid API rate limits
+            if stagger_seconds and i < len(topic_list) - 1:
+                time.sleep(stagger_seconds)
 
         result: dict = {
             "total_topics": len(topic_list),

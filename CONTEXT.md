@@ -69,7 +69,7 @@ The tool is functional and in active use. 15 ADRs recorded.
 - Core exploration loop is reliable — worktree isolation, background workers, state tracking
 - Daemon mode runs overnight with budget caps
 - Cross-project insights accumulate across approved explorations
-- MCP server provides structured access for Claude Code integration (19 tools)
+- MCP server provides structured access for Claude Code integration (21 tools)
 - Batch topics with `--chain` handle sequential refactoring without merge conflicts
 - Five-document scaffolding (`elmer init --docs`) bootstraps effective AI-assisted projects
 - Convergence digests synthesize understanding across approved/declined work
@@ -84,5 +84,7 @@ The tool is functional and in active use. 15 ADRs recorded.
 - **Scaffolding template quality** — generated CONTEXT.md is structural but not philosophical; could better teach the institutional memory pattern
 - **Agent Teams integration** — within a single exploration, the Claude session could use Agent Teams for parallel sub-tasks. Partially addressed by ADR-026 (custom subagents). Agent Teams remain session-scoped and don't persist.
 - **Sibling-aware exploration prompts** — explorations have no knowledge of other in-flight or completed explorations. Partially addressed by convergence digests (ADR-030): the digest synthesizes cross-exploration understanding, which feeds into topic generation. Individual explorations remain independent by design. The remaining question is whether to inject digest context into exploration prompts (not just generation prompts).
+- **Cross-project MCP** — every MCP tool infers project from `cwd`. No way to address multiple projects in a single Claude Code session. Adding a `project_path` parameter to tools that need it is the likely path, with `None` defaulting to cwd. Deferred because most usage is single-project.
+- **Composable status queries** — MCP status/review tools return full result sets; filtering happens client-side, wasting tokens. A `filter` parameter on `elmer_status` (e.g., `status=done AND archetype=prototype`) would collapse multi-call workflows. Deferred because current usage is manageable.
 
-*Last updated: 2026-02-24, ADR-032 archive as source of truth, auto-clean on approve/decline*
+*Last updated: 2026-02-24, MCP enhancements from AI architect proposal reflection*

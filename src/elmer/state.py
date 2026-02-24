@@ -334,6 +334,8 @@ def get_ensemble_status(conn: sqlite3.Connection, ensemble_id: str) -> str:
             return "review"
         if synthesis["status"] in ("running", "amending"):
             return "synthesizing"
+        if synthesis["status"] == "failed":
+            return "failed"
 
     replicas = get_ensemble_replicas(conn, ensemble_id)
     if not replicas:
