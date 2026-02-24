@@ -97,9 +97,26 @@ pending → running → done → approved
 - **pending**: Blocked by unmet dependencies (no worktree yet)
 - **running**: Claude session active (PID alive)
 - **done**: Session finished, PROPOSAL.md exists
-- **failed**: Session finished, no PROPOSAL.md
+- **failed**: Session finished, no PROPOSAL.md in worktree. Failure reason diagnosed from session log (wrong write path, claude error, permission denials, or normal completion without output).
 - **approved**: Branch merged, worktree removed
 - **declined**: Branch deleted, worktree removed
+
+### Proposal Archive
+
+Proposals are archived to `.elmer/proposals/<id>.md` before worktree cleanup on approve, decline, cancel, retry, and clean. Each archived file includes a metadata header (HTML comment) with exploration ID, topic, archetype, model, final status, and archive timestamp. The archive is best-effort — failures never block the flow.
+
+This makes proposals persistent, independent of the branch lifecycle. Approved proposals survive merge-and-cleanup. Declined proposals preserve institutional knowledge about rejected approaches.
+
+### Failure Diagnosis
+
+When an exploration transitions to `failed`, the session log at `.elmer/logs/<id>.log` is parsed for structured diagnostics:
+
+- **is_error**: Whether claude reported a session error
+- **result text**: Claude's final response — reveals if PROPOSAL.md was written to the wrong path
+- **permission_denials**: Tool calls that were denied (sandboxing conflicts)
+- **turn count**: How many turns were used vs max_turns
+
+`elmer logs ID` displays the full parsed diagnostic. Failure reasons are stored in the `proposal_summary` field with structured categories rather than the generic "(no PROPOSAL.md produced)".
 
 ### Storage
 
@@ -270,6 +287,7 @@ Conservative default: decline when uncertain. Criteria configurable in `.elmer/c
 ├── config.toml          # Project-specific overrides
 ├── archetypes/          # Project-specific templates (fallback)
 ├── state.db             # Project state
+├── proposals/           # Archived PROPOSAL.md files (persistent)
 ├── worktrees/
 └── logs/
 
@@ -341,4 +359,4 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 10 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-23, ADR consolidation (13→10), tool lists corrected to match agent definitions, auto-approve REJECT/decline clarification*
+*Last updated: 2026-02-23, added proposal archive, failure diagnosis, `elmer logs` command*

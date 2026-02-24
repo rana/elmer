@@ -857,6 +857,29 @@ def clean():
 
 @cli.command()
 @click.argument("exploration_id")
+@click.option("--raw", is_flag=True, help="Show raw JSON log output")
+def logs(exploration_id, raw):
+    """Show session log for an exploration.
+
+    Parses the Claude session log and displays structured diagnostics:
+    error status, turn count, duration, cost, permission denials,
+    model usage, and Claude's final response.
+
+    Useful for diagnosing why an exploration failed.
+
+    \b
+    Examples:
+        elmer logs my-exploration-id         # parsed summary
+        elmer logs my-exploration-id --raw   # raw JSON
+    """
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+
+    review_mod.show_log(elmer_dir, exploration_id, raw=raw)
+
+
+@cli.command()
+@click.argument("exploration_id")
 def pr(exploration_id):
     """Create a GitHub PR from an exploration.
 

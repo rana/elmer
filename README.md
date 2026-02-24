@@ -89,6 +89,8 @@ elmer clean
 | `elmer daemon status` | Check if the daemon is running |
 | `elmer daemon stop` | Gracefully stop the daemon |
 | `elmer status --all-projects` | Show status across all registered projects |
+| `elmer logs ID` | Show parsed session log (diagnostics, errors, cost) |
+| `elmer logs ID --raw` | Show raw JSON session log |
 | `elmer pr ID` | Push branch and create GitHub PR |
 | `elmer clean` | Remove finished worktrees and state entries |
 | `elmer mcp` | Start the MCP server for Claude Code integration |

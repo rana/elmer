@@ -1,5 +1,6 @@
 """Proposal review — read proposals, display status and summaries."""
 
+import json
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -61,6 +62,101 @@ def _extract_summary(proposal_path: Path, max_lines: int = 5) -> str:
     return " ".join(summary_lines)[:200] if summary_lines else "(empty proposal)"
 
 
+def _diagnose_failure(log_path: Path) -> str:
+    """Extract a structured failure reason from a claude session log.
+
+    Parses the JSON log to determine why PROPOSAL.md wasn't created,
+    returning a human-readable reason string.
+    """
+    if not log_path.exists():
+        return "(no log file — session may not have started)"
+
+    try:
+        raw = log_path.read_text().strip()
+        if not raw:
+            return "(empty log file — session produced no output)"
+        data = json.loads(raw)
+    except (json.JSONDecodeError, OSError):
+        return "(log file not valid JSON — session may have crashed)"
+
+    # Handle streaming format (list of objects)
+    if isinstance(data, list):
+        for obj in reversed(data):
+            if isinstance(obj, dict) and obj.get("type") == "result":
+                data = obj
+                break
+        else:
+            data = data[-1] if data else {}
+
+    if not isinstance(data, dict):
+        return "(unexpected log format)"
+
+    # Check if claude reported an error
+    if data.get("is_error"):
+        result = str(data.get("result", ""))[:150]
+        return f"(claude error: {result})"
+
+    # Check if the result mentions PROPOSAL.md (wrote to wrong location)
+    result = str(data.get("result", ""))
+    if "PROPOSAL.md" in result or "proposal" in result.lower():
+        # Check for explicit wrong-path writes
+        import re
+        paths = re.findall(r"written[^/]*(/[^\s\"']+PROPOSAL\.md)", result)
+        if paths:
+            return f"(PROPOSAL.md written to wrong path: {paths[0]})"
+        return "(claude reported writing PROPOSAL.md but file not found in worktree)"
+
+    # Check permission denials
+    denials = data.get("permission_denials", [])
+    if denials:
+        tools = [d.get("tool_name", "?") for d in denials]
+        return f"(no PROPOSAL.md; {len(denials)} permission denial(s): {', '.join(tools)})"
+
+    num_turns = data.get("num_turns")
+    return f"(no PROPOSAL.md produced — session completed {num_turns or '?'} turns normally)"
+
+
+def parse_log_details(log_path: Path) -> Optional[dict]:
+    """Parse a session log for display in `elmer logs`. Returns structured data or None."""
+    if not log_path.exists():
+        return None
+
+    try:
+        raw = log_path.read_text().strip()
+        if not raw:
+            return None
+        data = json.loads(raw)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    # Handle streaming format
+    if isinstance(data, list):
+        for obj in reversed(data):
+            if isinstance(obj, dict) and obj.get("type") == "result":
+                data = obj
+                break
+        else:
+            data = data[-1] if data else {}
+
+    if not isinstance(data, dict):
+        return None
+
+    denials = data.get("permission_denials", [])
+
+    return {
+        "is_error": data.get("is_error", False),
+        "num_turns": data.get("num_turns"),
+        "duration_ms": data.get("duration_ms"),
+        "cost_usd": data.get("total_cost_usd") or data.get("cost_usd"),
+        "result_snippet": str(data.get("result", ""))[:500],
+        "permission_denials": [
+            {"tool": d.get("tool_name", "?"), "path": d.get("tool_input", {}).get("path", "")}
+            for d in denials
+        ],
+        "model_usage": data.get("modelUsage", {}),
+    }
+
+
 def _refresh_running(
     elmer_dir: Path,
     project_dir: Path = None,
@@ -111,12 +207,13 @@ def _refresh_running(
                 )
                 newly_done.append(exp)
             else:
+                reason = _diagnose_failure(log_path)
                 state.update_exploration(
                     conn,
                     exp["id"],
                     status="failed",
                     completed_at=datetime.now(timezone.utc).isoformat(),
-                    proposal_summary="(no PROPOSAL.md produced)",
+                    proposal_summary=reason,
                     **cost_fields,
                 )
     conn.close()
@@ -243,6 +340,74 @@ def show_proposal(elmer_dir: Path, exploration_id: str) -> None:
         log_path = elmer_dir / "logs" / f"{exp['id']}.log"
         if log_path.exists():
             click.echo(f"\nLog available at: {log_path}")
+
+
+def show_log(elmer_dir: Path, exploration_id: str, *, raw: bool = False) -> None:
+    """Display parsed session log for an exploration."""
+    conn = state.get_db(elmer_dir)
+    exp = state.get_exploration(conn, exploration_id)
+    conn.close()
+
+    if exp is None:
+        click.echo(f"Exploration '{exploration_id}' not found.", err=True)
+        sys.exit(1)
+
+    log_path = elmer_dir / "logs" / f"{exp['id']}.log"
+
+    if not log_path.exists():
+        click.echo(f"No log file for '{exploration_id}'.")
+        click.echo(f"Expected at: {log_path}")
+        return
+
+    if raw:
+        click.echo(log_path.read_text())
+        return
+
+    details = parse_log_details(log_path)
+    if details is None:
+        click.echo("Log file exists but could not be parsed.")
+        click.echo(f"File: {log_path}")
+        return
+
+    click.echo(f"Exploration: {exp['id']}")
+    click.echo(f"Topic:       {exp['topic']}")
+    click.echo(f"Status:      {exp['status']}")
+    click.echo(f"Archetype:   {exp['archetype']}")
+    click.echo(f"Model:       {exp['model']}")
+    click.echo("-" * 60)
+
+    is_err = details["is_error"]
+    click.echo(f"Claude error:  {'YES' if is_err else 'no'}")
+    click.echo(f"Turns:         {details['num_turns'] or '?'}")
+    if details["duration_ms"]:
+        mins = details["duration_ms"] / 60000
+        click.echo(f"Duration:      {mins:.1f}m")
+    if details["cost_usd"]:
+        click.echo(f"Cost:          ${details['cost_usd']:.2f}")
+
+    denials = details["permission_denials"]
+    if denials:
+        click.echo(f"\nPermission denials ({len(denials)}):")
+        for d in denials:
+            click.echo(f"  {d['tool']}: {d['path']}")
+
+    models = details.get("model_usage", {})
+    if models:
+        click.echo("\nModel usage:")
+        for model_id, usage in models.items():
+            short = model_id.split(".")[-1].split("-v")[0] if "." in model_id else model_id
+            cost = usage.get("costUSD", 0)
+            inp = usage.get("inputTokens", 0) + usage.get("cacheReadInputTokens", 0)
+            out = usage.get("outputTokens", 0)
+            click.echo(f"  {short}: {inp:,} in / {out:,} out  ${cost:.2f}")
+
+    snippet = details["result_snippet"]
+    if snippet:
+        click.echo(f"\nClaude's final response (first 500 chars):")
+        click.echo("-" * 60)
+        click.echo(snippet)
+
+    click.echo(f"\nFull log: {log_path}")
 
 
 def _score_proposal(exp, conn, project_dir: Path) -> tuple[float, list[str]]:

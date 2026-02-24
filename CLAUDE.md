@@ -47,6 +47,7 @@ Full options and examples in README.md. Core subcommands:
 | `elmer mine-questions` | Extract open questions from docs (`--spawn`, `--cluster`) |
 | `elmer insights` | List cross-project insights |
 | `elmer daemon` | Continuous operation (`--auto-approve --generate` for full autonomy) |
+| `elmer logs ID` | Session log diagnostics (`--raw` for JSON) |
 | `elmer pr ID` | Push branch, create GitHub PR |
 | `elmer clean` | Remove finished worktrees + state entries |
 | `elmer mcp` | Start MCP server — 17 tools for Claude Code integration |
@@ -119,4 +120,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-23, ADR consolidation (13→10), domain index consolidation (8→5), inert maintenance triggers removed, canonical home for deferred features*
+*Last updated: 2026-02-23, added `elmer logs` command, proposal archive, failure diagnosis*

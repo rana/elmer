@@ -76,6 +76,7 @@ def _resolve_agent_and_prompt(
     topic: str,
     elmer_dir: Path,
     project_dir: Path,
+    worktree_path: Optional[Path] = None,
 ) -> tuple[Optional[dict], str]:
     """Resolve agent config and build the prompt for an exploration.
 
@@ -85,6 +86,9 @@ def _resolve_agent_and_prompt(
 
     If no agent definition exists:
       - Returns (None, full_prompt) — falls back to template substitution.
+
+    If worktree_path is provided, appends an explicit PROPOSAL.md path
+    directive to prevent Claude from writing to the wrong directory.
     """
     agent_config = config.resolve_agent(project_dir, archetype)
 
@@ -93,11 +97,25 @@ def _resolve_agent_and_prompt(
         # The -p prompt is just the topic, with optional insights.
         prompt = topic
         prompt = _inject_insights(prompt, topic, elmer_dir, project_dir)
+        if worktree_path is not None:
+            prompt = _append_proposal_path(prompt, worktree_path)
         return agent_config, prompt
 
     # Fallback: template with $TOPIC substitution
     prompt = _assemble_prompt(archetype_path, topic, elmer_dir, project_dir)
+    if worktree_path is not None:
+        prompt = _append_proposal_path(prompt, worktree_path)
     return None, prompt
+
+
+def _append_proposal_path(prompt: str, worktree_path: Path) -> str:
+    """Append an explicit absolute PROPOSAL.md path directive to the prompt."""
+    abs_path = worktree_path.resolve()
+    return (
+        f"{prompt}\n\n"
+        f"IMPORTANT: Write your proposal to the absolute path: "
+        f"{abs_path}/PROPOSAL.md — do not use a relative path."
+    )
 
 
 def start_exploration(
@@ -247,6 +265,7 @@ def start_exploration(
             elmer_dir=elmer_dir,
             project_dir=project_dir,
         )
+        prompt = _append_proposal_path(prompt, worktree_path)
         # Record prompt generation cost (linked to this exploration after insert)
         state.record_meta_cost(
             conn,
@@ -260,6 +279,7 @@ def start_exploration(
     else:
         agent_config, prompt = _resolve_agent_and_prompt(
             archetype, archetype_path, topic, elmer_dir, project_dir,
+            worktree_path=worktree_path,
         )
     worktree.create_worktree(project_dir, branch, worktree_path)
 
@@ -334,6 +354,7 @@ def launch_pending(
                 elmer_dir=elmer_dir,
                 project_dir=project_dir,
             )
+            prompt = _append_proposal_path(prompt, worktree_path)
             state.record_meta_cost(
                 conn,
                 operation="prompt_gen",
@@ -348,11 +369,13 @@ def launch_pending(
             archetype_path = config.resolve_archetype(elmer_dir, archetype)
             agent_config, prompt = _resolve_agent_and_prompt(
                 archetype, archetype_path, topic, elmer_dir, project_dir,
+                worktree_path=worktree_path,
             )
     else:
         archetype_path = config.resolve_archetype(elmer_dir, archetype)
         agent_config, prompt = _resolve_agent_and_prompt(
             archetype, archetype_path, topic, elmer_dir, project_dir,
+            worktree_path=worktree_path,
         )
 
     if worktree.branch_exists(project_dir, branch):

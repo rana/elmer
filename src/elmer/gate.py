@@ -1,6 +1,7 @@
 """Approval gate — approve (merge) or decline (discard) explorations."""
 
 import shlex
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -10,6 +11,45 @@ from typing import Optional
 import click
 
 from . import config, explore as explore_mod, generate as gen_mod, insights, state, worker, worktree
+
+
+def _archive_proposal(elmer_dir: Path, exp: dict, final_status: str) -> Optional[Path]:
+    """Archive PROPOSAL.md before worktree cleanup. Returns archive path or None.
+
+    Copies the proposal to .elmer/proposals/<id>.md with a metadata header.
+    Best-effort: never blocks the approval/decline flow.
+    """
+    try:
+        worktree_path = Path(exp["worktree_path"])
+        proposal_path = worktree_path / "PROPOSAL.md"
+
+        if not proposal_path.exists():
+            return None
+
+        archive_dir = elmer_dir / "proposals"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = archive_dir / f"{exp['id']}.md"
+
+        # Read original content
+        content = proposal_path.read_text()
+
+        # Prepend metadata as HTML comment (invisible in rendered markdown)
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        meta = (
+            f"<!-- elmer:archive\n"
+            f"  id: {exp['id']}\n"
+            f"  topic: {exp['topic']}\n"
+            f"  archetype: {exp['archetype']}\n"
+            f"  model: {exp['model']}\n"
+            f"  status: {final_status}\n"
+            f"  archived: {now}\n"
+            f"-->\n\n"
+        )
+
+        archive_path.write_text(meta + content)
+        return archive_path
+    except Exception:
+        return None  # Best-effort — never block the flow
 
 
 def _cleanup_worktree(project_dir: Path, exp: dict) -> None:
@@ -128,6 +168,9 @@ def approve_exploration(
         except Exception as e:
             notify(f"Insight extraction failed: {e}")
 
+    # Archive proposal before cleanup
+    _archive_proposal(elmer_dir, exp, "approved")
+
     # Cleanup
     _cleanup_worktree(project_dir, exp)
 
@@ -199,6 +242,9 @@ def decline_exploration(
     if exp["status"] == "approved":
         click.echo("Cannot decline an already-approved exploration.", err=True)
         sys.exit(1)
+
+    # Archive proposal before cleanup
+    _archive_proposal(elmer_dir, exp, "declined")
 
     _cleanup_worktree(project_dir, exp)
 
@@ -291,6 +337,9 @@ def cancel_exploration(
                 }.items() if v is not None
             }
 
+        # Archive proposal before cleanup (may exist if cancelled mid-work)
+        _archive_proposal(elmer_dir, exp, "cancelled")
+
         _cleanup_worktree(project_dir, exp)
         state.update_exploration(
             conn,
@@ -376,6 +425,9 @@ def retry_exploration(
     generate_prompt = bool(exp["generate_prompt"])
     budget_usd = exp["budget_usd"]
 
+    # Archive proposal before cleanup (failed explorations may still have partial output)
+    _archive_proposal(elmer_dir, exp, "retried")
+
     # Clean up the failed exploration's worktree and branch
     _cleanup_worktree(project_dir, exp)
     state.delete_exploration(conn, exploration_id)
@@ -438,7 +490,8 @@ def retry_all_failed(
             generate_prompt = bool(exp["generate_prompt"])
             budget_usd = exp["budget_usd"]
 
-            # Clean up old state
+            # Archive and clean up old state
+            _archive_proposal(elmer_dir, exp, "retried")
             _cleanup_worktree(project_dir, exp)
             conn = state.get_db(elmer_dir)
             state.delete_exploration(conn, exp["id"])
@@ -475,6 +528,9 @@ def clean_all(elmer_dir: Path, project_dir: Path) -> int:
     cleaned = 0
     for exp in explorations:
         if exp["status"] in ("approved", "declined", "failed"):
+            # Archive proposal before cleanup
+            _archive_proposal(elmer_dir, exp, exp["status"])
+
             worktree_path = Path(exp["worktree_path"])
             if worktree_path.exists():
                 _cleanup_worktree(project_dir, exp)
