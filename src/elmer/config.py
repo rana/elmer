@@ -67,6 +67,12 @@ max_turns = 3
 inject = true                   # inject cross-project insights into prompts
 inject_limit = 5                # max insights to inject per exploration
 
+[ensemble]
+synthesis_model = "sonnet"
+synthesis_max_turns = 15
+# default_replicas = 3          # default replica count for --replicas
+# default_archetypes = ["explore", "devil-advocate", "dead-end-analysis"]
+
 [digest]
 model = "sonnet"
 max_turns = 5

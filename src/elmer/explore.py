@@ -19,12 +19,24 @@ def slugify(text: str, max_length: int = 60) -> str:
     return slug
 
 
-def _make_unique_slug(conn, base_slug: str) -> str:
-    """Append a counter if the slug already exists."""
-    if state.get_exploration(conn, base_slug) is None:
+def _make_unique_slug(conn, base_slug: str, elmer_dir: Path) -> str:
+    """Append a counter if the slug already exists in DB or archive.
+
+    Checks both the active database and the proposal archive directory.
+    After clean deletes DB records, archived proposals and logs persist —
+    without this check, a reused slug would overwrite them (ADR-032).
+    """
+    def _slug_exists(slug: str) -> bool:
+        if state.get_exploration(conn, slug) is not None:
+            return True
+        if (elmer_dir / "proposals" / f"{slug}.md").exists():
+            return True
+        return False
+
+    if not _slug_exists(base_slug):
         return base_slug
     counter = 2
-    while state.get_exploration(conn, f"{base_slug}-{counter}") is not None:
+    while _slug_exists(f"{base_slug}-{counter}"):
         counter += 1
     return f"{base_slug}-{counter}"
 
@@ -191,7 +203,7 @@ def start_exploration(
     base_slug = slugify(topic)
     if not base_slug:
         base_slug = "exploration"
-    slug = _make_unique_slug(conn, base_slug)
+    slug = _make_unique_slug(conn, base_slug, elmer_dir)
 
     branch = f"elmer/{slug}"
     worktree_path = elmer_dir / "worktrees" / slug
@@ -318,6 +330,87 @@ def start_exploration(
 
     conn.close()
     return slug, archetype
+
+
+def start_ensemble(
+    *,
+    topic: str,
+    replicas: int,
+    archetype: str,
+    model: str,
+    max_turns: int,
+    elmer_dir: Path,
+    project_dir: Path,
+    archetypes: Optional[list[str]] = None,
+    models: Optional[list[str]] = None,
+    auto_approve: bool = False,
+    generate_prompt: bool = False,
+    auto_archetype: bool = False,
+    budget_usd: Optional[float] = None,
+) -> list[tuple[str, str]]:
+    """Start an ensemble of N explorations on the same topic.
+
+    Returns list of (slug, archetype_used) for each replica.
+
+    archetypes: rotate through these archetypes for replicas.
+        If None, all replicas use the same archetype.
+    models: rotate through these models for replicas.
+        If None, all replicas use the same model.
+    budget_usd: total budget for the ensemble (divided by replicas + 1 for synthesis).
+    """
+    if replicas < 2:
+        raise RuntimeError("Ensemble requires at least 2 replicas.")
+
+    # Determine the ensemble_id from the topic slug
+    ensemble_id = slugify(topic) or "ensemble"
+    conn = state.get_db(elmer_dir)
+    ensemble_id = _make_unique_slug(conn, ensemble_id, elmer_dir)
+    conn.close()
+
+    # Budget: divide across replicas + 1 (reserve one share for synthesis)
+    per_replica_budget = None
+    if budget_usd is not None:
+        per_replica_budget = budget_usd / (replicas + 1)
+
+    results = []
+    for i in range(replicas):
+        # Rotate archetypes if provided
+        use_archetype = archetype
+        use_auto_archetype = auto_archetype
+        if archetypes:
+            use_archetype = archetypes[i % len(archetypes)]
+            use_auto_archetype = False  # explicit list overrides auto
+
+        # Rotate models if provided
+        use_model = model
+        if models:
+            use_model = models[i % len(models)]
+
+        slug, archetype_used = start_exploration(
+            topic=topic,
+            archetype=use_archetype,
+            model=use_model,
+            max_turns=max_turns,
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            auto_approve=False,  # replicas are never individually approved
+            generate_prompt=generate_prompt,
+            auto_archetype=use_auto_archetype,
+            budget_usd=per_replica_budget,
+        )
+
+        # Set ensemble metadata on the created exploration
+        conn = state.get_db(elmer_dir)
+        state.update_exploration(
+            conn, slug,
+            ensemble_id=ensemble_id,
+            ensemble_role="replica",
+        )
+        conn.close()
+
+        results.append((slug, archetype_used))
+
+    return results
 
 
 def launch_pending(

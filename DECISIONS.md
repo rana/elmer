@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-13 ADRs recorded.
+15 ADRs recorded.
 
 ## Domain Index
 
@@ -21,6 +21,8 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-028 | Process | Proposal amendment workflow |
 | ADR-029 | Git | PROPOSAL.md merge hygiene and approve_all resilience |
 | ADR-030 | Intelligence | Convergence digests and decline reasons |
+| ADR-031 | Process | Ensemble exploration and synthesis |
+| ADR-032 | Storage | Archive as source of truth for completed explorations |
 
 ---
 
@@ -198,3 +200,56 @@ The amend agent is editorial, not exploratory: it applies directed changes and r
 **Why this matters:** Without convergence, the autonomy loop is a random walk. Each exploration starts fresh from static project docs. The daemon can generate and approve work, but it doesn't learn between cycles — it can't tell that three explorations converged on the same bottleneck, or that every declined proposal was too broad. The digest is the slow feedback loop that turns the daemon from "busy" into "directed."
 
 **Alternatives considered:** Extending the insights system to handle synthesis (insights are per-proposal extractions, not cross-proposal synthesis — different operation), injecting all sibling proposal summaries into each new exploration (considered in CONTEXT.md and rejected: too noisy, dilutes topic focus, unbounded prompt growth), embedding-based semantic search across proposals (adds vector DB dependency), no explicit convergence — rely on the human to steer via topic generation (defeats the purpose of the autonomy loop).
+
+## ADR-031: Ensemble Exploration and Synthesis
+
+**Decision:** Add ensemble exploration — running N explorations of the same topic with independent Claude sessions, then synthesizing the proposals into a single consolidated result.
+
+**Core principle:** LLM non-determinism is noise in single runs but signal in aggregate. When multiple independent explorations converge on the same conclusion, that's a stronger signal than any single run. When they diverge, the divergence reveals genuine ambiguity. Ensemble synthesis exploits this by design.
+
+**Architecture:**
+
+1. **Schema.** Two new columns on `explorations`: `ensemble_id TEXT` (groups replicas and synthesis) and `ensemble_role TEXT` (`'replica'` or `'synthesis'`). No new tables — ensemble status is derived from component explorations.
+
+2. **CLI.** `elmer explore "topic" --replicas N` spawns N explorations with suffix slugs sharing an `ensemble_id`. `--archetypes explore,devil-advocate,dead-end-analysis` rotates archetypes per replica. `--models opus,sonnet,haiku` rotates models per replica. `elmer batch` gains the same flags, applying per topic.
+
+3. **Synthesis trigger.** In `_refresh_running()`, when a replica completes, check if all siblings are done. If so, automatically spawn the `elmer-meta-synthesize` agent on a new branch. The agent reads all replica PROPOSALs and writes a consolidated PROPOSAL.md. The synthesis enters the normal review queue.
+
+4. **Lifecycle cascade.** Approving a synthesis auto-declines and cleans up all replicas. Declining a synthesis declines all replicas. Replicas are hidden from `elmer review` — only synthesis proposals are presented for review. `approve --all` skips replicas.
+
+5. **Agent.** `elmer-meta-synthesize` is distinct from the digest agent. Digest does cross-topic convergence; synthesis does same-topic consolidation. The synthesis agent finds consensus, resolves contradictions, fills gaps, and preserves specificity from each proposal.
+
+6. **Daemon.** New step between harvest and gate: check for ready ensembles and trigger synthesis. Best-effort — synthesis failure never blocks the cycle.
+
+7. **MCP.** `elmer_explore` and `elmer_batch` tools gain `replicas`, `archetypes`, and `models` parameters.
+
+8. **Config.** `[ensemble]` section: `synthesis_model`, `synthesis_max_turns`, optional `default_replicas` and `default_archetypes`.
+
+**Key design choices:**
+
+- Default is same-archetype for all replicas (simple). `--archetypes` overrides for diversity. No magic rotation.
+- Budget is divided by N+1 (replicas + synthesis share).
+- Replicas are never individually approved — only the synthesis.
+- Each replica runs independently with no knowledge of others. Independence is the whole point.
+
+**Alternatives considered:** Running replicas sequentially and feeding each into the next (loses independence, becomes iterative refinement — that's what `elmer amend` does), best-of-N selection without synthesis (wastes the unique insights in non-selected proposals), a separate `ensembles` table with its own lifecycle (adds complexity — deriving status from components is sufficient), automatic ensemble for all explorations (wasteful — ensemble is for high-ambiguity topics where the extra cost is justified).
+
+## ADR-032: Archive as Source of Truth for Completed Explorations
+
+**Decision:** The proposal archive (`.elmer/proposals/`) becomes the source of truth for completed explorations. The SQLite database tracks only in-flight state. Three changes enforce this:
+
+1. **Auto-clean on approve and decline.** `approve_exploration()` and `decline_exploration()` now delete the DB record after archiving. The archive file — with its self-describing metadata header — is the permanent record. `--no-clean` flag retains the old behavior for inspection. `clean` becomes a garbage collector for failed explorations and crash recovery, not a required workflow step.
+
+2. **Archive-aware slug uniqueness.** `_make_unique_slug()` checks both the database and `.elmer/proposals/` for existing slugs. After clean deletes a DB record, the archive file prevents slug reuse. A re-explored topic gets `-2`, `-3`, etc., keeping IDs, branches, archives, and logs unique.
+
+3. **Archive-aware digest synthesis.** `digest.py` reads directly from archive metadata headers instead of cross-referencing with the DB. `_parse_archive_metadata()` extracts fields from the HTML comment header. `_read_approved_proposals()` and `_read_declined_proposals()` merge DB records (in-flight) with archive metadata (completed). `approvals_since_last_digest()` counts both sources. Digests now work correctly regardless of when `clean` runs.
+
+**Context:** Two bugs, one root cause. Bug 1: after `clean` deleted a DB record, re-exploring the same topic reused the slug and silently overwrote the archived proposal — data loss. Bug 2: digests iterated DB records to find archive files; after `clean`, those records were gone, so digests couldn't read archived proposals — silent data loss in convergence synthesis.
+
+The root cause was an inconsistent source of truth. The archive was designed to be permanent and self-describing (metadata header with id, topic, archetype, model, status), but the digest treated the DB as the only index. The archive had no reader that parsed its metadata — it was write-only.
+
+**Archive metadata now includes:** `id`, `topic`, `archetype`, `model`, `status`, `decline_reason` (if declined), `merged_at` (if approved), `completed_at`, `archived` (timestamp).
+
+**`clean` role change:** Previously required after approve/decline to free DB records and worktrees. Now reduced to maintenance: cleaning failed explorations, recovering from crashes, pruning orphaned worktrees. Projects that ran before ADR-032 have accumulated approved/declined records; `clean` handles those on next run.
+
+**Alternatives considered:** Soft delete (add `cleaned_at` column, filter in queries — preserves full DB history but touches every query), archive filenames with timestamps instead of IDs (collision-proof but breaks the ID-to-filename mapping that digests rely on), only fixing the archive overwrite without changing the digest (leaves the digest broken after clean).

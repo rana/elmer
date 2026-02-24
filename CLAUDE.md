@@ -6,7 +6,7 @@ Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, rules, conventions
 2. **CONTEXT.md** — project methodology, collaboration model, current state
 3. **DESIGN.md** — architecture, data model, module responsibilities
-4. **DECISIONS.md** — ADRs with full rationale (13 recorded)
+4. **DECISIONS.md** — ADRs with full rationale (15 recorded)
 5. **ROADMAP.md** — phase history and deferred features
 6. **README.md** — user-facing docs, install, full command reference
 7. **GUIDE.md** — practical usage playbook, workflows, patterns
@@ -31,13 +31,13 @@ Full options and examples in README.md. Core subcommands:
 | Command | Purpose |
 |---------|---------|
 | `elmer init` | Scaffold `.elmer/` in current project (`--docs`, `--skills`, `--agents`) |
-| `elmer explore "topic"` | Start exploration on a new branch (`-a`, `-m`, `--auto-approve`, `--budget`, etc.) |
-| `elmer batch FILE` | Spawn from `---`-separated topic list file (`--chain`, `--dry-run`, `--item`, `--max-concurrent`, `--stagger`) |
+| `elmer explore "topic"` | Start exploration on a new branch (`-a`, `-m`, `--auto-approve`, `--budget`, `--replicas`, `--archetypes`, `--models`) |
+| `elmer batch FILE` | Spawn from `---`-separated topic list file (`--chain`, `--dry-run`, `--item`, `--max-concurrent`, `--stagger`, `--replicas`) |
 | `elmer generate` | AI-generate research topics and spawn explorations (`--count`, `--follow-up`, `--dry-run`) |
 | `elmer status` | Show all explorations with state (`--all-projects` for dashboard) |
 | `elmer tree` | Exploration dependency tree |
 | `elmer review [ID]` | List pending proposals or show one (`--prioritize` for ranked review) |
-| `elmer approve ID` | Merge branch, cleanup (`--all`, `--auto-followup`, `--validate-invariants`) |
+| `elmer approve ID` | Merge branch, auto-clean (`--all`, `--auto-followup`, `--validate-invariants`, `--no-clean`) |
 | `elmer amend ID "feedback"` | Revise proposal in existing worktree (`-m`, `--max-turns`, `--budget`) |
 | `elmer decline ID [REASON]` | Discard branch, cleanup (optional reason feeds digest) |
 | `elmer digest` | Synthesize convergence digest from recent explorations (`--since`, `--topic`) |
@@ -51,7 +51,7 @@ Full options and examples in README.md. Core subcommands:
 | `elmer daemon` | Continuous operation (`--auto-approve --generate` for full autonomy) |
 | `elmer logs ID` | Session log diagnostics (`--raw` for JSON) |
 | `elmer pr ID` | Push branch, create GitHub PR |
-| `elmer clean` | Remove finished worktrees + state entries |
+| `elmer clean` | Remove failed/orphaned worktrees + state entries (garbage collection) |
 | `elmer mcp` | Start MCP server — 19 tools for Claude Code integration |
 
 ## Rules
@@ -122,4 +122,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-23, ADR-030 convergence digests and decline reasons (13 ADRs)*
+*Last updated: 2026-02-24, ADR-032 archive as source of truth (15 ADRs)*

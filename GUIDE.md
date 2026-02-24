@@ -391,6 +391,47 @@ elmer mine-questions --spawn           # explore everything
 elmer mine-questions --cluster "API"   # just one area
 ```
 
+**Ensemble exploration for high-stakes decisions.** When the answer really matters — architecture, strategy, irreversible changes — run the same topic through multiple independent lenses and let them synthesize:
+
+```bash
+# Three different archetypes on the same question
+elmer explore "should we adopt event sourcing" --replicas 3 \
+  --archetypes explore,devil-advocate,dead-end-analysis
+
+# Three different models for depth/breadth tradeoff
+elmer explore "auth architecture options" --replicas 3 \
+  --models opus,sonnet,haiku
+```
+
+The replicas run independently with no knowledge of each other. When all complete, a synthesis agent reads all proposals, finds consensus, resolves contradictions, and produces a single consolidated PROPOSAL.md that's strictly better than any individual run. Only the synthesis is presented for review — approve or decline it as a unit.
+
+Ensemble costs N+1× a single exploration (N replicas + synthesis). Use for decisions where getting it wrong is expensive enough to justify the cost.
+
+**Batch + ensemble.** `elmer batch` supports `--replicas`, `--archetypes`, and `--models` — each topic in the file becomes its own ensemble:
+
+```bash
+# 5-topic file × 3 replicas = 15 explorations + 5 syntheses
+elmer batch .elmer/explore-act.md --replicas 3
+
+# Each topic gets three archetype lenses
+elmer batch .elmer/explore-act.md --replicas 3 \
+  --archetypes explore,devil-advocate,dead-end-analysis
+```
+
+This combines well with `--max-concurrent` to throttle resource usage. Each ensemble triggers synthesis independently as its replicas complete.
+
+**Manual ensemble (zero-cost experiment).** Before committing to `--replicas`, try the manual workflow:
+
+```bash
+elmer explore "topic" -a explore
+elmer explore "topic" -a devil-advocate
+elmer explore "topic" -a dead-end-analysis
+# Wait for completion, then:
+elmer digest --topic "topic"
+```
+
+The digest isn't as tight as a proper synthesis, but it validates whether multi-lens analysis gives you better results.
+
 ## When to Use Elmer vs Claude Code Skills
 
 Elmer and Claude Code skills overlap in analysis methodology but serve different moments. Use both.

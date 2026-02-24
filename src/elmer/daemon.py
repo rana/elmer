@@ -24,6 +24,7 @@ from . import (
     generate as gen_mod,
     review,
     state,
+    synthesize as synth_mod,
     worker,
 )
 
@@ -103,27 +104,29 @@ def _log_cycle(
     generated: int = 0,
     audits: int = 0,
     digests: int = 0,
+    synthesized: int = 0,
     cycle_cost_usd: Optional[float] = None,
     error: Optional[str] = None,
 ) -> None:
     """Record a daemon cycle in the daemon_log table."""
     conn = state.get_db(elmer_dir)
 
-    # Ensure digests column exists (migration for existing DBs)
-    try:
-        conn.execute("ALTER TABLE daemon_log ADD COLUMN digests INTEGER DEFAULT 0")
-    except Exception:
-        pass  # Column already exists
+    # Ensure columns exist (migration for existing DBs)
+    for col in ["digests", "synthesized"]:
+        try:
+            conn.execute(f"ALTER TABLE daemon_log ADD COLUMN {col} INTEGER DEFAULT 0")
+        except Exception:
+            pass  # Column already exists
 
     conn.execute(
         """
         INSERT INTO daemon_log
             (cycle_number, started_at, completed_at, harvested, approved,
-             scheduled, generated, audits, digests, cycle_cost_usd, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             scheduled, generated, audits, digests, synthesized, cycle_cost_usd, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (cycle_number, started_at, state._now(), harvested, approved,
-         scheduled, generated, audits, digests, cycle_cost_usd, error),
+         scheduled, generated, audits, digests, synthesized, cycle_cost_usd, error),
     )
     conn.commit()
     conn.close()
@@ -279,7 +282,7 @@ def _run_cycle(
     audit_schedule: Optional[list[tuple[str, str]]] = None,
 ) -> dict:
     """Execute one daemon cycle. Returns stats dict."""
-    stats = {"harvested": 0, "approved": 0, "scheduled": 0, "generated": 0, "audits": 0, "digests": 0}
+    stats = {"harvested": 0, "approved": 0, "scheduled": 0, "generated": 0, "audits": 0, "digests": 0, "synthesized": 0}
 
     # Step 1: Harvest — check running PIDs, mark done/failed
     conn = state.get_db(elmer_dir)
@@ -294,6 +297,19 @@ def _run_cycle(
     stats["harvested"] = max(0, running_before - running_after)
     if stats["harvested"]:
         logger.info("Harvested %d completed exploration(s)", stats["harvested"])
+
+    # Step 1.5: Synthesize — trigger ensemble synthesis for ready ensembles
+    # (Note: _refresh_running already triggers synthesis, but this catches any
+    # that were missed or where the trigger failed on a previous cycle)
+    try:
+        synthesized = synth_mod.trigger_ready_ensembles(
+            elmer_dir, project_dir, notify=logger.info,
+        )
+        stats["synthesized"] = len(synthesized)
+        if synthesized:
+            logger.info("Triggered %d ensemble synthesis(es)", len(synthesized))
+    except Exception as e:
+        logger.warning("Ensemble synthesis check failed: %s", e)
 
     # Step 2: Gate — auto-approve remaining done explorations
     # (_refresh_running already handles explorations flagged with auto_approve;

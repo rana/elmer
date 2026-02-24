@@ -3,8 +3,14 @@
 Reads the proposal archive and decline reasons, calls claude -p with
 the digest meta-agent, and stores the result in .elmer/digests/.
 Digests feed into topic generation and the daemon loop.
+
+The archive is the source of truth for completed explorations (ADR-032).
+After clean deletes DB records, the archive metadata (HTML comment header)
+provides all fields needed for digest synthesis. The DB is still consulted
+for in-flight explorations.
 """
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -35,10 +41,11 @@ def run_digest(
     explorations = state.list_explorations(conn)
     conn.close()
 
-    # Build context sections
-    history = _format_history(explorations)
-    approved_text = _read_approved_proposals(elmer_dir, explorations, since=since, topic_filter=topic_filter)
-    declined_text = _read_declined_proposals(explorations, since=since, topic_filter=topic_filter)
+    # Build context from both DB (in-flight) and archive (completed)
+    archived = _load_archived_proposals(elmer_dir)
+    history = _format_history(explorations, archived)
+    approved_text = _read_approved_proposals(elmer_dir, explorations, archived, since=since, topic_filter=topic_filter)
+    declined_text = _read_declined_proposals(explorations, archived, since=since, topic_filter=topic_filter)
     previous_digest = _read_latest_digest(elmer_dir)
 
     # Build prompt
@@ -97,62 +104,124 @@ def approvals_since_last_digest(elmer_dir: Path) -> int:
     """Count explorations approved since the most recent digest.
 
     Used by the daemon to decide when to trigger a synthesis cycle.
-    Returns the count of approved explorations with merged_at after
-    the latest digest timestamp, or total approved if no digest exists.
+    Checks both DB records and archive metadata (ADR-032) so that
+    cleaned records are still counted.
     """
+    last_digest_ts = _get_last_digest_timestamp(elmer_dir)
+
+    # Count from DB (in-flight records)
+    conn = state.get_db(elmer_dir)
+    if last_digest_ts:
+        db_count = conn.execute(
+            "SELECT COUNT(*) FROM explorations WHERE status = 'approved' AND merged_at > ?",
+            (last_digest_ts,),
+        ).fetchone()[0]
+    else:
+        db_count = conn.execute(
+            "SELECT COUNT(*) FROM explorations WHERE status = 'approved'"
+        ).fetchone()[0]
+
+    # Collect DB IDs to avoid double-counting
+    db_ids = {r["id"] for r in conn.execute(
+        "SELECT id FROM explorations WHERE status = 'approved'"
+    ).fetchall()}
+    conn.close()
+
+    # Count from archive (cleaned records)
+    archive_count = 0
+    for meta in _load_archived_proposals(elmer_dir):
+        if meta.get("id") in db_ids:
+            continue
+        if meta.get("status") != "approved":
+            continue
+        if last_digest_ts and meta.get("merged_at", meta.get("archived", "")) <= last_digest_ts:
+            continue
+        archive_count += 1
+
+    return db_count + archive_count
+
+
+def _get_last_digest_timestamp(elmer_dir: Path) -> Optional[str]:
+    """Extract the ISO timestamp of the most recent digest, or None."""
     digests_dir = elmer_dir / "digests"
     if not digests_dir.exists():
-        # No digests yet — count all approved
-        conn = state.get_db(elmer_dir)
-        count = conn.execute(
-            "SELECT COUNT(*) FROM explorations WHERE status = 'approved'"
-        ).fetchone()[0]
-        conn.close()
-        return count
+        return None
 
-    # Find the most recent digest by filename (ISO timestamp)
     digest_files = sorted(digests_dir.glob("digest-*.md"), reverse=True)
     if not digest_files:
-        conn = state.get_db(elmer_dir)
-        count = conn.execute(
-            "SELECT COUNT(*) FROM explorations WHERE status = 'approved'"
-        ).fetchone()[0]
-        conn.close()
-        return count
+        return None
 
     # Extract timestamp from filename: digest-YYYY-MM-DDTHH-MM-SS.md
-    latest_name = digest_files[0].stem  # digest-2026-02-23T14-30-00
-    ts_part = latest_name.replace("digest-", "")
-    # Convert filename timestamp back to ISO format
-    last_digest_ts = ts_part.replace("-", ":", 2)  # Only first two dashes stay
-    # More careful: the filename format is digest-YYYY-MM-DDTHH-MM-SS
-    # We need to convert back to YYYY-MM-DDTHH:MM:SS
+    ts_part = digest_files[0].stem.replace("digest-", "")
     parts = ts_part.split("T")
     if len(parts) == 2:
         date_part = parts[0]  # YYYY-MM-DD
         time_part = parts[1].replace("-", ":")  # HH:MM:SS
-        last_digest_ts = f"{date_part}T{time_part}"
-    else:
-        last_digest_ts = ts_part
+        return f"{date_part}T{time_part}"
+    return ts_part
 
-    conn = state.get_db(elmer_dir)
-    count = conn.execute(
-        "SELECT COUNT(*) FROM explorations WHERE status = 'approved' AND merged_at > ?",
-        (last_digest_ts,),
-    ).fetchone()[0]
-    conn.close()
-    return count
+
+# --- Archive metadata parsing ---
+
+
+def _parse_archive_metadata(path: Path) -> Optional[dict]:
+    """Parse the HTML comment metadata header from an archived proposal.
+
+    Returns a dict with keys: id, topic, archetype, model, status,
+    decline_reason, merged_at, completed_at, archived. Returns None
+    if the file has no parseable metadata header.
+    """
+    try:
+        content = path.read_text()
+    except Exception:
+        return None
+
+    match = re.match(r"<!--\s*elmer:archive\s*\n(.*?)-->", content, re.DOTALL)
+    if not match:
+        return None
+
+    meta: dict = {"_content": content, "_path": path}
+    for line in match.group(1).strip().splitlines():
+        line = line.strip()
+        if ":" in line:
+            key, _, value = line.partition(":")
+            meta[key.strip()] = value.strip()
+    return meta
+
+
+def _load_archived_proposals(elmer_dir: Path) -> list[dict]:
+    """Load all archived proposals with their metadata.
+
+    Returns a list of metadata dicts, each including _content (full file)
+    and _path. This is the archive's equivalent of state.list_explorations().
+    """
+    proposals_dir = elmer_dir / "proposals"
+    if not proposals_dir.exists():
+        return []
+
+    results = []
+    for path in sorted(proposals_dir.glob("*.md")):
+        meta = _parse_archive_metadata(path)
+        if meta:
+            results.append(meta)
+    return results
 
 
 # --- Internal helpers ---
 
 
-def _format_history(explorations: list) -> str:
-    """Format all explorations as a status list for the prompt."""
-    if not explorations:
-        return ""
+def _format_history(explorations: list, archived: list[dict]) -> str:
+    """Format all explorations as a status list for the prompt.
+
+    Merges in-flight DB records with archived completed records.
+    Deduplicates by ID (DB takes precedence for active explorations).
+    """
+    seen_ids: set[str] = set()
     lines = []
+
+    # DB records first (in-flight and recently completed)
     for exp in explorations:
+        seen_ids.add(exp["id"])
         reason = ""
         try:
             if exp["status"] == "declined" and exp["decline_reason"]:
@@ -160,51 +229,98 @@ def _format_history(explorations: list) -> str:
         except (IndexError, KeyError):
             pass
         lines.append(f"- [{exp['status']}] {exp['topic']}{reason}")
-    return "\n".join(lines)
+
+    # Archived records (completed explorations that may have been cleaned from DB)
+    for meta in archived:
+        aid = meta.get("id", "")
+        if aid in seen_ids:
+            continue
+        seen_ids.add(aid)
+        status = meta.get("status", "unknown")
+        topic = meta.get("topic", aid)
+        reason = ""
+        if status == "declined" and meta.get("decline_reason"):
+            reason = f" (reason: {meta['decline_reason']})"
+        lines.append(f"- [{status}] {topic}{reason}")
+
+    return "\n".join(lines) if lines else ""
 
 
 def _read_approved_proposals(
     elmer_dir: Path,
     explorations: list,
+    archived: list[dict],
     *,
     since: Optional[str] = None,
     topic_filter: Optional[str] = None,
 ) -> str:
-    """Read archived proposals for approved explorations."""
+    """Read approved proposals from both DB records and archive.
+
+    The archive is the source of truth for completed explorations (ADR-032).
+    DB records are checked first; archive fills in anything cleaned from DB.
+    """
     proposals_dir = elmer_dir / "proposals"
-    if not proposals_dir.exists():
-        return ""
-
+    seen_ids: set[str] = set()
     sections = []
-    for exp in explorations:
-        if exp["status"] != "approved":
+
+    # From DB records (still in database)
+    if proposals_dir.exists():
+        for exp in explorations:
+            if exp["status"] != "approved":
+                continue
+            if since and exp["merged_at"] and exp["merged_at"] < since:
+                continue
+            if topic_filter and topic_filter.lower() not in exp["topic"].lower():
+                continue
+
+            seen_ids.add(exp["id"])
+            archive_path = proposals_dir / f"{exp['id']}.md"
+            if archive_path.exists():
+                content = archive_path.read_text()
+                if len(content) > 3000:
+                    content = content[:3000] + "\n\n[...truncated...]"
+                sections.append(
+                    f"### {exp['topic']} ({exp['archetype']})\n\n{content}"
+                )
+
+    # From archive (cleaned from DB but archive persists)
+    for meta in archived:
+        aid = meta.get("id", "")
+        if aid in seen_ids:
             continue
-        if since and exp["merged_at"] and exp["merged_at"] < since:
+        if meta.get("status") != "approved":
             continue
-        if topic_filter and topic_filter.lower() not in exp["topic"].lower():
+        if since and meta.get("merged_at") and meta["merged_at"] < since:
+            continue
+        topic = meta.get("topic", aid)
+        if topic_filter and topic_filter.lower() not in topic.lower():
             continue
 
-        archive_path = proposals_dir / f"{exp['id']}.md"
-        if archive_path.exists():
-            content = archive_path.read_text()
-            # Truncate very long proposals to keep prompt manageable
-            if len(content) > 3000:
-                content = content[:3000] + "\n\n[...truncated...]"
-            sections.append(
-                f"### {exp['topic']} ({exp['archetype']})\n\n{content}"
-            )
+        seen_ids.add(aid)
+        content = meta.get("_content", "")
+        if len(content) > 3000:
+            content = content[:3000] + "\n\n[...truncated...]"
+        archetype = meta.get("archetype", "unknown")
+        sections.append(f"### {topic} ({archetype})\n\n{content}")
 
     return "\n\n---\n\n".join(sections) if sections else ""
 
 
 def _read_declined_proposals(
     explorations: list,
+    archived: list[dict],
     *,
     since: Optional[str] = None,
     topic_filter: Optional[str] = None,
 ) -> str:
-    """Format declined explorations with their reasons."""
+    """Format declined explorations with their reasons.
+
+    Merges DB records with archive metadata for cleaned records.
+    """
+    seen_ids: set[str] = set()
     lines = []
+
+    # From DB
     for exp in explorations:
         if exp["status"] != "declined":
             continue
@@ -213,6 +329,7 @@ def _read_declined_proposals(
         if topic_filter and topic_filter.lower() not in exp["topic"].lower():
             continue
 
+        seen_ids.add(exp["id"])
         reason = ""
         try:
             reason = exp["decline_reason"] or ""
@@ -223,6 +340,26 @@ def _read_declined_proposals(
             lines.append(f"- **{exp['topic']}** — declined: {reason}")
         else:
             lines.append(f"- **{exp['topic']}** — declined (no reason recorded)")
+
+    # From archive
+    for meta in archived:
+        aid = meta.get("id", "")
+        if aid in seen_ids:
+            continue
+        if meta.get("status") != "declined":
+            continue
+        topic = meta.get("topic", aid)
+        if since and meta.get("completed_at") and meta["completed_at"] < since:
+            continue
+        if topic_filter and topic_filter.lower() not in topic.lower():
+            continue
+
+        seen_ids.add(aid)
+        reason = meta.get("decline_reason", "")
+        if reason:
+            lines.append(f"- **{topic}** — declined: {reason}")
+        else:
+            lines.append(f"- **{topic}** — declined (no reason recorded)")
 
     return "\n".join(lines) if lines else ""
 

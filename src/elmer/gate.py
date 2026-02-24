@@ -10,7 +10,7 @@ from typing import Optional
 
 import click
 
-from . import config, explore as explore_mod, generate as gen_mod, insights, state, worker, worktree
+from . import config, explore as explore_mod, generate as gen_mod, insights, state, synthesize as synth_mod, worker, worktree
 
 
 def _archive_proposal(
@@ -40,6 +40,8 @@ def _archive_proposal(
         # Prepend metadata as HTML comment (invisible in rendered markdown)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         reason_line = f"  decline_reason: {decline_reason}\n" if decline_reason else ""
+        merged_line = f"  merged_at: {exp['merged_at']}\n" if exp.get("merged_at") else ""
+        completed_line = f"  completed_at: {exp['completed_at']}\n" if exp.get("completed_at") else ""
         meta = (
             f"<!-- elmer:archive\n"
             f"  id: {exp['id']}\n"
@@ -48,6 +50,8 @@ def _archive_proposal(
             f"  model: {exp['model']}\n"
             f"  status: {final_status}\n"
             f"{reason_line}"
+            f"{merged_line}"
+            f"{completed_line}"
             f"  archived: {now}\n"
             f"-->\n\n"
         )
@@ -116,9 +120,14 @@ def approve_exploration(
     followup_count: int = 3,
     followup_model: Optional[str] = None,
     followup_auto_approve: bool = False,
+    no_clean: bool = False,
     notify=None,
 ) -> None:
     """Approve an exploration: merge its branch and clean up.
+
+    By default, deletes the DB record after approval (ADR-032). The
+    archive at .elmer/proposals/ is the permanent record. Use no_clean=True
+    to keep the DB record for inspection.
 
     If auto_followup is True, generates follow-up topics and spawns
     them as new explorations after the merge.
@@ -197,6 +206,30 @@ def approve_exploration(
         status="approved",
         merged_at=datetime.now(timezone.utc).isoformat(),
     )
+
+    # Ensemble cascade: when approving a synthesis, cleanup all replicas
+    ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
+    ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
+    if ens_role == "synthesis" and ens_id:
+        replicas = state.get_ensemble_replicas(conn, ens_id)
+        for replica in replicas:
+            if replica["status"] not in ("approved", "declined"):
+                _archive_proposal(elmer_dir, replica, "declined",
+                                  decline_reason="Ensemble synthesis approved")
+                _cleanup_worktree(project_dir, replica)
+                state.update_exploration(
+                    conn, replica["id"],
+                    status="declined",
+                    decline_reason="Ensemble synthesis approved",
+                )
+                if not no_clean:
+                    state.delete_exploration(conn, replica["id"])
+                notify(f"  Cleaned up replica: {replica['id']}")
+
+    # Auto-clean: remove DB record (archive is the permanent record — ADR-032)
+    if not no_clean:
+        state.delete_exploration(conn, exploration_id)
+
     conn.close()
 
     # Schedule any pending explorations that were waiting on this one
@@ -244,13 +277,15 @@ def approve_exploration(
 
 def decline_exploration(
     elmer_dir: Path, project_dir: Path, exploration_id: str, *,
-    reason: Optional[str] = None, notify=None,
+    reason: Optional[str] = None, no_clean: bool = False, notify=None,
 ) -> None:
     """Decline an exploration: delete branch and clean up.
 
-    If reason is provided, it is stored in the decline_reason column
-    and included in the archive metadata. Decline reasons feed into
-    digest synthesis and future topic generation.
+    By default, deletes the DB record after declining (ADR-032). The
+    archive at .elmer/proposals/ is the permanent record.
+
+    If reason is provided, it is stored in the archive metadata.
+    Decline reasons feed into digest synthesis and future topic generation.
     """
     if notify is None:
         notify = click.echo
@@ -276,7 +311,32 @@ def decline_exploration(
         update_fields["decline_reason"] = reason
     state.update_exploration(conn, exploration_id, **update_fields)
 
+    # Ensemble cascade: when declining a synthesis, decline all replicas too
+    ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
+    ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
+    if ens_role == "synthesis" and ens_id:
+        replicas = state.get_ensemble_replicas(conn, ens_id)
+        cascade_reason = reason or "Ensemble synthesis declined"
+        for replica in replicas:
+            if replica["status"] not in ("approved", "declined"):
+                _archive_proposal(elmer_dir, replica, "declined",
+                                  decline_reason=cascade_reason)
+                _cleanup_worktree(project_dir, replica)
+                state.update_exploration(
+                    conn, replica["id"],
+                    status="declined",
+                    decline_reason=cascade_reason,
+                )
+                if not no_clean:
+                    state.delete_exploration(conn, replica["id"])
+                notify(f"  Cleaned up replica: {replica['id']}")
+
     _warn_orphaned_dependents(conn, exploration_id, notify=notify)
+
+    # Auto-clean: remove DB record (archive is the permanent record — ADR-032)
+    if not no_clean:
+        state.delete_exploration(conn, exploration_id)
+
     conn.close()
 
     # Execute on_decline chain action
@@ -396,20 +456,29 @@ def approve_all(
     auto_followup: bool = False,
     followup_count: int = 3,
     followup_auto_approve: bool = False,
+    no_clean: bool = False,
 ) -> list[str]:
     """Approve all explorations with status 'done'. Returns list of approved IDs."""
     conn = state.get_db(elmer_dir)
     explorations = state.list_explorations(conn, status="done")
     conn.close()
 
+    # Skip ensemble replicas — only approve synthesis or standalone
+    reviewable = [
+        exp for exp in explorations
+        if not (exp["ensemble_role"] == "replica"
+                if "ensemble_role" in exp.keys() else False)
+    ]
+
     approved = []
-    for exp in explorations:
+    for exp in reviewable:
         try:
             approve_exploration(
                 elmer_dir, project_dir, exp["id"],
                 auto_followup=auto_followup,
                 followup_count=followup_count,
                 followup_auto_approve=followup_auto_approve,
+                no_clean=no_clean,
             )
             approved.append(exp["id"])
         except SystemExit:
@@ -453,6 +522,10 @@ def retry_exploration(
     generate_prompt = bool(exp["generate_prompt"])
     budget_usd = exp["budget_usd"]
 
+    # Preserve ensemble metadata for retry
+    ensemble_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
+    ensemble_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
+
     # Archive proposal before cleanup (failed explorations may still have partial output)
     _archive_proposal(elmer_dir, exp, "retried")
 
@@ -461,18 +534,39 @@ def retry_exploration(
     state.delete_exploration(conn, exploration_id)
     conn.close()
 
-    # Re-spawn with the same parameters
-    slug, _ = explore_mod.start_exploration(
-        topic=topic,
-        archetype=archetype,
-        model=model,
-        max_turns=max_turns,
-        elmer_dir=elmer_dir,
-        project_dir=project_dir,
-        auto_approve=auto_approve,
-        generate_prompt=generate_prompt,
-        budget_usd=budget_usd,
-    )
+    # Re-spawn: synthesis retries re-trigger synthesize_ensemble(),
+    # replica/standalone retries use start_exploration()
+    if ensemble_role == "synthesis" and ensemble_id:
+        slug = synth_mod.synthesize_ensemble(
+            ensemble_id=ensemble_id,
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=model,
+            max_turns=max_turns,
+        )
+    else:
+        slug, _ = explore_mod.start_exploration(
+            topic=topic,
+            archetype=archetype,
+            model=model,
+            max_turns=max_turns,
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            auto_approve=auto_approve,
+            generate_prompt=generate_prompt,
+            budget_usd=budget_usd,
+        )
+
+        # Restore ensemble membership on the new exploration
+        if ensemble_id and ensemble_role:
+            conn = state.get_db(elmer_dir)
+            state.update_exploration(
+                conn, slug,
+                ensemble_id=ensemble_id,
+                ensemble_role=ensemble_role,
+            )
+            conn.close()
+
     return slug
 
 
@@ -518,6 +612,10 @@ def retry_all_failed(
             generate_prompt = bool(exp["generate_prompt"])
             budget_usd = exp["budget_usd"]
 
+            # Preserve ensemble metadata for retry
+            ensemble_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
+            ensemble_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
+
             # Archive and clean up old state
             _archive_proposal(elmer_dir, exp, "retried")
             _cleanup_worktree(project_dir, exp)
@@ -525,18 +623,40 @@ def retry_all_failed(
             state.delete_exploration(conn, exp["id"])
             conn.close()
 
-            slug, _ = explore_mod.start_exploration(
-                topic=topic,
-                archetype=archetype,
-                model=model,
-                max_turns=max_turns,
-                elmer_dir=elmer_dir,
-                project_dir=project_dir,
-                depends_on=dep_list,
-                auto_approve=auto_approve,
-                generate_prompt=generate_prompt,
-                budget_usd=budget_usd,
-            )
+            # Synthesis retries re-trigger synthesize_ensemble();
+            # replica/standalone retries use start_exploration()
+            if ensemble_role == "synthesis" and ensemble_id:
+                slug = synth_mod.synthesize_ensemble(
+                    ensemble_id=ensemble_id,
+                    elmer_dir=elmer_dir,
+                    project_dir=project_dir,
+                    model=model,
+                    max_turns=max_turns,
+                )
+            else:
+                slug, _ = explore_mod.start_exploration(
+                    topic=topic,
+                    archetype=archetype,
+                    model=model,
+                    max_turns=max_turns,
+                    elmer_dir=elmer_dir,
+                    project_dir=project_dir,
+                    depends_on=dep_list,
+                    auto_approve=auto_approve,
+                    generate_prompt=generate_prompt,
+                    budget_usd=budget_usd,
+                )
+
+                # Restore ensemble membership on the retried exploration
+                if ensemble_id and ensemble_role:
+                    conn = state.get_db(elmer_dir)
+                    state.update_exploration(
+                        conn, slug,
+                        ensemble_id=ensemble_id,
+                        ensemble_role=ensemble_role,
+                    )
+                    conn.close()
+
             retried.append(slug)
             if dep_list:
                 notify(f"Queued:   {slug} (waiting for {dep_list[0]})")

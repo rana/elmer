@@ -9,7 +9,15 @@ from typing import Callable, Optional
 
 import click
 
-from . import autoapprove, explore as explore_mod, state, worker, worktree as wt_mod
+from . import autoapprove, explore as explore_mod, state, synthesize as synth_mod, worker, worktree as wt_mod
+
+
+def _is_ensemble_replica(exp) -> bool:
+    """Check if an exploration is an ensemble replica (not synthesis, not standalone)."""
+    try:
+        return exp["ensemble_role"] == "replica"
+    except (KeyError, IndexError):
+        return False
 
 
 def _term_width() -> int:
@@ -268,6 +276,14 @@ def _refresh_running(
         for slug in launched:
             notify(f"Unblocked and started: {slug}")
 
+        # Trigger ensemble synthesis for any ensembles where all replicas are done
+        try:
+            synthesized = synth_mod.trigger_ready_ensembles(
+                elmer_dir, project_dir, notify=notify,
+            )
+        except Exception:
+            pass  # Best-effort — never block the refresh
+
 
 def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
     """Display status of all explorations."""
@@ -302,14 +318,49 @@ def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
     click.echo(f"{'ID':<{id_w}} {'STATUS':<10} {'ARCHETYPE':<14} {'MODEL':<8} {'AGE':<6}")
     click.echo("-" * total_w)
 
+    # Group ensemble members for display
+    seen_ensembles: set[str] = set()
+
     for exp in explorations:
+        ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
+        ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
+
+        # Ensemble header — print once when we first encounter an ensemble
+        if ens_id and ens_id not in seen_ensembles:
+            seen_ensembles.add(ens_id)
+            conn2 = state.get_db(elmer_dir)
+            ens_status = state.get_ensemble_status(conn2, ens_id)
+            replicas = state.get_ensemble_replicas(conn2, ens_id)
+            conn2.close()
+            click.echo(
+                f"  {'ENSEMBLE: ' + ens_id:<{id_w - 2}} "
+                f"{ens_status:<10} "
+                f"{'':<14} {'':<8} "
+                f"{len(replicas)} replica(s)"
+            )
+
         icon = status_icons.get(exp["status"], " ")
         age = _age(exp["created_at"])
-        eid = _truncate(exp["id"], id_w - 2)  # -2 for icon + space
-        click.echo(
-            f"{icon} {eid:<{id_w - 2}} {exp['status']:<10} "
-            f"{exp['archetype']:<14} {exp['model']:<8} {age:<6}"
-        )
+
+        if ens_role == "replica":
+            # Indent replicas under their ensemble header
+            eid = _truncate(exp["id"], id_w - 4)
+            click.echo(
+                f"  {icon} {eid:<{id_w - 4}} {exp['status']:<10} "
+                f"{exp['archetype']:<14} {exp['model']:<8} {age:<6}"
+            )
+        elif ens_role == "synthesis":
+            eid = _truncate(exp["id"], id_w - 4)
+            click.echo(
+                f"  {icon} {eid:<{id_w - 4}} {exp['status']:<10} "
+                f"{'[synthesis]':<14} {exp['model']:<8} {age:<6}"
+            )
+        else:
+            eid = _truncate(exp["id"], id_w - 2)
+            click.echo(
+                f"{icon} {eid:<{id_w - 2}} {exp['status']:<10} "
+                f"{exp['archetype']:<14} {exp['model']:<8} {age:<6}"
+            )
 
     # Legend
     click.echo()
@@ -317,14 +368,23 @@ def show_status(elmer_dir: Path, project_dir: Path = None) -> None:
 
 
 def list_proposals(elmer_dir: Path) -> None:
-    """List explorations that have proposals ready for review."""
+    """List explorations that have proposals ready for review.
+
+    Ensemble replicas are hidden — only synthesis proposals are shown.
+    """
     _refresh_running(elmer_dir)
 
     conn = state.get_db(elmer_dir)
     explorations = state.list_explorations(conn, status="done")
     conn.close()
 
-    if not explorations:
+    # Filter out ensemble replicas — only synthesis and standalone proposals
+    reviewable = [
+        exp for exp in explorations
+        if not _is_ensemble_replica(exp)
+    ]
+
+    if not reviewable:
         click.echo("No proposals pending review.")
         return
 
@@ -335,12 +395,12 @@ def list_proposals(elmer_dir: Path) -> None:
     click.echo(f"{'ID':<{id_w}} {'TOPIC':<{topic_w}}")
     click.echo("-" * tw)
 
-    for exp in explorations:
+    for exp in reviewable:
         eid = _truncate(exp["id"], id_w - 2)  # -2 for leading indent
         topic = _truncate(exp["topic"], topic_w)
         click.echo(f"  {eid:<{id_w - 2}} {topic}")
 
-    click.echo(f"\n{len(explorations)} proposal(s) ready for review.")
+    click.echo(f"\n{len(reviewable)} proposal(s) ready for review.")
     click.echo("Use 'elmer review <id>' to read a proposal.")
 
 

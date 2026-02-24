@@ -114,6 +114,11 @@ elmer explore "topic" --budget 2.00    # Cap cost at $2
 elmer explore "topic" --on-approve "elmer generate --follow-up \$ID"  # Chain on approval
 elmer explore "topic" --on-decline "elmer explore 'alternative to \$TOPIC'"  # Chain on declining
 
+# Ensemble exploration — run same topic N times, synthesize into one proposal
+elmer explore "topic" --replicas 3                                   # 3 independent runs, auto-synthesize
+elmer explore "topic" --replicas 3 --archetypes explore,devil-advocate,dead-end-analysis  # Different lenses
+elmer explore "topic" --replicas 3 --models opus,sonnet,haiku        # Different models
+
 # Decline with reasons (feeds digest synthesis)
 elmer decline ID "too broad — focus on JWT validation only"
 elmer decline ID "already addressed by exploration X"
@@ -151,6 +156,7 @@ elmer batch .elmer/explore-act.md --budget 10  # $10 divided across topics
 elmer batch .elmer/explore-act.md --auto-approve --chain  # Fully autonomous pipeline
 elmer batch .elmer/explore-act.md --max-concurrent 3  # Only 3 run at once, rest queued
 elmer batch .elmer/explore-act.md --stagger 5         # 5s delay between spawns
+elmer batch .elmer/explore-act.md --replicas 3        # Ensemble: 3 replicas per topic
 
 # Retry failed explorations
 elmer retry my-exploration-id         # Retry one failed exploration

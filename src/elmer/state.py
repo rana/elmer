@@ -50,7 +50,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                          ("budget_usd", "REAL"),
                          ("on_approve", "TEXT"),
                          ("on_decline", "TEXT"),
-                         ("decline_reason", "TEXT")]:
+                         ("decline_reason", "TEXT"),
+                         ("ensemble_id", "TEXT"),
+                         ("ensemble_role", "TEXT")]:
         try:
             conn.execute(f"ALTER TABLE explorations ADD COLUMN {col} {coltype}")
         except sqlite3.OperationalError:
@@ -127,18 +129,20 @@ def create_exploration(
     budget_usd: Optional[float] = None,
     on_approve: Optional[str] = None,
     on_decline: Optional[str] = None,
+    ensemble_id: Optional[str] = None,
+    ensemble_role: Optional[str] = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO explorations
             (id, topic, archetype, branch, worktree_path, status, model, pid,
              created_at, parent_id, max_turns, auto_approve, generate_prompt,
-             budget_usd, on_approve, on_decline)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             budget_usd, on_approve, on_decline, ensemble_id, ensemble_role)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (id, topic, archetype, branch, worktree_path, status, model, pid,
          _now(), parent_id, max_turns, int(auto_approve), int(generate_prompt),
-         budget_usd, on_approve, on_decline),
+         budget_usd, on_approve, on_decline, ensemble_id, ensemble_role),
     )
     conn.commit()
 
@@ -273,3 +277,71 @@ def get_all_costs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM costs ORDER BY created_at"
     ).fetchall()
+
+
+# --- Ensemble helpers ---
+
+
+def get_ensemble_replicas(conn: sqlite3.Connection, ensemble_id: str) -> list[sqlite3.Row]:
+    """Get all replicas for an ensemble (excludes synthesis)."""
+    return conn.execute(
+        "SELECT * FROM explorations WHERE ensemble_id = ? AND ensemble_role = 'replica' ORDER BY created_at",
+        (ensemble_id,),
+    ).fetchall()
+
+
+def get_ensemble_synthesis(conn: sqlite3.Connection, ensemble_id: str) -> Optional[sqlite3.Row]:
+    """Get the synthesis exploration for an ensemble, if it exists."""
+    return conn.execute(
+        "SELECT * FROM explorations WHERE ensemble_id = ? AND ensemble_role = 'synthesis'",
+        (ensemble_id,),
+    ).fetchone()
+
+
+def get_ready_ensembles(conn: sqlite3.Connection) -> list[str]:
+    """Get ensemble IDs where all replicas are done/failed but no synthesis exists yet.
+
+    An ensemble is ready to synthesize when:
+    - All replicas have finished (done or failed)
+    - At least one replica succeeded (done)
+    - No synthesis exploration exists yet
+    """
+    rows = conn.execute("""
+        SELECT DISTINCT e.ensemble_id
+        FROM explorations e
+        WHERE e.ensemble_id IS NOT NULL
+          AND e.ensemble_role = 'replica'
+          AND NOT EXISTS (
+              SELECT 1 FROM explorations s
+              WHERE s.ensemble_id = e.ensemble_id AND s.ensemble_role = 'synthesis'
+          )
+        GROUP BY e.ensemble_id
+        HAVING COUNT(*) = SUM(CASE WHEN e.status IN ('done', 'failed') THEN 1 ELSE 0 END)
+           AND SUM(CASE WHEN e.status = 'done' THEN 1 ELSE 0 END) > 0
+    """).fetchall()
+    return [r["ensemble_id"] for r in rows]
+
+
+def get_ensemble_status(conn: sqlite3.Connection, ensemble_id: str) -> str:
+    """Derive ensemble status from component explorations."""
+    synthesis = get_ensemble_synthesis(conn, ensemble_id)
+    if synthesis:
+        if synthesis["status"] == "approved":
+            return "approved"
+        if synthesis["status"] == "declined":
+            return "declined"
+        if synthesis["status"] == "done":
+            return "review"
+        if synthesis["status"] in ("running", "amending"):
+            return "synthesizing"
+
+    replicas = get_ensemble_replicas(conn, ensemble_id)
+    if not replicas:
+        return "unknown"
+    if all(r["status"] in ("done", "failed") for r in replicas):
+        if any(r["status"] == "done" for r in replicas):
+            return "ready"
+        return "failed"
+    if any(r["status"] == "running" for r in replicas):
+        return "running"
+    return "pending"

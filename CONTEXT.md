@@ -62,7 +62,7 @@ All six development phases complete:
 5. **Phase 5 (Integration):** MCP server — structured Claude Code access, custom subagent integration, proposal amendment.
 6. **Phase 6 (Convergence):** Decline reasons, convergence digests, digest-aware generation, daemon synthesis step. Closes the feedback loop.
 
-The tool is functional and in active use. 13 ADRs recorded.
+The tool is functional and in active use. 15 ADRs recorded.
 
 ## What's Working
 
@@ -74,6 +74,7 @@ The tool is functional and in active use. 13 ADRs recorded.
 - Five-document scaffolding (`elmer init --docs`) bootstraps effective AI-assisted projects
 - Convergence digests synthesize understanding across approved/declined work
 - Decline reasons create learning signals that steer future topic generation
+- Ensemble exploration runs same topic N times with synthesis for high-confidence decisions
 
 ## Open Questions
 
@@ -84,4 +85,4 @@ The tool is functional and in active use. 13 ADRs recorded.
 - **Agent Teams integration** — within a single exploration, the Claude session could use Agent Teams for parallel sub-tasks. Partially addressed by ADR-026 (custom subagents). Agent Teams remain session-scoped and don't persist.
 - **Sibling-aware exploration prompts** — explorations have no knowledge of other in-flight or completed explorations. Partially addressed by convergence digests (ADR-030): the digest synthesizes cross-exploration understanding, which feeds into topic generation. Individual explorations remain independent by design. The remaining question is whether to inject digest context into exploration prompts (not just generation prompts).
 
-*Last updated: 2026-02-23, Phase 6 convergence (ADR-030), updated sibling-awareness status*
+*Last updated: 2026-02-24, ADR-032 archive as source of truth, auto-clean on approve/decline*

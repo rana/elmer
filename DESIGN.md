@@ -59,6 +59,7 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `batch.py` | Topic list file parsing for batch command |
 | `pr.py` | PR creation via gh CLI |
 | `digest.py` | Convergence digest synthesis from exploration history |
+| `synthesize.py` | Ensemble synthesis — consolidate multiple proposals on the same topic |
 | `mcp_server.py` | MCP server — structured tool access over stdio |
 
 ### Data Flow
@@ -81,20 +82,21 @@ amend   → read current PROPOSAL.md
         → mark status amending → done when finished
 
 approve → git merge branch into current branch
+        → archive PROPOSAL.md to .elmer/proposals/<id>.md
         → remove worktree, delete branch
-        → update SQLite
+        → delete SQLite record (archive is permanent record — ADR-032)
 
-decline → remove worktree, delete branch
-        → store decline_reason in SQLite (if provided)
-        → update SQLite
+decline → archive PROPOSAL.md to .elmer/proposals/<id>.md
+        → remove worktree, delete branch
+        → delete SQLite record (decline_reason preserved in archive)
 
-digest  → read approved proposals from .elmer/proposals/
-        → read decline reasons from SQLite
+digest  → read approved/declined proposals from .elmer/proposals/ (archive metadata)
+        → merge with in-flight DB records
         → read previous digest from .elmer/digests/
         → run claude -p with digest meta-agent (synchronous)
         → store result in .elmer/digests/
 
-clean   → remove worktrees/state for approved/declined explorations
+clean   → remove worktrees/state for failed/orphaned explorations
         → git worktree prune
 ```
 
@@ -118,9 +120,11 @@ pending → running → done → approved
 
 ### Proposal Archive
 
-Proposals are archived to `.elmer/proposals/<id>.md` before worktree cleanup on approve, decline, cancel, retry, and clean. Each archived file includes a metadata header (HTML comment) with exploration ID, topic, archetype, model, final status, and archive timestamp. The archive is best-effort — failures never block the flow.
+The archive at `.elmer/proposals/<id>.md` is the source of truth for completed explorations (ADR-032). Each file includes a self-describing metadata header (HTML comment) with exploration ID, topic, archetype, model, final status, merged_at, completed_at, decline_reason, and archive timestamp. The archive is best-effort — failures never block the flow.
 
-This makes proposals persistent, independent of the branch lifecycle. Approved proposals survive merge-and-cleanup. Declined proposals preserve institutional knowledge about rejected approaches.
+Approve and decline auto-clean DB records after archiving. The database tracks only in-flight state; the archive is the permanent record. Slug uniqueness checks both DB and archive to prevent overwrites after clean. Digest synthesis reads archive metadata directly, so it works regardless of DB state.
+
+`clean` is now a garbage collector for failed explorations and crash recovery, not a required workflow step.
 
 ### Failure Diagnosis
 
@@ -377,6 +381,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-13 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+15 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-23, convergence digests and decline reasons (ADR-030)*
+*Last updated: 2026-02-24, ADR-032 archive as source of truth*

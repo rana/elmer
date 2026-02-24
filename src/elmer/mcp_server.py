@@ -496,6 +496,9 @@ def elmer_explore(
     parent_id: Optional[str] = None,
     on_approve: Optional[str] = None,
     on_decline: Optional[str] = None,
+    replicas: Optional[int] = None,
+    archetypes: Optional[str] = None,
+    models: Optional[str] = None,
 ) -> dict:
     """Start a new exploration on a git branch.
 
@@ -505,6 +508,9 @@ def elmer_explore(
 
     Use after elmer_generate to spawn AI-generated topics, or directly
     for specific research questions.
+
+    With replicas > 1, starts an ensemble: N independent explorations of
+    the same topic that auto-synthesize into a single consolidated proposal.
 
     Parameters:
         topic: What to explore (required).
@@ -519,6 +525,9 @@ def elmer_explore(
         parent_id: Parent exploration ID (for follow-ups).
         on_approve: Shell command to run on approval ($ID, $TOPIC substituted).
         on_decline: Shell command to run on decline ($ID, $TOPIC substituted).
+        replicas: Ensemble mode — spawn N replicas and auto-synthesize (min 2).
+        archetypes: Ensemble — comma-separated archetype rotation per replica.
+        models: Ensemble — comma-separated model rotation per replica.
     """
     try:
         project_dir, elmer_dir = _find_project()
@@ -533,6 +542,36 @@ def elmer_explore(
 
         # Resolve generate_prompt from config if not explicitly set
         use_generate = generate_prompt or defaults.get("generate_prompt", False)
+
+        if replicas and replicas >= 2:
+            # Ensemble mode
+            archetype_list = [a.strip() for a in archetypes.split(",")] if archetypes else None
+            model_list = [m.strip() for m in models.split(",")] if models else None
+
+            results = explore_mod.start_ensemble(
+                topic=topic,
+                replicas=replicas,
+                archetype=use_archetype,
+                model=use_model,
+                max_turns=use_max_turns,
+                elmer_dir=elmer_dir,
+                project_dir=project_dir,
+                archetypes=archetype_list,
+                models=model_list,
+                auto_approve=auto_approve,
+                generate_prompt=use_generate,
+                auto_archetype=use_auto_archetype,
+                budget_usd=budget_usd,
+            )
+
+            return {
+                "mode": "ensemble",
+                "replicas": [{"id": slug, "archetype": arch} for slug, arch in results],
+                "replica_count": len(results),
+                "topic": topic,
+                "budget_usd": budget_usd,
+                "message": f"Ensemble started with {len(results)} replicas. Synthesis triggers automatically when all complete.",
+            }
 
         dep_list = None
         if depends_on:
@@ -1216,6 +1255,9 @@ def elmer_batch(
     auto_archetype: bool = False,
     budget_usd: Optional[float] = None,
     max_concurrent: Optional[int] = None,
+    replicas: Optional[int] = None,
+    archetypes: Optional[str] = None,
+    models: Optional[str] = None,
 ) -> dict:
     """Run multiple explorations from a list of topics.
 
@@ -1228,6 +1270,9 @@ def elmer_batch(
     With max_concurrent: limits parallel explorations. Excess are queued
     and launch as running ones complete.
 
+    With replicas: each topic becomes an ensemble with N replicas that
+    auto-synthesize into a single proposal.
+
     Parameters:
         topics: Newline-separated list of topics to explore (required).
         archetype: Archetype for all explorations (default: from config).
@@ -1238,6 +1283,9 @@ def elmer_batch(
         auto_archetype: AI selects the best archetype per topic.
         budget_usd: Total budget in USD (divided across topics).
         max_concurrent: Max parallel explorations.
+        replicas: Ensemble — spawn N replicas per topic and auto-synthesize.
+        archetypes: Ensemble — comma-separated archetype rotation per replica.
+        models: Ensemble — comma-separated model rotation per replica.
     """
     try:
         project_dir, elmer_dir = _find_project()
@@ -1262,6 +1310,9 @@ def elmer_batch(
         errors: list[dict] = []
         previous_slug = None
 
+        archetype_list = [a.strip() for a in archetypes.split(",")] if archetypes else None
+        model_list = [m.strip() for m in models.split(",")] if models else None
+
         for i, topic in enumerate(topic_list):
             dep_list = None
             if chain and previous_slug is not None:
@@ -1270,26 +1321,52 @@ def elmer_batch(
                 dep_list = [spawned_slugs[i - max_concurrent]]
 
             try:
-                slug, archetype_used = explore_mod.start_exploration(
-                    topic=topic,
-                    archetype=use_archetype,
-                    model=use_model,
-                    max_turns=use_max_turns,
-                    elmer_dir=elmer_dir,
-                    project_dir=project_dir,
-                    depends_on=dep_list,
-                    auto_approve=auto_approve,
-                    auto_archetype=use_auto_archetype,
-                    budget_usd=per_topic_budget,
-                )
-                spawned_slugs.append(slug)
-                spawned.append({
-                    "id": slug,
-                    "topic": topic,
-                    "archetype": archetype_used,
-                    "depends_on": dep_list,
-                })
-                previous_slug = slug
+                if replicas and replicas >= 2:
+                    # Ensemble mode
+                    results = explore_mod.start_ensemble(
+                        topic=topic,
+                        replicas=replicas,
+                        archetype=use_archetype,
+                        model=use_model,
+                        max_turns=use_max_turns,
+                        elmer_dir=elmer_dir,
+                        project_dir=project_dir,
+                        archetypes=archetype_list,
+                        models=model_list,
+                        auto_approve=auto_approve,
+                        generate_prompt=False,
+                        auto_archetype=use_auto_archetype,
+                        budget_usd=per_topic_budget,
+                    )
+                    for slug, arch_used in results:
+                        spawned_slugs.append(slug)
+                    spawned.append({
+                        "topic": topic,
+                        "mode": "ensemble",
+                        "replicas": [{"id": s, "archetype": a} for s, a in results],
+                    })
+                    previous_slug = results[-1][0] if results else previous_slug
+                else:
+                    slug, archetype_used = explore_mod.start_exploration(
+                        topic=topic,
+                        archetype=use_archetype,
+                        model=use_model,
+                        max_turns=use_max_turns,
+                        elmer_dir=elmer_dir,
+                        project_dir=project_dir,
+                        depends_on=dep_list,
+                        auto_approve=auto_approve,
+                        auto_archetype=use_auto_archetype,
+                        budget_usd=per_topic_budget,
+                    )
+                    spawned_slugs.append(slug)
+                    spawned.append({
+                        "id": slug,
+                        "topic": topic,
+                        "archetype": archetype_used,
+                        "depends_on": dep_list,
+                    })
+                    previous_slug = slug
             except (RuntimeError, FileNotFoundError) as e:
                 errors.append({"topic": topic, "error": str(e)})
                 if chain:
@@ -1301,6 +1378,7 @@ def elmer_batch(
             "spawned": spawned,
             "spawned_count": len(spawned),
             "chain": chain,
+            "ensemble": bool(replicas and replicas >= 2),
         }
         if errors:
             result["errors"] = errors
