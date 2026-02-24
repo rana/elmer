@@ -151,6 +151,17 @@ def approve_exploration(
         )
         sys.exit(1)
 
+    # Remove PROPOSAL.md from main — it's an elmer artifact, not a project deliverable.
+    # The proposal is archived to .elmer/proposals/ before worktree cleanup.
+    try:
+        worktree.remove_file_and_commit(
+            project_dir,
+            "PROPOSAL.md",
+            f"Remove PROPOSAL.md (archived to .elmer/proposals/{exploration_id}.md)",
+        )
+    except subprocess.CalledProcessError:
+        pass  # Best-effort: file may not exist on branch or may not be committed
+
     # Extract cross-project insights before cleanup (needs worktree for PROPOSAL.md)
     cfg = config.load_config(elmer_dir)
     ins_cfg = cfg.get("insights", {})
@@ -387,6 +398,8 @@ def approve_all(
             )
             approved.append(exp["id"])
         except SystemExit:
+            # Abort the failed merge so subsequent approvals aren't poisoned
+            worktree.abort_merge(project_dir)
             click.echo(f"Skipping {exp['id']} (merge failed)")
     return approved
 

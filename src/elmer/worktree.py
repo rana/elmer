@@ -48,6 +48,37 @@ def merge_branch(project_dir: Path, branch_name: str, message: str) -> None:
     )
 
 
+def abort_merge(project_dir: Path) -> None:
+    """Abort an in-progress merge. Best-effort — ignores errors if no merge is active."""
+    subprocess.run(
+        ["git", "merge", "--abort"],
+        cwd=str(project_dir),
+        capture_output=True,
+        text=True,
+    )
+
+
+def remove_file_and_commit(project_dir: Path, filename: str, message: str) -> None:
+    """Remove a file from the working tree and commit the deletion."""
+    filepath = project_dir / filename
+    if not filepath.exists():
+        return
+    subprocess.run(
+        ["git", "rm", "-f", filename],
+        cwd=str(project_dir),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=str(project_dir),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def branch_exists(project_dir: Path, branch_name: str) -> bool:
     """Check if a git branch exists."""
     result = subprocess.run(

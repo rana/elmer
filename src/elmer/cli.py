@@ -33,11 +33,13 @@ def _require_project() -> Path:
 
 
 def _require_elmer(project_dir: Path) -> Path:
-    """Find .elmer/ or exit."""
+    """Find .elmer/ or exit. Self-heals missing gitignore for older projects."""
     elmer_dir = project_dir / ".elmer"
     if not elmer_dir.exists():
         click.echo("Error: .elmer/ not found. Run 'elmer init' first.", err=True)
         sys.exit(1)
+    # Self-heal: ensure gitignore exists (older projects may lack it)
+    config.ensure_gitignore(elmer_dir)
     # Ensure project is in global registry
     config.register_project(project_dir)
     return elmer_dir

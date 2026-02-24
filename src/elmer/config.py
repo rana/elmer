@@ -113,6 +113,12 @@ daemon.pid
 """
 
 
+def ensure_gitignore(elmer_dir: Path) -> None:
+    """Ensure .elmer/.gitignore exists with current entries. Idempotent."""
+    gitignore_path = elmer_dir / ".gitignore"
+    gitignore_path.write_text(GITIGNORE)
+
+
 def init_project(project_dir: Path) -> Path:
     """Initialize .elmer/ in a project directory."""
     elmer_dir = project_dir / ".elmer"
@@ -135,10 +141,8 @@ def init_project(project_dir: Path) -> Path:
     (elmer_dir / "worktrees").mkdir(exist_ok=True)
     (elmer_dir / "logs").mkdir(exist_ok=True)
 
-    # Gitignore for transient state
-    gitignore_path = elmer_dir / ".gitignore"
-    if not gitignore_path.exists():
-        gitignore_path.write_text(GITIGNORE)
+    # Gitignore for transient state (always overwrite to ensure current entries)
+    ensure_gitignore(elmer_dir)
 
     # Register in global project registry
     register_project(project_dir)

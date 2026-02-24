@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-11 ADRs recorded.
+12 ADRs recorded.
 
 ## Domain Index
 
@@ -19,6 +19,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-024 | Integration | MCP server for structured tool access |
 | ADR-026 | Process | Exploration archetypes as Claude Code custom subagents |
 | ADR-028 | Process | Proposal amendment workflow |
+| ADR-029 | Git | PROPOSAL.md merge hygiene and approve_all resilience |
 
 ---
 
@@ -157,3 +158,17 @@ Elmer's model was binary — approve (merge as-is) or decline (discard entirely)
 The amend agent is editorial, not exploratory: it applies directed changes and re-evaluates coherence, but does not expand scope. This distinction prevents amendment from becoming a second exploration.
 
 **Alternatives considered:** Manual proposal editing (works but misses cascading cross-reference cleanup), decline-and-re-explore with scoped topic (wastes good generated content), storing amendment history in SQLite (adds complexity — git history on the branch already tracks revisions).
+
+## ADR-029: PROPOSAL.md Merge Hygiene and approve_all Resilience
+
+**Decision:** Three changes to the merge contract:
+
+1. **Post-merge PROPOSAL.md cleanup.** After `merge_branch()` succeeds, `approve_exploration()` removes PROPOSAL.md from the working tree and commits the deletion. PROPOSAL.md is an elmer artifact (archived to `.elmer/proposals/`), not a project deliverable. Leaving it in main causes `both added` merge conflicts on every subsequent approval. The cleanup commit message references the archive location.
+
+2. **`approve_all` aborts failed merges.** When `approve_all()` catches a merge failure (SystemExit), it calls `git merge --abort` before continuing to the next exploration. Without this, the first failed merge leaves git in a dirty state, cascading all subsequent merge attempts — even conflict-free ones.
+
+3. **Self-healing `.elmer/.gitignore`.** `_require_elmer()` (called by every command) now calls `ensure_gitignore()`, which writes the current gitignore entries. Projects initialized before the inner gitignore feature existed get it automatically on next command. `init_project()` also always writes (not guards with `if not exists`), ensuring entries stay current as new patterns are added (e.g., `daemon.pid`).
+
+**Context:** Discovered via real-world `elmer approve --all` in a project with multiple explorations. First approval succeeded but left PROPOSAL.md in main. Second approval conflicted on `both added: PROPOSAL.md`. The `approve_all` loop continued without aborting, leaving git in a merge state that blocked all subsequent operations. The project also lacked `.elmer/.gitignore` because it was initialized before that feature existed.
+
+**Alternatives considered:** Adding PROPOSAL.md to project `.gitignore` (imposes on user's project), instructing Claude not to commit PROPOSAL.md (unreliable — Claude has Bash/git access and may commit as part of explore-act workflow), squash-merge to avoid PROPOSAL.md entirely (loses branch history).
