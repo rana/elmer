@@ -16,27 +16,63 @@ from . import config, explore as explore_mod, generate as gen_mod, insights, sta
 
 def _archive_proposal(
     elmer_dir: Path, exp: dict, final_status: str, *,
+    project_dir: Optional[Path] = None,
     decline_reason: Optional[str] = None,
+    notify=None,
 ) -> Optional[Path]:
     """Archive PROPOSAL.md before worktree cleanup. Returns archive path or None.
 
     Copies the proposal to .elmer/proposals/<id>.md with a metadata header.
     If decline_reason is provided, it is included in the archive metadata.
-    Best-effort: never blocks the approval/decline flow.
+
+    Recovery strategies (ADR-033):
+    1. Return existing archive if present (idempotency for crash recovery)
+    2. Read from worktree (normal path)
+    3. Read from git branch via 'git show' (fallback when worktree is gone)
+
+    Calls notify with warnings when using fallback strategies or when archival
+    fails entirely. Returns None only when all strategies are exhausted.
     """
+    if notify is None:
+        notify = lambda msg: None  # Silent for backward compat
+
+    archive_dir = elmer_dir / "proposals"
+    archive_path = archive_dir / f"{exp['id']}.md"
+
+    # Idempotency: if archive already exists, return it (crash recovery)
+    if archive_path.exists():
+        return archive_path
+
     try:
+        content = None
+        recovered_from = None
+
+        # Strategy 1: Read from worktree (normal path)
         worktree_path = Path(exp["worktree_path"])
         proposal_path = worktree_path / "PROPOSAL.md"
+        if proposal_path.exists():
+            content = proposal_path.read_text()
 
-        if not proposal_path.exists():
+        # Strategy 2: Read from git branch (when worktree is gone)
+        if content is None and project_dir is not None:
+            branch = exp.get("branch", "")
+            if branch:
+                content = worktree.read_file_from_branch(
+                    project_dir, branch, "PROPOSAL.md",
+                )
+                if content is not None:
+                    recovered_from = "git branch"
+                    notify(f"  Recovered proposal from git branch: {exp['id']}")
+
+        if content is None:
+            notify(
+                f"  WARNING: No PROPOSAL.md found for {exp['id']} "
+                f"(worktree gone, branch unavailable)"
+            )
             return None
 
-        archive_dir = elmer_dir / "proposals"
+        # Write archive
         archive_dir.mkdir(parents=True, exist_ok=True)
-        archive_path = archive_dir / f"{exp['id']}.md"
-
-        # Read original content
-        content = proposal_path.read_text()
 
         # Prepend metadata as HTML comment (invisible in rendered markdown)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -48,6 +84,7 @@ def _archive_proposal(
         ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
         ensemble_line = f"  ensemble_id: {ens_id}\n" if ens_id else ""
         role_line = f"  ensemble_role: {ens_role}\n" if ens_role else ""
+        recovery_line = f"  recovered_from: {recovered_from}\n" if recovered_from else ""
         meta = (
             f"<!-- elmer:archive\n"
             f"  id: {exp['id']}\n"
@@ -60,14 +97,16 @@ def _archive_proposal(
             f"{completed_line}"
             f"{ensemble_line}"
             f"{role_line}"
+            f"{recovery_line}"
             f"  archived: {now}\n"
             f"-->\n\n"
         )
 
         archive_path.write_text(meta + content)
         return archive_path
-    except Exception:
-        return None  # Best-effort — never block the flow
+    except Exception as e:
+        notify(f"  WARNING: Archive failed for {exp['id']}: {e}")
+        return None
 
 
 def _cleanup_worktree(project_dir: Path, exp: dict) -> None:
@@ -206,8 +245,24 @@ def approve_exploration(
         except Exception as e:
             notify(f"Insight extraction failed: {e}")
 
-    # Archive proposal before cleanup
-    _archive_proposal(elmer_dir, exp, "approved")
+    # Archive proposal before cleanup (ADR-033: archive-before-destroy)
+    archive_path = _archive_proposal(
+        elmer_dir, exp, "approved",
+        project_dir=project_dir, notify=notify,
+    )
+    if archive_path is None and Path(exp["worktree_path"]).exists():
+        # Archive failed but worktree still has data — preserve it
+        notify(
+            f"WARNING: Could not archive proposal for {exploration_id}. "
+            f"Worktree preserved at {exp['worktree_path']}."
+        )
+        state.update_exploration(
+            conn, exploration_id,
+            status="approved",
+            merged_at=datetime.now(timezone.utc).isoformat(),
+        )
+        conn.close()
+        return
 
     # Cleanup
     _cleanup_worktree(project_dir, exp)
@@ -220,18 +275,19 @@ def approve_exploration(
     )
 
     # Ensemble cascade: when approving a synthesis, cleanup all replicas.
-    # Sleep between worktree removals to avoid overwhelming IDE file watchers
-    # and the system inotify event queue (see ADR-029 merge hygiene).
+    # Archive ALL replicas first, then destroy worktrees (ADR-033).
+    # Sleep between every worktree removal — including the first, since the
+    # synthesis worktree was just removed above. Prevents IDE inotify storms.
     ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
     ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
     if ens_role == "synthesis" and ens_id:
         replicas = state.get_ensemble_replicas(conn, ens_id)
-        for i, replica in enumerate(replicas):
+        for replica in replicas:
             if replica["status"] not in ("approved", "declined"):
                 _archive_proposal(elmer_dir, replica, "declined",
+                                  project_dir=project_dir, notify=notify,
                                   decline_reason="Ensemble synthesis approved")
-                if i > 0:
-                    time.sleep(0.5)  # Let IDE file watchers drain between removals
+                time.sleep(1.0)  # Always sleep — synthesis worktree just removed
                 _cleanup_worktree(project_dir, replica)
                 state.update_exploration(
                     conn, replica["id"],
@@ -317,8 +373,11 @@ def decline_exploration(
         click.echo("Cannot decline an already-approved exploration.", err=True)
         sys.exit(1)
 
-    # Archive proposal before cleanup
-    _archive_proposal(elmer_dir, exp, "declined", decline_reason=reason)
+    # Archive proposal before cleanup (ADR-033)
+    _archive_proposal(
+        elmer_dir, exp, "declined",
+        project_dir=project_dir, decline_reason=reason, notify=notify,
+    )
 
     _cleanup_worktree(project_dir, exp)
 
@@ -328,18 +387,19 @@ def decline_exploration(
     state.update_exploration(conn, exploration_id, **update_fields)
 
     # Ensemble cascade: when declining a synthesis, decline all replicas too.
-    # Sleep between worktree removals to avoid inotify event storms.
+    # Archive ALL replicas, then destroy worktrees (ADR-033).
+    # Sleep before every worktree removal — including the first.
     ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
     ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
     if ens_role == "synthesis" and ens_id:
         replicas = state.get_ensemble_replicas(conn, ens_id)
         cascade_reason = reason or "Ensemble synthesis declined"
-        for i, replica in enumerate(replicas):
+        for replica in replicas:
             if replica["status"] not in ("approved", "declined"):
                 _archive_proposal(elmer_dir, replica, "declined",
+                                  project_dir=project_dir, notify=notify,
                                   decline_reason=cascade_reason)
-                if i > 0:
-                    time.sleep(0.5)  # Let IDE file watchers drain between removals
+                time.sleep(1.0)  # Always sleep — synthesis worktree just removed
                 _cleanup_worktree(project_dir, replica)
                 state.update_exploration(
                     conn, replica["id"],
@@ -448,7 +508,10 @@ def cancel_exploration(
             }
 
         # Archive proposal before cleanup (may exist if cancelled mid-work)
-        _archive_proposal(elmer_dir, exp, "cancelled")
+        _archive_proposal(
+            elmer_dir, exp, "cancelled",
+            project_dir=project_dir, notify=notify,
+        )
 
         _cleanup_worktree(project_dir, exp)
         state.update_exploration(
@@ -564,8 +627,11 @@ def retry_exploration(
             previous_synthesis = proposal_path.read_text()
         notify(f"Re-synthesizing ensemble (previous synthesis archived)")
 
-    # Archive proposal before cleanup
-    _archive_proposal(elmer_dir, exp, "retried")
+    # Archive proposal before cleanup (ADR-033)
+    _archive_proposal(
+        elmer_dir, exp, "retried",
+        project_dir=project_dir, notify=notify,
+    )
 
     # Clean up the exploration's worktree and branch
     _cleanup_worktree(project_dir, exp)
@@ -656,8 +722,11 @@ def retry_all_failed(
             ensemble_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
             ensemble_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
 
-            # Archive and clean up old state
-            _archive_proposal(elmer_dir, exp, "retried")
+            # Archive and clean up old state (ADR-033)
+            _archive_proposal(
+                elmer_dir, exp, "retried",
+                project_dir=project_dir, notify=notify,
+            )
             _cleanup_worktree(project_dir, exp)
             conn = state.get_db(elmer_dir)
             state.delete_exploration(conn, exp["id"])
@@ -739,13 +808,16 @@ def clean_all(elmer_dir: Path, project_dir: Path) -> int:
     worktrees_removed = 0
     for exp in explorations:
         if exp["status"] in ("approved", "declined", "failed"):
-            # Archive proposal before cleanup
-            _archive_proposal(elmer_dir, exp, exp["status"])
+            # Archive proposal before cleanup (ADR-033)
+            _archive_proposal(
+                elmer_dir, exp, exp["status"],
+                project_dir=project_dir,
+            )
 
             worktree_path = Path(exp["worktree_path"])
             if worktree_path.exists():
                 if worktrees_removed > 0:
-                    time.sleep(0.5)  # Let IDE file watchers drain between removals
+                    time.sleep(1.0)  # Let IDE file watchers drain between removals
                 _cleanup_worktree(project_dir, exp)
                 worktrees_removed += 1
                 cleaned += 1

@@ -62,7 +62,7 @@ All six development phases complete:
 5. **Phase 5 (Integration):** MCP server — structured Claude Code access, custom subagent integration, proposal amendment.
 6. **Phase 6 (Convergence):** Decline reasons, convergence digests, digest-aware generation, daemon synthesis step. Closes the feedback loop.
 
-The tool is functional and in active use. 15 ADRs recorded.
+The tool is functional and in active use. 17 ADRs recorded.
 
 ## What's Working
 

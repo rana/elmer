@@ -204,6 +204,10 @@ def _refresh_running(
                 }
 
             if proposal_path.exists():
+                # Commit PROPOSAL.md to the branch so it survives worktree
+                # removal and is recoverable via git show (ADR-034)
+                wt_mod.commit_proposal_to_branch(worktree_path, exp["id"])
+
                 summary = _extract_summary(proposal_path)
                 state.update_exploration(
                     conn,
@@ -249,6 +253,9 @@ def _refresh_running(
 
             # Update summary from revised proposal
             if proposal_path.exists():
+                # Re-commit PROPOSAL.md after amendment (ADR-034)
+                wt_mod.commit_proposal_to_branch(worktree_path, exp["id"])
+
                 summary = _extract_summary(proposal_path)
                 state.update_exploration(
                     conn, exp["id"],

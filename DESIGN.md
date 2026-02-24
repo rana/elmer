@@ -389,6 +389,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-15 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+17 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
 *Last updated: 2026-02-24, MCP observability + safety enhancements (21 tools), design principles, recover_partial, preview/dry-run modes, progress indicators*

@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-15 ADRs recorded.
+17 ADRs recorded.
 
 ## Domain Index
 
@@ -23,6 +23,8 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-030 | Intelligence | Convergence digests and decline reasons |
 | ADR-031 | Process | Ensemble exploration and synthesis |
 | ADR-032 | Storage | Archive as source of truth for completed explorations |
+| ADR-033 | Safety | Archive-before-destroy and crash-recovery resilience |
+| ADR-034 | Safety | Commit PROPOSAL.md to branch on completion |
 
 ---
 
@@ -253,3 +255,47 @@ The root cause was an inconsistent source of truth. The archive was designed to 
 **`clean` role change:** Previously required after approve/decline to free DB records and worktrees. Now reduced to maintenance: cleaning failed explorations, recovering from crashes, pruning orphaned worktrees. Projects that ran before ADR-032 have accumulated approved/declined records; `clean` handles those on next run.
 
 **Alternatives considered:** Soft delete (add `cleaned_at` column, filter in queries — preserves full DB history but touches every query), archive filenames with timestamps instead of IDs (collision-proof but breaks the ID-to-filename mapping that digests rely on), only fixing the archive overwrite without changing the digest (leaves the digest broken after clean).
+
+## ADR-033: Archive-Before-Destroy and Crash-Recovery Resilience
+
+**Decision:** Strengthen the archive contract from "best-effort, never blocks" to "archive is mandatory; cleanup is blocked by archive failure." Three changes to `_archive_proposal` and its callers in `gate.py`:
+
+1. **Idempotency.** Before attempting to archive, check if `.elmer/proposals/<id>.md` already exists. If so, return the existing path immediately. This handles crash recovery: if a previous `approve` attempt archived the proposal but crashed before completing cleanup, the second attempt doesn't fail because the worktree is gone — it finds the existing archive.
+
+2. **Git-branch fallback.** When the worktree is gone (deleted in a prior crashed attempt), try reading `PROPOSAL.md` from the git branch via `git show <branch>:PROPOSAL.md`. The branch may survive worktree deletion if the crash happened between `git worktree remove` and `git branch -D`. Added `worktree.read_file_from_branch()` for this.
+
+3. **Archive validation before cleanup.** In `approve_exploration`, if archiving the synthesis proposal fails (all recovery strategies exhausted) and the worktree still exists, the function preserves the worktree and warns loudly instead of destroying the only copy. Status is still updated to "approved" (the merge already happened), but the worktree is left for manual recovery.
+
+4. **Cascade sleep hardening.** Ensemble approve/decline cascades now sleep 1.0s before *every* worktree removal, including the first replica (which follows immediately after the synthesis worktree removal). Previously, the sleep only applied to the second replica onward (`if i > 0`), leaving no gap between synthesis cleanup and first replica cleanup — a burst of 6 worktree removals in <1s overwhelmed IDE inotify watchers.
+
+**Context:** Real-world ensemble approval with 5 replicas + 1 synthesis. First `approve` attempt merged the synthesis branch, then crashed during the cascade of 6 worktree removals (inotify storm crashed all VSCode windows, killing the terminal process). Second attempt hit the crash-recovery path ("Branch already merged"), found the synthesis worktree gone, silently failed to archive the synthesis proposal (`_archive_proposal` returned `None` with no warning), cleaned up all replica worktrees (also without archiving), and reported success. Result: all ensemble work lost, no PROPOSAL.md saved to `.elmer/proposals/`, success message displayed.
+
+Root cause chain: (1) `_archive_proposal` silently returned `None` on failure, (2) no fallback to read from git branch/history, (3) no idempotency check for existing archives, (4) callers never checked the return value, (5) cleanup proceeded regardless of archive status, (6) cascade sleep was insufficient and didn't cover the synthesis→first-replica gap.
+
+**Principle:** Archive before destroy. Verify archive succeeded before proceeding with cleanup. If archive fails and the worktree exists, preserve it — a preserved worktree is recoverable; a destroyed one is not. Warn loudly on any fallback or failure. "Best-effort" is acceptable for metadata enrichment (insights, costs), not for the proposal itself.
+
+**Alternatives considered:** Transactional archive+cleanup (too complex for subprocess-based git operations), archive to git instead of filesystem (adds git commits to main branch for internal bookkeeping), two-phase cleanup where all archives are validated before any worktree is destroyed (cleaner but requires restructuring the cascade loop — deferred for now).
+
+## ADR-034: Commit PROPOSAL.md to Branch on Completion
+
+**Decision:** When an exploration transitions from `running` to `done` (or `amending` to `done`), automatically `git add && git commit` PROPOSAL.md to the exploration branch inside its worktree. This ensures the proposal is tracked by git and recoverable via `git show <branch>:PROPOSAL.md` even after the worktree is removed.
+
+**Implementation:** `worktree.commit_proposal_to_branch()` runs in the worktree's working directory:
+1. Checks if PROPOSAL.md exists
+2. Checks `git status --porcelain PROPOSAL.md` — skips if already tracked and unchanged
+3. Runs `git add PROPOSAL.md && git commit -m "Save PROPOSAL.md for <id>"`
+4. Returns True if committed, False if skipped or failed (best-effort, never blocks)
+
+Called from `review._refresh_running()` at both transition points (running→done, amending→done), immediately before the status update.
+
+**Context:** ADR-033 added a git-branch fallback to `_archive_proposal()` — reading PROPOSAL.md from the branch via `git show` when the worktree is gone. But this fallback was dead code: PROPOSAL.md was never committed to the branch. Exploration agents write PROPOSAL.md via Claude Code's `Write` tool, which creates an untracked file. When `git worktree remove --force` runs, untracked files are permanently destroyed. The git-branch fallback in ADR-033 only works if the file is tracked — which it never was.
+
+This was the root cause of unrecoverable data loss in the ensemble incident: even with ADR-033's multi-strategy archive, PROPOSAL.md could not be recovered from git because it was never committed.
+
+**Scope:** Only PROPOSAL.md is committed. Other files the agent may create (scratch files, test outputs) are not committed — they are not archival artifacts. The commit happens on the exploration branch (inside the worktree), not on main. The commit is cleaned up along with the branch when the exploration is approved or declined.
+
+**Interaction with ADR-029:** When an exploration is approved, `merge_branch()` brings PROPOSAL.md into main, then `remove_file_and_commit()` deletes it (PROPOSAL.md is an elmer artifact, not a project deliverable). With commit-on-completion, this sequence now works correctly: the file exists on the branch (committed), gets merged to main, then is deleted. Previously, PROPOSAL.md only appeared on main if the agent happened to commit it — inconsistent and agent-dependent.
+
+**Interaction with ADR-033:** The git-branch fallback in `_archive_proposal()` is now operational. If the worktree is gone but the branch survives (crash between `git worktree remove` and `git branch -D`), the proposal is recoverable from the branch. This closes the last gap in the archive-before-destroy safety chain.
+
+**Alternatives considered:** Instructing agents to commit PROPOSAL.md in their prompts (unreliable — agents may forget or commit to wrong branch), committing at archive time instead of completion time (too late — the point is to ensure the file is tracked before any cleanup can run), committing all files in the worktree (over-broad — scratch files shouldn't be committed).

@@ -2,6 +2,7 @@
 
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 
 def create_worktree(project_dir: Path, branch_name: str, worktree_path: Path) -> None:
@@ -115,6 +116,68 @@ def get_branch_diff(project_dir: Path, branch_name: str) -> str:
         text=True,
     )
     return result.stdout.strip() if result.returncode == 0 else "(diff unavailable)"
+
+
+def read_file_from_branch(project_dir: Path, branch_name: str, file_path: str) -> Optional[str]:
+    """Read a file's content from a branch without checking out.
+
+    Returns the file content as string, or None if the branch or file doesn't exist.
+    Used for crash recovery when a worktree is gone but the branch survives.
+    """
+    result = subprocess.run(
+        ["git", "show", f"{branch_name}:{file_path}"],
+        cwd=str(project_dir),
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout if result.returncode == 0 else None
+
+
+def commit_proposal_to_branch(worktree_path: Path, exploration_id: str) -> bool:
+    """Commit PROPOSAL.md to the exploration branch inside its worktree.
+
+    Called when an exploration transitions to 'done'. Ensures the proposal
+    is tracked by git and recoverable via 'git show <branch>:PROPOSAL.md'
+    even after the worktree is removed (ADR-034).
+
+    Returns True if a commit was created, False if skipped (already tracked,
+    no proposal, or error).
+    """
+    proposal = worktree_path / "PROPOSAL.md"
+    if not proposal.exists():
+        return False
+
+    # Check if PROPOSAL.md is already tracked and unchanged
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "PROPOSAL.md"],
+        cwd=str(worktree_path),
+        capture_output=True,
+        text=True,
+    )
+    if status.returncode != 0:
+        return False
+    # If status output is empty, file is tracked and unchanged — skip
+    if not status.stdout.strip():
+        return False
+
+    try:
+        subprocess.run(
+            ["git", "add", "PROPOSAL.md"],
+            cwd=str(worktree_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", f"Save PROPOSAL.md for {exploration_id}"],
+            cwd=str(worktree_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
 
 
 def get_project_root() -> Path:
