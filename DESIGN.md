@@ -174,7 +174,7 @@ Agent resolution order:
 
 Meta-operation agent resolution uses `elmer-meta-<name>` prefix.
 
-Exploration archetypes (8): explore, explore-act, prototype, adr-proposal, question-cluster, benchmark, dead-end-analysis, devil-advocate. Tools: `Read, Grep, Glob, Bash, Edit, Write`.
+Exploration archetypes (8): explore, explore-act, prototype, adr-proposal, question-cluster, benchmark, dead-end-analysis, devil-advocate. Action archetypes (explore-act, prototype, adr-proposal, benchmark) have `Edit, Write`; analysis archetypes (explore, question-cluster, dead-end-analysis, devil-advocate) have `Write` only. All have `Read, Grep, Glob, Bash`.
 
 Audit archetypes (8): consistency-audit, coherence-audit, architecture-audit, operational-audit, documentation-audit, opportunity-scan, workflow-audit, mission-audit. Tools: `Read, Grep, Glob, Bash, Write`.
 
@@ -250,7 +250,7 @@ The archetype becomes a hint to Stage 1, not a rigid template. Fallback: static 
 After exploration completes, if `--auto-approve` is set:
 
 1. Synchronous `claude -p` evaluates the proposal against configurable criteria
-2. Output: APPROVE or REJECT verdict with reasoning
+2. Output: APPROVE or REJECT verdict with reasoning (AI protocol intentionally retains REJECT — user-facing terminology uses "decline")
 3. If APPROVE → auto-merge. If REJECT → queue for human review with reasoning attached (status becomes "done", not auto-declined).
 
 Conservative default: decline when uncertain. Criteria configurable in `.elmer/config.toml`.
@@ -339,6 +339,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-13 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+10 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-23, ADR pruning (27→13), attention routing subsection added, audit agents gain Write for PROPOSAL.md creation, reject→decline rename (ADR-027), MCP server expanded to 17 tools*
+*Last updated: 2026-02-23, ADR consolidation (13→10), tool lists corrected to match agent definitions, auto-approve REJECT/decline clarification*

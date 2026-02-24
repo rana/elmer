@@ -61,7 +61,7 @@ All five development phases complete:
 4. **Phase 4 (Meta):** Scaffolding, archetype stats, attention routing, invariant enforcement, multi-project dashboard, PR creation, batch topics, skill scaffolding.
 5. **Phase 5 (Integration):** MCP server — 17 tools over stdio JSON-RPC for structured Claude Code access, covering all intelligence features.
 
-The tool is functional and in active use. 13 ADRs recorded.
+The tool is functional and in active use. 10 ADRs recorded.
 
 ## What's Working
 
@@ -74,9 +74,10 @@ The tool is functional and in active use. 13 ADRs recorded.
 
 ## Open Questions
 
-- **Shared template library** between Elmer archetypes and Claude Code skills — deferred because drift is tolerable (see Deferred in ROADMAP.md)
+- **Shared template library** between Elmer archetypes and Claude Code skills — deferred because drift is tolerable and the indirection cost exceeds the sync benefit
 - **Web UI for review** — CLI review works but rich formatting would help for large proposals
 - **Elmer-on-Elmer recursion** — running explorations on Elmer's own codebase (meta-tool use)
 - **Scaffolding template quality** — generated CONTEXT.md is structural but not philosophical; could better teach the institutional memory pattern
+- **Agent Teams integration** — within a single exploration, the Claude session could use Agent Teams for parallel sub-tasks. Partially addressed by ADR-026 (custom subagents). Agent Teams remain session-scoped and don't persist.
 
-*Last updated: 2026-02-23, ADR pruning (27→13), MCP server expanded to 17 tools*
+*Last updated: 2026-02-23, open questions consolidated as canonical home for deferred features*

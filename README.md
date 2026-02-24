@@ -155,16 +155,16 @@ Archetypes define how Claude explores a topic. Each archetype is implemented as 
 
 | Archetype | Purpose | Tools |
 |-----------|---------|-------|
-| `explore` | Read-only analysis — think deeply, no action bias | Read, Grep, Glob, Bash, Edit, Write |
+| `explore` | Read-only analysis — think deeply, no action bias | Read, Grep, Glob, Bash, Write |
 | `explore-act` | Analysis biased toward concrete action proposals | Read, Grep, Glob, Bash, Edit, Write |
 | `prototype` | Write working code on the branch | Read, Grep, Glob, Bash, Edit, Write |
 | `adr-proposal` | Propose architecture decisions with alternatives | Read, Grep, Glob, Bash, Edit, Write |
-| `question-cluster` | Explore clusters of related open questions | Read, Grep, Glob, Bash, Edit, Write |
+| `question-cluster` | Explore clusters of related open questions | Read, Grep, Glob, Bash, Write |
 | `benchmark` | Measure, evaluate, and recommend improvements | Read, Grep, Glob, Bash, Edit, Write |
-| `dead-end-analysis` | Analyze whether a direction is worth pursuing | Read, Grep, Glob, Bash, Edit, Write |
-| `devil-advocate` | Challenge assumptions and decisions | Read, Grep, Glob, Bash, Edit, Write |
+| `dead-end-analysis` | Analyze whether a direction is worth pursuing | Read, Grep, Glob, Bash, Write |
+| `devil-advocate` | Challenge assumptions and decisions | Read, Grep, Glob, Bash, Write |
 
-**Audit archetypes** use read-only tools (`Read, Grep, Glob, Bash`): consistency-audit, coherence-audit, architecture-audit, documentation-audit, mission-audit, operational-audit, opportunity-scan, workflow-audit.
+**Audit archetypes** use analysis tools (`Read, Grep, Glob, Bash, Write`): consistency-audit, coherence-audit, architecture-audit, documentation-audit, mission-audit, operational-audit, opportunity-scan, workflow-audit.
 
 Use `--auto-archetype` to let AI pick the best archetype for each topic. Use `-a` to force a specific one.
 

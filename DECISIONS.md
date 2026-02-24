@@ -2,25 +2,22 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-13 ADRs recorded.
+10 ADRs recorded.
 
 ## Domain Index
 
 | ADR | Domain | Summary |
 |-----|--------|---------|
 | ADR-001 | Git | Worktrees over directory copying |
-| ADR-002 | Process | Background `claude -p` over Agent Teams |
+| ADR-002 | Process | Claude invocation patterns |
 | ADR-003 | Storage | SQLite over JSON state files |
-| ADR-007 | Process | Synchronous `claude -p` for meta-operations |
-| ADR-008 | Process | JSON output format for cost extraction |
-| ADR-010 | Architecture | Daemon as composition layer |
-| ADR-012 | Autonomy | Chain actions as shell commands |
+| ADR-010 | Process | Daemon as composition layer |
+| ADR-012 | Process | Chain actions as shell commands |
 | ADR-013 | Storage | Global insights database at ~/.elmer/ |
 | ADR-015 | Scaffolding | Five-document scaffolding as templates |
-| ADR-022 | Integration | Claude Code skill scaffolding as Elmer feature |
+| ADR-022 | Scaffolding | Claude Code skill scaffolding as Elmer feature |
 | ADR-024 | Integration | MCP server for structured tool access |
 | ADR-026 | Process | Exploration archetypes as Claude Code custom subagents |
-| ADR-027 | Terminology | Rename "reject/rejected" to "decline/declined" |
 
 ---
 
@@ -32,13 +29,18 @@ Worktrees share `.git`, are instant to create, and space-efficient. Directory co
 
 **Alternatives considered:** Directory copying (cp -r), temporary git clones.
 
-## ADR-002: Background Processes Over Agent Teams
+## ADR-002: Claude Invocation Patterns
 
-**Decision:** Use background `claude -p` processes, not Claude Code Agent Teams.
+**Decision:** Two invocation patterns for `claude -p`, both using `--output-format json`:
 
-Agent Teams are session-scoped and don't persist across Claude Code sessions. Elmer explorations should outlive any single session — start explorations, close your terminal, review tomorrow. Background `claude -p` processes provide this persistence.
+- **Background** (`spawn_claude`): Explorations. Long-running, PID-tracked, output to log files. Agent Teams were rejected — they're session-scoped and don't persist. Elmer explorations should outlive any single session.
+- **Synchronous** (`run_claude`): Meta-operations (topic generation, auto-approve review, prompt generation, archetype selection, insight extraction, question mining, invariant validation). Short-lived (3-5 turns), output parsed immediately by the caller.
 
-**Alternatives considered:** Agent Teams (session-scoped, don't persist), Claude Code plugin hooks (wrong lifecycle).
+**Cost extraction:** All invocations use `--output-format json`. Synchronous operations parse JSON from captured stdout. Background workers write JSON to log files, parsed after completion by `parse_log_costs()`. Cost data is stored in SQLite. JSON parsing is best-effort: if it fails, cost fields are left NULL. Cost tracking never blocks exploration flow. Budget enforcement uses `--max-budget-usd`, delegating to the claude CLI for real-time caps.
+
+**Alternatives considered:** Agent Teams (session-scoped, don't persist), Claude Code plugin hooks (wrong lifecycle), background all invocations and poll (adds complexity for short operations), queue/callback pattern (overkill for sequential meta-operations), parsing text logs with regex (fragile), estimating costs from model + max_turns (inaccurate).
+
+*Revised: 2026-02-23, consolidated from ADR-002 (background processes), ADR-007 (synchronous meta-ops), ADR-008 (JSON output/cost extraction)*
 
 ## ADR-003: SQLite Over JSON State Files
 
@@ -47,28 +49,6 @@ Agent Teams are session-scoped and don't persist across Claude Code sessions. El
 Concurrent explorations writing to a single JSON file risk corruption. SQLite handles concurrent access correctly via WAL mode. It also supports queries (find all explorations by status) without loading everything into memory.
 
 **Alternatives considered:** Single JSON file, one JSON file per exploration.
-
-## ADR-007: Synchronous `claude -p` for Meta-Operations
-
-**Decision:** Use synchronous `subprocess.run` (via `worker.run_claude()`) for topic generation and auto-approve review, not background `subprocess.Popen`.
-
-Explorations are long-running and benefit from backgrounding (ADR-002). Meta-operations — generating topics, reviewing proposals — are short-lived (3-5 turns) and their output is needed immediately by the caller. Topic generation must parse the output to spawn explorations. Auto-approve must parse the verdict to decide whether to merge. Both require the result synchronously.
-
-This creates two invocation patterns: `spawn_claude()` for background exploration workers, `run_claude()` for synchronous meta-operations. The distinction maps cleanly to the use case.
-
-**Alternatives considered:** Background all claude invocations and poll for completion (adds complexity for short operations), use a queue/callback pattern (overkill for sequential meta-operations).
-
-## ADR-008: JSON Output Format for Cost Extraction
-
-**Decision:** Use `--output-format json` for all `claude -p` invocations to extract token usage and cost data.
-
-Synchronous meta-operations (`run_claude`) parse JSON from captured stdout. Background exploration workers (`spawn_claude`) write JSON to log files, parsed after completion by `parse_log_costs()`. Cost data is stored in SQLite — per-exploration columns on the `explorations` table, and a separate `costs` table for meta-operation costs.
-
-JSON parsing is best-effort: if it fails (corrupted output, old CLI version), cost fields are left NULL. Cost tracking is informational and never blocks exploration flow.
-
-Budget enforcement uses `--max-budget-usd`, delegating to the claude CLI for real-time budget caps.
-
-**Alternatives considered:** Parsing text logs with regex (fragile, format not guaranteed), estimating from model + max_turns (inaccurate), separate `claude` invocation to query session costs (extra API call, may not exist).
 
 ## ADR-010: Daemon as Composition Layer
 
@@ -136,7 +116,7 @@ The server is a presentation layer. Each tool opens a DB connection, queries, cl
 
 **Alternatives considered:** REST API (adds web framework dependency, requires port management, conflicts with no-web-framework constraint), enhancing CLI with `--json` output flags (per-command work, doesn't provide tool discovery or schema introspection that MCP gives for free).
 
-*Revised: 2026-02-23, expanded to 17 tools, reject→decline rename (ADR-027)*
+*Revised: 2026-02-23, expanded to 17 tools*
 
 ## ADR-026: Exploration Archetypes as Claude Code Custom Subagents
 
@@ -146,7 +126,7 @@ Previously, archetypes were prompt templates with `$TOPIC` substitution — the 
 
 Claude Code custom subagents (`.claude/agents/` markdown files with YAML frontmatter) provide:
 - **System prompt separation** — the archetype methodology becomes the agent's system prompt; the `-p` prompt carries only the topic. This is structurally correct: methodology is context, topic is the task.
-- **Tool restrictions** — audit archetypes get read-only tools (`Read, Grep, Glob, Bash`), exploration archetypes get full tools including `Edit, Write`. Enforced by Claude Code, not by prompt instructions.
+- **Tool restrictions** — action archetypes (explore-act, prototype, adr-proposal, benchmark) get full tools including `Edit, Write`; analysis and audit archetypes get `Write` without `Edit`. Enforced by Claude Code, not by prompt instructions.
 - **Model selection** — meta-operation agents specify `model: sonnet` in frontmatter, avoiding the overhead of opus for lightweight tasks like review-gate or topic generation.
 - **Project-local overrides** — `elmer init --agents` scaffolds to `.claude/agents/`, where users can customize agent behavior without modifying bundled defaults.
 
@@ -165,23 +145,4 @@ Claude Code custom subagents (`.claude/agents/` markdown files with YAML frontma
 
 **Alternatives considered:** Filesystem-based agents only (breaks in worktrees where `.claude/agents/` isn't visible), Agent Teams for parallel explorations (session-scoped, don't persist — consistent with ADR-002), prompt-only approach with tool restrictions in prompt text (unenforceable, wastes tokens), separate agent runner binary (unnecessary complexity when `claude -p` already supports `--agents`).
 
-## ADR-027: Rename "Reject/Rejected" to "Decline/Declined"
-
-**Decision:** Rename all user-facing occurrences of "reject"/"rejected" to "decline"/"declined" across CLI commands, MCP tools, status values, database columns, function names, and documentation.
-
-"Reject" carries a harsh, judgmental connotation that doesn't match the actual operation: the user is simply choosing not to merge a proposal. "Decline" is softer and more accurate — it conveys "not this time" rather than "this is bad." Since Elmer is designed for autonomous research where many proposals are expected to be discarded (broad surveys, dead-end analysis), the terminal state label should feel routine, not punitive.
-
-**Scope of change:**
-
-- CLI: `elmer reject` → `elmer decline`, `--on-reject` → `--on-decline`
-- MCP: `elmer_reject` → `elmer_decline`
-- State: status value `"rejected"` → `"declined"` in SQLite
-- Database: column `on_reject` → `on_decline` (with migration)
-- Functions: `reject_exploration()` → `decline_exploration()`
-- All documentation updated
-
-**Intentionally unchanged:** The AI review gate protocol keyword `VERDICT: REJECT` in `autoapprove.py` and the `review-gate` meta-agent. These are instructions to the AI model, not user-facing terminology. The AI protocol uses a binary APPROVE/REJECT vocabulary that the model recognizes reliably — renaming it risks parsing failures without user benefit.
-
-**Migration:** SQLite schema migration renames the `on_reject` column to `on_decline` and updates all status values from `"rejected"` to `"declined"`. Both operations are idempotent (wrapped in try/except for re-run safety).
-
-**Alternatives considered:** Keeping "reject" (functional but tonally misaligned with the tool's philosophy), "skip" (implies the proposal might be revisited), "discard" (accurate but already used for the git operation description), "pass" (ambiguous — could mean "approve without review").
+*ADR-027 (reject→decline rename) retired: completed migration, rationale preserved in git history. The AI review gate protocol retains REJECT (see DESIGN.md, Auto-Approve Gate section).*
