@@ -36,6 +36,10 @@ def _archive_proposal(
     if notify is None:
         notify = lambda msg: None  # Silent for backward compat
 
+    # Normalize sqlite3.Row to dict so .get() works throughout
+    if not isinstance(exp, dict):
+        exp = dict(exp)
+
     archive_dir = elmer_dir / "proposals"
     archive_path = archive_dir / f"{exp['id']}.md"
 
@@ -80,8 +84,8 @@ def _archive_proposal(
         merged_line = f"  merged_at: {exp['merged_at']}\n" if exp.get("merged_at") else ""
         completed_line = f"  completed_at: {exp['completed_at']}\n" if exp.get("completed_at") else ""
         # Ensemble membership — preserved so digests and slug checks work after DB cleanup
-        ens_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
-        ens_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
+        ens_id = exp.get("ensemble_id")
+        ens_role = exp.get("ensemble_role")
         ensemble_line = f"  ensemble_id: {ens_id}\n" if ens_id else ""
         role_line = f"  ensemble_role: {ens_role}\n" if ens_role else ""
         recovery_line = f"  recovered_from: {recovered_from}\n" if recovered_from else ""
