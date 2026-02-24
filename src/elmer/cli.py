@@ -959,15 +959,20 @@ def cancel(exploration_id):
 @click.option("--failed", is_flag=True, help="Retry all failed explorations")
 @click.option("--max-concurrent", default=None, type=int, help="Max parallel retries (excess queued as pending)")
 def retry(exploration_id, failed, max_concurrent):
-    """Retry failed explorations.
+    """Retry failed explorations or re-run a completed synthesis.
 
     Re-spawns a failed exploration with the same topic, archetype, model,
     and budget. The old failed entry is cleaned up and a new exploration
     is created.
 
+    For completed synthesis explorations: archives the previous synthesis
+    and re-runs with the current archetype. The previous synthesis is passed
+    as context so the new agent can deepen rather than start from scratch.
+
     \b
     Examples:
         elmer retry my-exploration-id         # retry one
+        elmer retry my-synthesis-id           # re-run a completed synthesis
         elmer retry --failed                  # retry all failed
         elmer retry --failed --max-concurrent 3  # throttled retry
     """

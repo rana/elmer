@@ -18,12 +18,16 @@ def synthesize_ensemble(
     project_dir: Path,
     model: Optional[str] = None,
     max_turns: Optional[int] = None,
+    previous_synthesis: Optional[str] = None,
 ) -> str:
     """Synthesize an ensemble's replica proposals into a single consolidated proposal.
 
     Reads PROPOSAL.md from all successful replicas, spawns the synthesis agent
     on a new branch, and creates a synthesis exploration. Returns the synthesis
     exploration slug.
+
+    If previous_synthesis is provided (re-synthesis), it is included as context
+    so the new synthesis agent can deepen rather than start from scratch.
 
     The synthesis exploration has ensemble_role='synthesis' and the same
     ensemble_id as the replicas.
@@ -93,6 +97,19 @@ def synthesize_ensemble(
         f"Each proposal was produced by an independent exploration with no knowledge of the others.\n\n"
         f"---\n\n{proposals_text}"
     )
+
+    # Include previous synthesis for re-synthesis runs
+    if previous_synthesis:
+        prompt = (
+            f"{prompt}\n\n"
+            f"---\n\n"
+            f"## Previous Synthesis (for deepening)\n\n"
+            f"A previous synthesis was produced but was too shallow. "
+            f"Use it as structural scaffolding — deepen the analysis, "
+            f"challenge its conclusions against source documents, verify claims, "
+            f"and fill gaps it left. Do not merely reproduce it.\n\n"
+            f"{previous_synthesis}"
+        )
 
     # Create synthesis branch and worktree
     synthesis_slug = f"{ensemble_id}-synthesis"

@@ -1012,16 +1012,20 @@ def elmer_retry(
     retry_all_failed: bool = False,
     max_concurrent: Optional[int] = None,
 ) -> dict:
-    """Retry failed explorations.
+    """Retry failed explorations or re-run a completed synthesis.
 
     Re-spawns a failed exploration with the same topic, archetype, model,
     and budget. The old failed entry is cleaned up and a new exploration
     is created.
 
+    For completed synthesis explorations: archives the previous synthesis
+    and re-runs with the current archetype. The previous synthesis is passed
+    as context so the new agent can deepen rather than start from scratch.
+
     With retry_all_failed=true: retries all explorations in 'failed' status.
 
     Parameters:
-        exploration_id: ID of the failed exploration to retry.
+        exploration_id: ID of the exploration to retry (failed or done synthesis).
         retry_all_failed: Retry all failed explorations at once.
         max_concurrent: Max parallel retries (excess queued as pending).
     """

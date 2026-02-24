@@ -508,7 +508,12 @@ def approve_all(
 def retry_exploration(
     elmer_dir: Path, project_dir: Path, exploration_id: str, *, notify=None,
 ) -> str:
-    """Retry a failed exploration: clean up old state and re-spawn with same parameters.
+    """Retry a failed exploration or re-run a completed synthesis.
+
+    For failed explorations: cleans up old state and re-spawns with same parameters.
+    For done synthesis explorations: archives the existing synthesis and re-runs
+    with the current archetype, passing the previous synthesis as context for
+    the new agent to deepen.
 
     Returns the new exploration slug.
     """
@@ -522,15 +527,26 @@ def retry_exploration(
         click.echo(f"Exploration '{exploration_id}' not found.", err=True)
         sys.exit(1)
 
-    if exp["status"] != "failed":
+    # Preserve ensemble metadata for retry
+    ensemble_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
+    ensemble_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
+
+    # Allow retry of done synthesis (re-synthesis), not just failed explorations
+    is_resynthesis = (
+        exp["status"] == "done"
+        and ensemble_role == "synthesis"
+        and ensemble_id
+    )
+
+    if exp["status"] != "failed" and not is_resynthesis:
         click.echo(
             f"Cannot retry exploration in status '{exp['status']}'. "
-            f"Must be 'failed'.",
+            f"Must be 'failed' (or 'done' for synthesis re-runs).",
             err=True,
         )
         sys.exit(1)
 
-    # Extract parameters from the failed exploration
+    # Extract parameters from the exploration
     topic = exp["topic"]
     archetype = exp["archetype"]
     model = exp["model"]
@@ -539,14 +555,19 @@ def retry_exploration(
     generate_prompt = bool(exp["generate_prompt"])
     budget_usd = exp["budget_usd"]
 
-    # Preserve ensemble metadata for retry
-    ensemble_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
-    ensemble_role = exp["ensemble_role"] if "ensemble_role" in exp.keys() else None
+    # For re-synthesis: capture previous synthesis content before cleanup
+    previous_synthesis = None
+    if is_resynthesis:
+        wt_path = Path(exp["worktree_path"])
+        proposal_path = wt_path / "PROPOSAL.md"
+        if proposal_path.exists():
+            previous_synthesis = proposal_path.read_text()
+        notify(f"Re-synthesizing ensemble (previous synthesis archived)")
 
-    # Archive proposal before cleanup (failed explorations may still have partial output)
+    # Archive proposal before cleanup
     _archive_proposal(elmer_dir, exp, "retried")
 
-    # Clean up the failed exploration's worktree and branch
+    # Clean up the exploration's worktree and branch
     _cleanup_worktree(project_dir, exp)
     state.delete_exploration(conn, exploration_id)
     conn.close()
@@ -561,6 +582,7 @@ def retry_exploration(
             elmer_dir=elmer_dir,
             project_dir=project_dir,
             max_turns=max_turns,
+            previous_synthesis=previous_synthesis,
         )
     else:
         slug, _ = explore_mod.start_exploration(
