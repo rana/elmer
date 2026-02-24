@@ -380,6 +380,111 @@ Elmer and Claude Code skills overlap in analysis methodology but serve different
 
 **The general rule:** If you need persistence, parallelism, or autonomy — use Elmer. If you need interactivity, iteration, or immediacy — use a skill. If you're setting up a project, use both: `elmer init --docs --skills`.
 
+## Creating Custom Archetypes
+
+`elmer init --agents` scaffolds local copies of bundled archetypes for customization. But sometimes you need a **new archetype** that doesn't exist in the bundled set — a domain-specific exploration methodology for your project.
+
+### Two Files Required
+
+A custom archetype requires **both** files:
+
+1. **Archetype template** (fallback): `.elmer/archetypes/<name>.md`
+2. **Agent definition** (override): `.claude/agents/elmer-<name>.md`
+
+The archetype template must exist even when an agent definition overrides it — elmer validates the template exists before checking for agents. The template is the `$TOPIC`-substitution fallback; the agent is the modern system-prompt-based approach.
+
+### Agent Definition Format
+
+```markdown
+---
+name: elmer-<name>
+description: One-line description of what this archetype does.
+tools: Read, Grep, Glob, Bash, Write
+---
+
+Your system prompt goes here. This becomes the agent's methodology.
+Claude receives the topic as the `-p` prompt; this markdown is the
+system context that shapes how the exploration runs.
+
+IMPORTANT: You MUST use the Write tool to create a file named
+PROPOSAL.md in the current working directory.
+```
+
+**Frontmatter fields:**
+
+| Field | Required | Values |
+|-------|----------|--------|
+| `name` | Yes | `elmer-<archetype-name>` |
+| `description` | Yes | One-line description |
+| `tools` | No | Comma-separated: `Read, Grep, Glob, Bash, Edit, Write` |
+| `model` | No | `sonnet`, `opus`, or `haiku` (overrides `--model` flag) |
+
+**Tool choices:**
+- Analysis agents: `Read, Grep, Glob, Bash, Write` (Write for PROPOSAL.md only)
+- Action agents: `Read, Grep, Glob, Bash, Edit, Write` (can modify code)
+
+### Archetype Template Format
+
+Minimal fallback — used only when the agent definition isn't available:
+
+```markdown
+Your methodology description here.
+
+Read the project's documentation to ground yourself in its actual state.
+
+$TOPIC
+
+IMPORTANT: You MUST use the Write tool to create a file named PROPOSAL.md
+in the current working directory.
+```
+
+### Example: Stakeholder Brief Archetype
+
+A project needs phase-level briefs for non-technical stakeholders:
+
+```bash
+# Create both files
+mkdir -p .elmer/archetypes .claude/agents
+
+# Template fallback
+cat > .elmer/archetypes/stakeholder-brief.md << 'EOF'
+Stakeholder-facing brief. Synthesize existing design into readable proposal.
+Read project documentation. $TOPIC
+Write a PROPOSAL.md accessible to non-technical readers.
+EOF
+
+# Agent definition (the real prompt)
+cat > .claude/agents/elmer-stakeholder-brief.md << 'EOF'
+---
+name: elmer-stakeholder-brief
+description: Synthesizes technical design into stakeholder-readable proposals with decision points.
+tools: Read, Grep, Glob, Bash, Write
+---
+
+You are producing a stakeholder-facing brief. Your audience is organizational
+leadership — not engineers.
+
+Read CLAUDE.md, CONTEXT.md, DESIGN.md, DECISIONS.md, ROADMAP.md.
+
+Produce a PROPOSAL.md that a non-technical reader can evaluate, approve, or defer.
+Open with concrete user stories. Explain capabilities in plain language. List
+explicit decision points. Stay under 1500 words. No technical jargon.
+
+IMPORTANT: You MUST use the Write tool to create a file named PROPOSAL.md
+in the current working directory.
+EOF
+
+# Use it
+elmer explore "Phase 1 capabilities" -a stakeholder-brief
+```
+
+### Tips
+
+- **Test with one exploration before batching.** Run a single topic, review the PROPOSAL.md quality, refine the agent prompt, then batch.
+- **Read existing agents for patterns.** Run `elmer init --agents` to scaffold bundled agents into `.claude/agents/` and study their structure.
+- **The agent prompt shapes quality more than the topic.** Invest in the system prompt — specify output structure, voice, constraints, reading strategy.
+- **Custom archetypes are project-local.** They live in your repo, committed to git, and don't affect other projects.
+
 ## Common Mistakes
 
 **Too many concurrent explorations.** Each one is a `claude -p` process. Start with 2-3. Scale up once you're comfortable reviewing the output.

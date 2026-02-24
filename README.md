@@ -172,6 +172,8 @@ Use `--auto-archetype` to let AI pick the best archetype for each topic. Use `-a
 
 Agent definitions are bundled with Elmer and used automatically. To customize, run `elmer init --agents` to scaffold local copies in `.claude/agents/`. Local copies override bundled defaults. Legacy `$TOPIC` template substitution (`.elmer/archetypes/`) is used as fallback when no agent definition exists. Use `elmer archetypes stats` to see which perform best.
 
+To create a **new archetype** from scratch, you need both files: `.elmer/archetypes/<name>.md` (template fallback) and `.claude/agents/elmer-<name>.md` (agent definition). See GUIDE.md "Creating Custom Archetypes" for details.
+
 ## Topic List Files
 
 Create a markdown file in `.elmer/` named after the archetype you want to use. Separate topics with `---`:
