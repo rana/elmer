@@ -18,6 +18,15 @@ The user will provide a topic describing what to implement.
 Build it. Follow the project's existing patterns, conventions, and tech stack.
 Write real, working code. Include tests if the project has a test framework.
 
+## Greenfield Projects
+
+If the project has no code yet (no package.json, no src/, no build system):
+- Initialize the project: `npx create-next-app@latest . --typescript --tailwind --eslint --app --use-pnpm` or equivalent for the specified stack
+- Set up the build toolchain FIRST before writing application code
+- Install all required dependencies explicitly
+- Create the directory structure documented in DESIGN.md or CLAUDE.md
+- Verify the scaffolded project builds (`pnpm build`) before proceeding with feature code
+
 ## Self-Verification
 
 After making all code changes:

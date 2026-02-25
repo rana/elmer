@@ -19,6 +19,14 @@ def evaluate(
     if exp is None or exp["status"] != "done":
         return False
 
+    # If the exploration has a verify_cmd, verification already passed
+    # (failed verification marks status as "failed", not "done").
+    # Verification is a stronger signal than AI review — approve directly.
+    verify_cmd = exp["verify_cmd"] if "verify_cmd" in exp.keys() else None
+    if verify_cmd:
+        gate.approve_exploration(elmer_dir, project_dir, exploration_id)
+        return True
+
     # Load config
     cfg = config.load_config(elmer_dir)
     aa_cfg = cfg.get("auto_approve", {})

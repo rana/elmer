@@ -169,12 +169,17 @@ def parse_log_details(log_path: Path) -> Optional[dict]:
 
 
 def _run_verification(verify_cmd: str, cwd: Path, project_dir: Path) -> tuple[bool, int, str]:
-    """Run a verification command. Returns (passed, returncode, output)."""
+    """Run a verification command. Returns (passed, returncode, output).
+
+    Runs in the worktree directory (cwd) where the exploration's code lives,
+    not project_dir (main branch). The worktree contains the full project
+    with the exploration's changes on top.
+    """
     try:
         result = subprocess.run(
             verify_cmd,
             shell=True,
-            cwd=str(project_dir),
+            cwd=str(cwd),
             capture_output=True,
             text=True,
             timeout=300,

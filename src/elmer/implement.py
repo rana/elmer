@@ -19,16 +19,38 @@ from . import config, explore as explore_mod, state, worker
 
 
 def _read_project_context(project_dir: Path) -> str:
-    """Read key project files for context injection into decompose prompt."""
+    """Read CLAUDE.md for context injection into decompose prompt.
+
+    Only injects CLAUDE.md (orientation/tech stack). The decompose agent
+    reads ROADMAP.md, DESIGN.md, and DECISIONS.md selectively via its own
+    tools to avoid blowing the context window on large doc sets.
+    """
     sections = []
-    for name in ["CLAUDE.md", "CONTEXT.md", "ROADMAP.md"]:
+    # CLAUDE.md is always small enough and provides essential orientation
+    claude_md = project_dir / "CLAUDE.md"
+    if claude_md.exists():
+        content = claude_md.read_text()
+        if len(content) > 20000:
+            content = content[:20000] + "\n... (truncated)"
+        sections.append(f"## CLAUDE.md\n\n{content}")
+
+    # List which other docs exist so the agent knows what to read
+    doc_files = []
+    for name in ["CONTEXT.md", "DESIGN.md", "DESIGN-arc1.md", "DESIGN-arc2-3.md",
+                  "DESIGN-arc4-plus.md", "DECISIONS.md", "DECISIONS-core.md",
+                  "DECISIONS-experience.md", "DECISIONS-operations.md",
+                  "ROADMAP.md", "PRINCIPLES.md"]:
         path = project_dir / name
         if path.exists():
-            content = path.read_text()
-            # Truncate very long files to avoid blowing context
-            if len(content) > 15000:
-                content = content[:15000] + "\n... (truncated)"
-            sections.append(f"## {name}\n\n{content}")
+            size_kb = path.stat().st_size // 1024
+            doc_files.append(f"- {name} ({size_kb}KB)")
+    if doc_files:
+        sections.append(
+            "## Available Documentation\n\n"
+            "Read these selectively via your tools — do NOT try to read all of them.\n\n"
+            + "\n".join(doc_files)
+        )
+
     return "\n\n---\n\n".join(sections)
 
 
@@ -135,10 +157,10 @@ def decompose_milestone(
     conn.close()
 
     # Parse the plan from output
-    if not result.result_text:
+    if not result.output:
         raise RuntimeError("Decompose agent produced no output")
 
-    return _parse_plan_json(result.result_text)
+    return _parse_plan_json(result.output)
 
 
 def _inject_answers(plan: dict, answers: dict[int, str]) -> dict:
