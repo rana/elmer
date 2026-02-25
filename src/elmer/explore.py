@@ -1,6 +1,7 @@
 """Exploration orchestration — create worktree, assemble prompt, spawn worker."""
 
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -656,8 +657,34 @@ def amend_exploration(
 
 
 def schedule_ready(elmer_dir: Path, project_dir: Path) -> list[str]:
-    """Find pending explorations with all dependencies met and launch them."""
+    """Find pending explorations with all dependencies met and launch them.
+
+    Also detects and cascades failures: pending explorations whose dependencies
+    have failed or been declined are marked as failed themselves (ADR-041).
+    """
     conn = state.get_db(elmer_dir)
+
+    # Cascade failures first — mark blocked explorations before scheduling
+    blocked = state.get_pending_blocked(conn)
+    for exp in blocked:
+        dep_ids = state.get_dependencies(conn, exp["id"])
+        failed_deps = []
+        for dep_id in dep_ids:
+            dep = state.get_exploration(conn, dep_id)
+            if dep and dep["status"] in ("failed", "declined"):
+                failed_deps.append(dep_id)
+        dep_str = ", ".join(failed_deps)
+        state.update_exploration(
+            conn, exp["id"],
+            status="failed",
+            completed_at=datetime.now(timezone.utc).isoformat(),
+            proposal_summary=f"(dependency failed: {dep_str})",
+        )
+        # Pause the plan if this belongs to one
+        plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+        if plan_id:
+            state.update_plan(conn, plan_id, status="paused")
+
     ready = state.get_pending_ready(conn)
     conn.close()
 

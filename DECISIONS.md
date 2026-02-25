@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-23 ADRs recorded.
+24 ADRs recorded.
 
 ## Domain Index
 
@@ -31,6 +31,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-038 | Safety | Pre-merge verification hooks with auto-amend |
 | ADR-039 | Process | Milestone decomposition and autonomous implementation |
 | ADR-040 | Intelligence | Cross-step context, plan loading, fallback verification |
+| ADR-041 | Safety | Dependency cascade, proposal validation, verification guard |
 
 ---
 
@@ -536,3 +537,53 @@ When the primary `on_done` command exhausts retries and the exploration would be
 **Files modified:** `implement.py` (cross-step context, plan loading), `cli.py` (--load-plan, --steps wiring), `review.py` (fallback verification, enriched amend feedback).
 
 **Why not an MCP tool for plan state queries:** The cross-step context injection and enriched amend feedback provide the most useful plan information at exactly the right moments. Adding an MCP tool for ad-hoc plan queries would add complexity without improving the common case. If specific steps need to query plan state during execution (not just at start), an MCP tool would be warranted — deferred until evidence shows the need.
+
+## ADR-041: Failed Dependency Cascade, Proposal Validation, and Verification Guard
+
+**Decision:** Three safety improvements that close feedback loops in the autonomous pipeline: failed dependency cascade prevents silent deadlocks, proposal structural validation catches malformed output before auto-approve, and the verification auto-approve guard adds a diff-size check and configurability to the verification shortcut.
+
+### Failed Dependency Cascade
+
+**Problem:** When an exploration fails or is declined, any pending exploration that depends on it is stuck forever. `get_pending_ready()` checks `dep.status != 'approved'` — a failed dependency will never become approved, so the dependent exploration never becomes "ready." In plans with 10+ steps, a failure in step 3 orphans steps 4-10 silently.
+
+**Solution:** New query `get_pending_blocked()` in `state.py` finds pending explorations with at least one failed or declined dependency. `schedule_ready()` in `explore.py` calls this first and cascades the failure: blocked explorations are marked as failed with a summary noting which dependency failed. If the blocked exploration belongs to a plan, the plan is paused.
+
+**Why cascade eagerly:** The alternative is leaving pending explorations in limbo and relying on the user to notice. In autonomous mode, silent deadlocks are the worst failure mode — the system appears idle when it's actually stuck. Cascading immediately surfaces the failure in `elmer status` and triggers plan pausing.
+
+**Why not auto-retry:** Dependency failure usually means the upstream work is architecturally wrong, not transiently broken. Auto-retrying the failed dependency would loop. The correct flow is: human reviews the failure, fixes the upstream (via `elmer amend` or `elmer retry`), then `elmer implement --resume PLAN` re-runs the cascade.
+
+### Proposal Structural Validation
+
+**Problem:** The auto-approve gate (AI review or verification shortcut) can approve malformed proposals. An exploration that produces an empty or stub PROPOSAL.md ("# Proposal\nTODO: add content") with a passing test suite will auto-approve and merge garbage into main.
+
+**Solution:** `_validate_proposal_structure()` in `autoapprove.py` runs deterministic structural checks before any approval path:
+
+1. **Not empty** — rejects blank proposals
+2. **Minimum length** — at least 100 characters (prevents stub proposals)
+3. **No TODO/FIXME/XXX markers** — catches incomplete work the agent left for later
+4. **At least one markdown heading** — basic structural sanity
+
+The validation runs before both the verification shortcut and the AI review gate. On failure, the error is recorded in `proposal_summary` so it's visible in `elmer status` and `elmer review`.
+
+**Why not in the AI review prompt:** Structural checks are deterministic and free. Sending an obviously broken proposal to the AI review gate wastes an API call (~$0.02-0.10) and introduces non-determinism (the AI might approve a stub). Fast deterministic gates should run before slow non-deterministic ones.
+
+### Verification Auto-Approve Guard
+
+**Problem:** ADR-038 introduced a verification shortcut: if `verify_cmd` passed, auto-approve skips the AI review entirely. The rationale was "verification is deterministic proof the code works." But this is too permissive — a passing test suite doesn't verify architectural soundness, diff scope, or proposal quality.
+
+**Solution:** Two refinements:
+
+1. **Diff size guard** — even with passing verification, check the number of files changed against `max_files_changed` (from `[auto_approve]` config, default 10). Small diff + passing tests = safe to shortcut. Large diff + passing tests = fall through to AI review, because broad changes need architectural review even if they compile.
+
+2. **Configurable shortcut** — new config option `[verification] auto_approve_on_pass` (default: `true`). Set to `false` to require AI review for all explorations regardless of verification status. Useful for projects where architectural discipline matters more than throughput.
+
+```toml
+[verification]
+on_done = "npm test && npm run lint"
+auto_approve_on_pass = true    # false = always require AI review
+
+[auto_approve]
+max_files_changed = 10         # diff size guard for verification shortcut
+```
+
+**Files modified:** `state.py` (get_pending_blocked query), `explore.py` (cascade in schedule_ready), `autoapprove.py` (structural validation, verification guard).

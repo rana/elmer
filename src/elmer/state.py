@@ -267,6 +267,21 @@ def get_pending_ready(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """).fetchall()
 
 
+def get_pending_blocked(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Get pending explorations that have at least one failed or declined dependency.
+
+    These can never become ready — their dependencies are permanently unresolvable.
+    The caller should cascade the failure (mark them as failed too).
+    """
+    return conn.execute("""
+        SELECT DISTINCT e.* FROM explorations e
+        JOIN dependencies d ON d.exploration_id = e.id
+        JOIN explorations dep ON dep.id = d.depends_on_id
+        WHERE e.status = 'pending'
+        AND dep.status IN ('failed', 'declined')
+    """).fetchall()
+
+
 # --- Cost CRUD ---
 
 

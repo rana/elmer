@@ -280,6 +280,7 @@ threshold = 5            # Approvals since last digest before daemon auto-synthe
 # fallback = "make build"    # Fallback command when primary exhausts retries (ADR-040)
 max_retries = 2              # Auto-amend attempts before marking failed
 timeout = 300                # Verification timeout in seconds
+auto_approve_on_pass = true  # false = require AI review even if tests pass (ADR-041)
 
 [implement]
 model = "opus"               # Model for implementation steps

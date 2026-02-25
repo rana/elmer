@@ -6,6 +6,32 @@ from pathlib import Path
 from . import config, gate, state, worker, worktree
 
 
+def _validate_proposal_structure(proposal_text: str) -> tuple[bool, str]:
+    """Check proposal for required structure. Returns (valid, error_message).
+
+    Fast deterministic checks that catch malformed or incomplete proposals
+    before they reach the AI review gate (ADR-041).
+    """
+    if not proposal_text or not proposal_text.strip():
+        return False, "proposal is empty"
+
+    stripped = proposal_text.strip()
+
+    if len(stripped) < 100:
+        return False, f"proposal too short ({len(stripped)} chars, minimum 100)"
+
+    # Check for TODO/FIXME placeholders — agent didn't finish
+    for marker in ("TODO:", "FIXME:", "XXX:"):
+        if marker in stripped:
+            return False, f"proposal contains {marker} — work incomplete"
+
+    # Require at least one markdown heading
+    if not any(line.lstrip().startswith("#") for line in stripped.splitlines()):
+        return False, "proposal has no markdown headings"
+
+    return True, ""
+
+
 def evaluate(
     elmer_dir: Path,
     project_dir: Path,
@@ -19,20 +45,10 @@ def evaluate(
     if exp is None or exp["status"] != "done":
         return False
 
-    # If the exploration has a verify_cmd, verification already passed
-    # (failed verification marks status as "failed", not "done").
-    # Verification is a stronger signal than AI review — approve directly.
-    verify_cmd = exp["verify_cmd"] if "verify_cmd" in exp.keys() else None
-    if verify_cmd:
-        gate.approve_exploration(elmer_dir, project_dir, exploration_id)
-        return True
-
-    # Load config
+    # Load config (needed for both paths)
     cfg = config.load_config(elmer_dir)
     aa_cfg = cfg.get("auto_approve", {})
-    model = aa_cfg.get("model", "sonnet")
-    max_turns = aa_cfg.get("max_turns", 3)
-    criteria = aa_cfg.get("criteria", "document-only proposals with no code changes")
+    verify_cfg = cfg.get("verification", {})
     max_files = aa_cfg.get("max_files_changed", 10)
     require_proposal = aa_cfg.get("require_proposal", True)
 
@@ -45,7 +61,40 @@ def evaluate(
 
     proposal_text = proposal_path.read_text() if proposal_path.exists() else "(no proposal)"
 
-    # Get diff stat
+    # Structural validation gate (ADR-041): catch malformed proposals
+    # before AI review or verification shortcut
+    valid, error = _validate_proposal_structure(proposal_text)
+    if not valid:
+        # Store the validation error but don't approve
+        conn = state.get_db(elmer_dir)
+        state.update_exploration(
+            conn, exploration_id,
+            proposal_summary=f"(auto-review blocked: {error})",
+        )
+        conn.close()
+        return False
+
+    # Verification shortcut: if verify_cmd passed, check diff size guard
+    # before auto-approving (ADR-041). Configurable via
+    # [verification] auto_approve_on_pass (default: true).
+    verify_cmd = exp["verify_cmd"] if "verify_cmd" in exp.keys() else None
+    auto_approve_on_pass = verify_cfg.get("auto_approve_on_pass", True)
+
+    if verify_cmd and auto_approve_on_pass:
+        diff = worktree.get_branch_diff(project_dir, exp["branch"])
+        file_count = _count_files_in_diff(diff)
+        if file_count <= max_files:
+            # Small diff + passing tests = safe to auto-approve
+            gate.approve_exploration(elmer_dir, project_dir, exploration_id)
+            return True
+        # Large diff even with passing tests — fall through to AI review
+
+    # AI review gate
+    model = aa_cfg.get("model", "sonnet")
+    max_turns = aa_cfg.get("max_turns", 3)
+    criteria = aa_cfg.get("criteria", "document-only proposals with no code changes")
+
+    # Get diff stat (may already have it from above, but re-fetch to simplify flow)
     diff = worktree.get_branch_diff(project_dir, exp["branch"])
 
     # Quick check: if too many files changed, skip AI review
