@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from . import archstats, batch as batch_mod, config, costs as costs_mod, daemon as daemon_mod, dashboard, digest as digest_mod, explore as explore_mod, gate, generate as gen_mod, insights as insights_mod, invariants as inv_mod, pr as pr_mod, questions as questions_mod, review as review_mod, scaffold, skill_scaffold, state, worktree as wt
+from . import archstats, batch as batch_mod, config, costs as costs_mod, daemon as daemon_mod, dashboard, digest as digest_mod, explore as explore_mod, gate, generate as gen_mod, implement as impl_mod, insights as insights_mod, invariants as inv_mod, pr as pr_mod, questions as questions_mod, review as review_mod, scaffold, skill_scaffold, state, worktree as wt
 
 
 @click.group()
@@ -202,7 +202,8 @@ def init(docs, skills, agents):
 @click.option("--replicas", default=None, type=int, help="Ensemble: spawn N replicas and auto-synthesize (min 2)")
 @click.option("--archetypes", default=None, help="Ensemble: comma-separated archetype rotation (e.g., explore,devil-advocate,dead-end-analysis)")
 @click.option("--models", default=None, help="Ensemble: comma-separated model rotation (e.g., opus,sonnet,haiku)")
-def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_approve, auto_archetype, generate_prompt, no_generate, budget_usd, on_approve, on_decline, replicas, archetypes, models):
+@click.option("--verify-cmd", default=None, help="Shell command run after session completes (exit 0 = pass, else auto-amend)")
+def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_approve, auto_archetype, generate_prompt, no_generate, budget_usd, on_approve, on_decline, replicas, archetypes, models, verify_cmd):
     """Start an exploration on a new branch.
 
     Each exploration gets its own git worktree and a background Claude
@@ -212,6 +213,7 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
     Use -a to force a specific archetype (overrides --auto-archetype).
     Use --generate-prompt for AI-generated exploration prompts (two-stage).
     Use --replicas N for ensemble exploration (runs N times, synthesizes).
+    Use --verify-cmd to run a command after completion (auto-amends on failure).
 
     \b
     Examples:
@@ -225,6 +227,7 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
         elmer explore "topic" --replicas 3
         elmer explore "topic" --replicas 3 --archetypes explore,devil-advocate,dead-end-analysis
         elmer explore "topic" --replicas 3 --models opus,sonnet,haiku
+        elmer explore "scaffold project" --verify-cmd "pnpm build && pnpm lint"
     """
     project_dir = _require_project()
     elmer_dir = _require_elmer(project_dir)
@@ -312,6 +315,7 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
                     budget_usd=budget_usd,
                     on_approve=on_approve,
                     on_decline=on_decline,
+                    verify_cmd=verify_cmd,
                 )
                 click.echo(f"Started: {slug}")
                 click.echo(f"  Branch:    elmer/{slug}")
@@ -325,6 +329,8 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
                     click.echo(f"  Prompt:    AI-generated (two-stage)")
                 if budget_usd is not None:
                     click.echo(f"  Budget:    ${budget_usd:.2f}")
+                if verify_cmd:
+                    click.echo(f"  Verify:    {verify_cmd}")
                 if on_approve:
                     click.echo(f"  On approve: {on_approve}")
                 if on_decline:
@@ -579,6 +585,132 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
     if chain:
         click.echo("Topics are chained — each starts after the previous is approved.")
         click.echo("Use 'elmer approve ID' to advance the chain, or 'elmer approve --all' for each step.")
+
+
+@cli.command()
+@click.argument("milestone", required=False)
+@click.option("-m", "--model", default=None, help="Model for implementation sessions (default: from config)")
+@click.option("--max-turns", default=None, type=int, help="Max turns per step")
+@click.option("--dry-run", is_flag=True, help="Decompose and show plan only — don't execute")
+@click.option("--yes", "-y", "skip_clarify", is_flag=True, help="Skip clarification questions")
+@click.option("--budget", "budget_usd", default=None, type=float, help="Total budget in USD for all steps")
+@click.option("--max-concurrent", default=1, type=int, help="Max parallel steps (default: 1 for chain safety)")
+@click.option("--resume", "resume_plan_id", default=None, help="Resume a paused plan")
+@click.option("--status", "show_status", is_flag=True, help="Show status of active plans")
+def implement(milestone, model, max_turns, dry_run, skip_clarify, budget_usd, max_concurrent, resume_plan_id, show_status):
+    """Decompose a milestone into implementation steps and execute autonomously.
+
+    Reads project docs (ROADMAP.md, DESIGN.md, DECISIONS.md), decomposes the
+    milestone into ordered steps with verification commands, and executes them
+    as chained explorations with auto-amend on verification failure (ADR-038, ADR-039).
+
+    \b
+    Examples:
+        elmer implement "Milestone 1a"              # Full flow: decompose -> clarify -> execute
+        elmer implement "Milestone 1a" --dry-run    # See the plan without executing
+        elmer implement "Milestone 1a" -y           # Skip questions, go
+        elmer implement --resume milestone-1a       # Resume after a paused step
+        elmer implement --status                    # Show active plan progress
+        elmer implement "Milestone 1a" --budget 50  # $50 total across all steps
+    """
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+
+    # Status mode
+    if show_status:
+        impl_mod.show_plan_status(elmer_dir, plan_id=resume_plan_id)
+        return
+
+    # Resume mode
+    if resume_plan_id:
+        try:
+            impl_mod.resume_plan(
+                plan_id=resume_plan_id,
+                elmer_dir=elmer_dir,
+                project_dir=project_dir,
+            )
+        except RuntimeError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        return
+
+    # Require milestone for decompose/execute
+    if not milestone:
+        click.echo("Error: provide a milestone (e.g., 'Milestone 1a') or use --status/--resume.", err=True)
+        sys.exit(1)
+
+    # Phase 1: Decompose
+    click.echo(f"Decomposing: {milestone}")
+    click.echo("  Reading project docs and scanning filesystem...")
+    try:
+        plan = impl_mod.decompose_milestone(
+            milestone_ref=milestone,
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=model,
+        )
+    except (RuntimeError, ValueError) as e:
+        click.echo(f"Error: decomposition failed — {e}", err=True)
+        sys.exit(1)
+
+    steps = plan.get("steps", [])
+    questions = plan.get("questions", [])
+
+    # Display plan
+    click.echo(f"\nDecomposed into {len(steps)} implementation step(s):\n")
+    for i, step in enumerate(steps):
+        deps = step.get("depends_on", [])
+        dep_str = f" (<- {', '.join(str(d) for d in deps)})" if deps else ""
+        click.echo(f"  {i}. {step.get('title', '(untitled)')}{dep_str}")
+        if step.get("verify_cmd"):
+            click.echo(f"     verify: {step['verify_cmd']}")
+
+    if dry_run:
+        if questions:
+            click.echo(f"\nQuestions ({len(questions)}):")
+            for i, q in enumerate(questions):
+                click.echo(f"  [{i}] {q}")
+        click.echo("\n(dry run — no explorations created)")
+        return
+
+    # Phase 2: Clarify (unless --yes)
+    answers: dict[int, str] = {}
+    if questions and not skip_clarify:
+        click.echo(f"\nQuestions before implementation:\n")
+        for i, q in enumerate(questions):
+            answer = click.prompt(f"  [{i}] {q}", default="", show_default=False)
+            if answer:
+                answers[i] = answer
+
+        if answers:
+            plan = impl_mod._inject_answers(plan, answers)
+
+        if not click.confirm("\nProceed with plan?", default=True):
+            click.echo("Aborted.")
+            return
+    elif questions and skip_clarify:
+        click.echo(f"\n  Skipping {len(questions)} question(s) (--yes)")
+
+    # Phase 3: Execute
+    click.echo(f"\nExecuting plan...\n")
+    try:
+        plan_id = impl_mod.execute_plan(
+            plan=plan,
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=model,
+            max_turns=max_turns or 50,
+            auto_approve=True,
+            budget_usd=budget_usd,
+            max_concurrent=max_concurrent,
+        )
+        click.echo(f"\nPlan created: {plan_id}")
+        click.echo(f"  First step launching. Use 'elmer status' to monitor progress.")
+        click.echo(f"  Use 'elmer implement --status' for plan-level view.")
+        click.echo(f"  If a step fails, use 'elmer implement --resume {plan_id}' to retry.")
+    except RuntimeError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 @cli.command()

@@ -106,6 +106,17 @@ max_turns = 50
 #   "opportunity-scan:",
 # ]
 
+[verification]
+# on_done = "pnpm build && pnpm test"  # global verification for all explorations
+max_retries = 2                         # auto-amend attempts before marking failed
+
+[implement]
+model = "opus"                    # model for implementation sessions
+decompose_model = "opus"          # model for milestone decomposition
+decompose_max_turns = 30          # max turns for decomposition
+max_turns = 50                    # per-step turn limit
+# budget_usd = 100.00             # total budget for entire milestone
+
 # Per-million-token rates (USD) for cost estimation.
 # Used only when claude CLI does not report actual cost.
 [costs.rates]

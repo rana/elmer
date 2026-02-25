@@ -52,7 +52,11 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                          ("on_decline", "TEXT"),
                          ("decline_reason", "TEXT"),
                          ("ensemble_id", "TEXT"),
-                         ("ensemble_role", "TEXT")]:
+                         ("ensemble_role", "TEXT"),
+                         ("verify_cmd", "TEXT"),
+                         ("plan_id", "TEXT"),
+                         ("plan_step", "INTEGER"),
+                         ("amend_count", "INTEGER DEFAULT 0")]:
         try:
             conn.execute(f"ALTER TABLE explorations ADD COLUMN {col} {coltype}")
         except sqlite3.OperationalError:
@@ -85,6 +89,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             output_tokens INTEGER,
             cost_usd REAL,
             created_at TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS plans (
+            id TEXT PRIMARY KEY,
+            milestone_ref TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            plan_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            completed_at TEXT,
+            total_cost_usd REAL DEFAULT 0
         )
     """)
 
@@ -131,18 +147,23 @@ def create_exploration(
     on_decline: Optional[str] = None,
     ensemble_id: Optional[str] = None,
     ensemble_role: Optional[str] = None,
+    verify_cmd: Optional[str] = None,
+    plan_id: Optional[str] = None,
+    plan_step: Optional[int] = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO explorations
             (id, topic, archetype, branch, worktree_path, status, model, pid,
              created_at, parent_id, max_turns, auto_approve, generate_prompt,
-             budget_usd, on_approve, on_decline, ensemble_id, ensemble_role)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             budget_usd, on_approve, on_decline, ensemble_id, ensemble_role,
+             verify_cmd, plan_id, plan_step)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (id, topic, archetype, branch, worktree_path, status, model, pid,
          _now(), parent_id, max_turns, int(auto_approve), int(generate_prompt),
-         budget_usd, on_approve, on_decline, ensemble_id, ensemble_role),
+         budget_usd, on_approve, on_decline, ensemble_id, ensemble_role,
+         verify_cmd, plan_id, plan_step),
     )
     conn.commit()
 
@@ -347,3 +368,63 @@ def get_ensemble_status(conn: sqlite3.Connection, ensemble_id: str) -> str:
     if any(r["status"] == "running" for r in replicas):
         return "running"
     return "pending"
+
+
+# --- Plan CRUD ---
+
+
+def create_plan(
+    conn: sqlite3.Connection,
+    *,
+    id: str,
+    milestone_ref: str,
+    plan_json: str,
+) -> None:
+    """Create an implementation plan."""
+    conn.execute(
+        "INSERT INTO plans (id, milestone_ref, plan_json, created_at) VALUES (?, ?, ?, ?)",
+        (id, milestone_ref, plan_json, _now()),
+    )
+    conn.commit()
+
+
+def get_plan(conn: sqlite3.Connection, plan_id: str) -> Optional[sqlite3.Row]:
+    return conn.execute("SELECT * FROM plans WHERE id = ?", (plan_id,)).fetchone()
+
+
+def list_plans(conn: sqlite3.Connection, status: Optional[str] = None) -> list[sqlite3.Row]:
+    if status:
+        return conn.execute(
+            "SELECT * FROM plans WHERE status = ? ORDER BY created_at", (status,)
+        ).fetchall()
+    return conn.execute("SELECT * FROM plans ORDER BY created_at").fetchall()
+
+
+def update_plan(conn: sqlite3.Connection, plan_id: str, **kwargs) -> None:
+    if not kwargs:
+        return
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    values = list(kwargs.values()) + [plan_id]
+    conn.execute(f"UPDATE plans SET {sets} WHERE id = ?", values)
+    conn.commit()
+
+
+def get_plan_explorations(conn: sqlite3.Connection, plan_id: str) -> list[sqlite3.Row]:
+    """Get all explorations belonging to a plan, ordered by step number."""
+    return conn.execute(
+        "SELECT * FROM explorations WHERE plan_id = ? ORDER BY plan_step",
+        (plan_id,),
+    ).fetchall()
+
+
+def increment_amend_count(conn: sqlite3.Connection, exploration_id: str) -> int:
+    """Increment and return the amend count for an exploration."""
+    conn.execute(
+        "UPDATE explorations SET amend_count = COALESCE(amend_count, 0) + 1 WHERE id = ?",
+        (exploration_id,),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT amend_count FROM explorations WHERE id = ?", (exploration_id,),
+    ).fetchone()
+    return row["amend_count"] if row else 0

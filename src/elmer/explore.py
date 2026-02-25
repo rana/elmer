@@ -148,6 +148,9 @@ def start_exploration(
     on_approve: Optional[str] = None,
     on_decline: Optional[str] = None,
     slug_override: Optional[str] = None,
+    verify_cmd: Optional[str] = None,
+    plan_id: Optional[str] = None,
+    plan_step: Optional[int] = None,
 ) -> tuple[str, str]:
     """Start a new exploration. Returns (slug, archetype_used).
 
@@ -165,6 +168,11 @@ def start_exploration(
 
     on_approve/on_decline are shell commands executed after approval/declining.
     $ID and $TOPIC are substituted with the exploration ID and topic.
+
+    verify_cmd: shell command run after session completes. Exit 0 = pass.
+    On failure, auto-amends up to [verification] max_retries times (ADR-038).
+
+    plan_id/plan_step: link this exploration to an implementation plan.
     """
     if not worker.check_claude_available():
         raise RuntimeError(
@@ -259,6 +267,9 @@ def start_exploration(
             budget_usd=budget_usd,
             on_approve=on_approve,
             on_decline=on_decline,
+            verify_cmd=verify_cmd,
+            plan_id=plan_id,
+            plan_step=plan_step,
         )
         for dep_id in depends_on:
             state.add_dependency(conn, slug, dep_id)
@@ -326,6 +337,9 @@ def start_exploration(
         budget_usd=budget_usd,
         on_approve=on_approve,
         on_decline=on_decline,
+        verify_cmd=verify_cmd,
+        plan_id=plan_id,
+        plan_step=plan_step,
     )
 
     # Record dependencies even if all satisfied (for lineage tracking)

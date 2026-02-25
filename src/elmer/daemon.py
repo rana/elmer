@@ -22,6 +22,7 @@ from . import (
     explore as explore_mod,
     gate,
     generate as gen_mod,
+    implement as impl_mod,
     review,
     state,
     synthesize as synth_mod,
@@ -472,6 +473,15 @@ def _run_cycle(
                     logger.info("Generated %d new topic(s)", len(topics))
                 except RuntimeError as e:
                     logger.warning("Topic generation failed: %s", e)
+
+    # Step 6c: Check implementation plan completion
+    try:
+        active_plans = impl_mod.get_plan_status(elmer_dir)
+        for plan in active_plans:
+            if plan["status"] == "completed":
+                logger.info("Plan completed: %s (%s)", plan["id"], plan["milestone_ref"])
+    except Exception as e:
+        logger.warning("Plan status check failed: %s", e)
 
     # Step 7: Budget check
     if budget_per_cycle is not None:

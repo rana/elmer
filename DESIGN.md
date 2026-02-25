@@ -60,6 +60,7 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `pr.py` | PR creation via gh CLI |
 | `digest.py` | Convergence digest synthesis from exploration history |
 | `synthesize.py` | Ensemble synthesis — consolidate multiple proposals on the same topic |
+| `implement.py` | Milestone decomposition and autonomous implementation orchestration |
 | `mcp_server.py` | MCP server — structured tool access over stdio |
 
 ### Data Flow
@@ -96,6 +97,14 @@ digest  → read approved/declined proposals from .elmer/proposals/ (archive met
         → run claude -p with digest meta-agent (synchronous)
         → store result in .elmer/digests/
 
+implement → decompose milestone via meta-agent (opus, reads project docs)
+          → present plan + questions to user (or --dry-run)
+          → inject user answers into step topics
+          → create chained explorations with verify_cmd and plan_id
+          → daemon/scheduler executes steps in dependency order
+          → verification hooks auto-amend on failure (ADR-038)
+          → plan completes when all steps approved
+
 clean   → remove worktrees/state for failed/orphaned explorations
         → git worktree prune
 ```
@@ -106,15 +115,17 @@ clean   → remove worktrees/state for failed/orphaned explorations
 pending → running → done → approved
                         → declined
                         → amending → done
+                  → [verify] → amending → done (auto-amend on failure, ADR-038)
                   → failed → declined
                            → amending → done
 ```
 
 - **pending**: Blocked by unmet dependencies (no worktree yet)
 - **running**: Claude session active (PID alive)
-- **done**: Session finished, PROPOSAL.md exists
-- **amending**: Revision session active — `elmer amend` spawned a Claude session to revise the proposal based on editorial feedback. Transitions back to `done` when finished.
-- **failed**: Session finished, no PROPOSAL.md in worktree. Failure reason diagnosed from session log (wrong write path, claude error, permission denials, or normal completion without output).
+- **[verify]**: If `verify_cmd` is set (per-exploration or global), runs after PROPOSAL.md commit. On pass → done. On fail → auto-amend (up to `max_retries`), then failed.
+- **done**: Session finished, PROPOSAL.md exists, verification passed (if applicable)
+- **amending**: Revision session active — triggered by editorial feedback (`elmer amend`) or verification failure (auto-amend). Transitions back to `done` when finished, re-triggering verification if applicable.
+- **failed**: Session finished without PROPOSAL.md, or verification exhausted max retries. If part of a plan, the plan is paused.
 - **approved**: Branch merged, worktree removed
 - **declined**: Branch deleted, worktree removed
 
@@ -160,7 +171,11 @@ explorations (
     auto_approve INTEGER DEFAULT 0, -- 1 = trigger AI review on completion
     on_approve TEXT,               -- shell command on approval ($ID, $TOPIC)
     on_decline TEXT,               -- shell command on declining ($ID, $TOPIC)
-    decline_reason TEXT            -- why it was declined (feeds digest synthesis)
+    decline_reason TEXT,           -- why it was declined (feeds digest synthesis)
+    verify_cmd TEXT,               -- shell command to verify before done (ADR-038)
+    plan_id TEXT,                  -- implementation plan this step belongs to (ADR-039)
+    plan_step INTEGER,             -- step index within the plan
+    amend_count INTEGER DEFAULT 0  -- auto-amend attempts for verification
 )
 
 dependencies (
@@ -178,6 +193,16 @@ costs (
     output_tokens INTEGER,
     cost_usd REAL,
     created_at TEXT NOT NULL
+)
+
+plans (
+    id TEXT PRIMARY KEY,           -- slug from milestone_ref
+    milestone_ref TEXT NOT NULL,   -- original milestone text
+    status TEXT NOT NULL DEFAULT 'active',  -- active|completed|paused
+    plan_json TEXT NOT NULL,       -- full decomposition output (JSON)
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    total_cost_usd REAL DEFAULT 0
 )
 
 daemon_log (
@@ -212,11 +237,11 @@ Agent resolution order:
 
 Meta-operation agent resolution uses `elmer-meta-<name>` prefix.
 
-Exploration archetypes (8): explore, explore-act, prototype, adr-proposal, question-cluster, benchmark, dead-end-analysis, devil-advocate. Action archetypes (explore-act, prototype, adr-proposal, benchmark) have `Edit, Write`; analysis archetypes (explore, question-cluster, dead-end-analysis, devil-advocate) have `Write` only. All have `Read, Grep, Glob, Bash`.
+Exploration archetypes (9): explore, explore-act, prototype, implement, adr-proposal, question-cluster, benchmark, dead-end-analysis, devil-advocate. Action archetypes (explore-act, prototype, implement, adr-proposal, benchmark) have `Edit, Write`; analysis archetypes (explore, question-cluster, dead-end-analysis, devil-advocate) have `Write` only. All have `Read, Grep, Glob, Bash`.
 
 Audit archetypes (8): consistency-audit, coherence-audit, architecture-audit, operational-audit, documentation-audit, opportunity-scan, workflow-audit, mission-audit. Tools: `Read, Grep, Glob, Bash, Write`.
 
-Meta-operation agents (9): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants, amend, digest. Model: `sonnet`. The amend agent has `Read, Grep, Glob, Bash, Edit, Write` for editorial revision. The digest agent synthesizes convergence across approved/declined proposals.
+Meta-operation agents (11): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants, amend, digest, synthesize, decompose. Model: `sonnet` (except decompose which uses `opus` for deep architectural reasoning). The amend agent has `Read, Grep, Glob, Bash, Edit, Write` for editorial revision. The digest agent synthesizes convergence across approved/declined proposals. The decompose agent reads project docs and produces structured JSON implementation plans (ADR-039).
 
 ### Git Integration
 
@@ -336,7 +361,7 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 
 ### MCP Server
 
-`mcp_server.py` exposes Elmer state and operations as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP). 21 tools total.
+`mcp_server.py` exposes Elmer state and operations as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP). 23 tools total.
 
 **Read-only tools (8):**
 
@@ -373,6 +398,13 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 | `elmer_mine_questions` | `questions.mine_questions()` + optional spawn | Extracts open questions from docs. Optionally spawns explorations. |
 | `elmer_digest` | `digest.run_digest()` | Synthesizes convergence digest from approved/declined proposals. Optional time and topic filters. |
 
+**Implementation tools (2):**
+
+| Tool | Wraps | Effect |
+|------|-------|--------|
+| `elmer_implement` | `implement.decompose_milestone()` + `execute_plan()` | Decompose milestone into steps, optionally execute. Supports dry_run. |
+| `elmer_plan_status` | `implement.get_plan_status()` | Plan progress with per-step status and cost. |
+
 **Batch tool (1):**
 
 | Tool | Wraps | Effect |
@@ -389,6 +421,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-17 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+22 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-24, MCP observability + safety enhancements (21 tools), design principles, recover_partial, preview/dry-run modes, progress indicators*
+*Last updated: 2026-02-25, verification hooks (ADR-038), implement command (ADR-039), implement module, plans table, decompose agent (23 tools)*

@@ -90,6 +90,10 @@ elmer clean
 | `elmer mine-questions` | Extract open questions from project docs |
 | `elmer mine-questions --spawn` | Mine questions and explore them |
 | `elmer insights` | List cross-project insights |
+| `elmer implement "milestone"` | Decompose milestone into steps and execute autonomously |
+| `elmer implement --dry-run` | Preview the plan without executing |
+| `elmer implement --status` | Show active plan progress |
+| `elmer implement --resume PLAN` | Resume a paused plan (retry failed steps) |
 | `elmer daemon` | Start the daemon for continuous operation |
 | `elmer daemon status` | Check if the daemon is running |
 | `elmer daemon stop` | Gracefully stop the daemon |
@@ -114,6 +118,7 @@ elmer explore "topic" --generate-prompt # AI generates the exploration prompt
 elmer explore "topic" --budget 2.00    # Cap cost at $2
 elmer explore "topic" --on-approve "elmer generate --follow-up \$ID"  # Chain on approval
 elmer explore "topic" --on-decline "elmer explore 'alternative to \$TOPIC'"  # Chain on declining
+elmer explore "topic" --verify-cmd "pytest"    # Run verification before marking done (ADR-038)
 
 # Ensemble exploration — run same topic N times, synthesize into one proposal
 elmer explore "topic" --replicas 3                                   # 3 independent runs, auto-synthesize
@@ -170,6 +175,15 @@ elmer status --all-projects            # Aggregated status across all projects
 # Pull requests (requires gh CLI)
 elmer pr my-exploration                # Push branch and create GitHub PR
 
+# Implement — milestone decomposition and autonomous execution
+elmer implement "Milestone 1a"              # Full flow: decompose -> clarify -> execute
+elmer implement "Milestone 1a" --dry-run    # See the plan without executing
+elmer implement "Milestone 1a" -y           # Skip clarifying questions
+elmer implement "Milestone 1a" --budget 50  # $50 total across all steps
+elmer implement "Milestone 1a" --max-concurrent 3  # Allow parallel steps
+elmer implement --status                    # Show active plan progress
+elmer implement --resume milestone-1a       # Resume after a paused step
+
 # Daemon options
 elmer daemon --interval 300            # 5-minute cycle interval
 elmer daemon --auto-approve --generate # Full autonomy mode
@@ -187,6 +201,7 @@ Archetypes define how Claude explores a topic. Each archetype is implemented as 
 | `explore` | Read-only analysis — think deeply, no action bias | Read, Grep, Glob, Bash, Write |
 | `explore-act` | Analysis biased toward concrete action proposals | Read, Grep, Glob, Bash, Edit, Write |
 | `prototype` | Write working code on the branch | Read, Grep, Glob, Bash, Edit, Write |
+| `implement` | Implementation specialist with self-verification | Read, Grep, Glob, Bash, Edit, Write |
 | `adr-proposal` | Propose architecture decisions with alternatives | Read, Grep, Glob, Bash, Edit, Write |
 | `question-cluster` | Explore clusters of related open questions | Read, Grep, Glob, Bash, Write |
 | `benchmark` | Measure, evaluate, and recommend improvements | Read, Grep, Glob, Bash, Edit, Write |
@@ -251,6 +266,15 @@ model = "sonnet"
 max_turns = 5
 threshold = 5            # Approvals since last digest before daemon auto-synthesizes
 
+[verification]
+# on_done = "make test"      # Global verification command for all explorations
+max_retries = 2              # Auto-amend attempts before marking failed
+
+[implement]
+model = "opus"               # Model for implementation steps
+decompose_model = "opus"     # Model for milestone decomposition
+decompose_max_turns = 30     # Max turns for decomposition agent
+
 [invariants]
 model = "sonnet"
 max_turns = 5
@@ -309,11 +333,12 @@ With `--agents`, copies all bundled subagent definitions for customization:
 
 ```
 .claude/agents/
-├── elmer-explore-act.md       # Exploration agents (8)
+├── elmer-explore-act.md       # Exploration agents (9)
 ├── elmer-explore.md
 ├── elmer-consistency-audit.md # Audit agents (8)
-├── elmer-meta-review-gate.md  # Meta-operation agents (7)
-└── ...                        # 23 agents total
+├── elmer-meta-review-gate.md  # Meta-operation agents (11)
+├── elmer-meta-decompose.md    # Milestone decomposition
+└── ...                        # 28 agents total
 ```
 
 Agents define exploration methodology as Claude Code custom subagents with tool restrictions and model selection. Local copies override bundled defaults. See ADR-026 in DECISIONS.md.
@@ -347,11 +372,12 @@ Add to your `.claude/mcp.json` (project-level) or `~/.claude/mcp.json` (global):
 }
 ```
 
-This gives Claude Code 21 tools in 4 categories, all returning structured JSON:
+This gives Claude Code 23 tools in 5 categories, all returning structured JSON:
 
 - **Read-only (8):** `elmer_status`, `elmer_review`, `elmer_costs`, `elmer_tree`, `elmer_archetypes`, `elmer_insights`, `elmer_config_get`, `elmer_recover_partial`
 - **Mutation (8):** `elmer_explore`, `elmer_approve`, `elmer_amend`, `elmer_decline`, `elmer_cancel`, `elmer_retry`, `elmer_clean`, `elmer_pr`
 - **Intelligence (4):** `elmer_generate`, `elmer_validate`, `elmer_mine_questions`, `elmer_digest`
+- **Implementation (2):** `elmer_implement`, `elmer_plan_status`
 - **Batch (1):** `elmer_batch`
 
 ### CLI Fallback

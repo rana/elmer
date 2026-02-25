@@ -20,6 +20,7 @@ from . import (
     explore as explore_mod,
     gate,
     generate as gen_mod,
+    implement as impl_mod,
     insights as insights_mod,
     invariants as inv_mod,
     pr as pr_mod,
@@ -1595,6 +1596,109 @@ def elmer_batch(
             result["queued"] = len(spawned) - launched
 
         return result
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Implementation Tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def elmer_implement(
+    milestone: str,
+    dry_run: bool = False,
+    skip_clarify: bool = False,
+    model: Optional[str] = None,
+    budget_usd: Optional[float] = None,
+    max_concurrent: int = 1,
+) -> dict:
+    """Decompose a milestone into implementation steps and execute autonomously.
+
+    Reads project docs (ROADMAP.md, DESIGN.md, DECISIONS.md), decomposes
+    the milestone into ordered steps with verification commands, and
+    executes them as chained explorations with auto-amend on failure.
+
+    Parameters:
+        milestone: Milestone reference (e.g., "Milestone 1a").
+        dry_run: Decompose and return plan without executing.
+        skip_clarify: Skip clarification questions (use defaults).
+        model: Model for implementation sessions (default: from config).
+        budget_usd: Total budget in USD for all steps.
+        max_concurrent: Max parallel steps (default: 1 for chain safety).
+    """
+    try:
+        project_dir, elmer_dir = _find_project()
+
+        # Decompose
+        plan = impl_mod.decompose_milestone(
+            milestone_ref=milestone,
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=model,
+        )
+
+        if dry_run:
+            return {
+                "milestone": plan.get("milestone", milestone),
+                "steps": [
+                    {
+                        "index": i,
+                        "title": s.get("title", ""),
+                        "verify_cmd": s.get("verify_cmd", ""),
+                        "depends_on": s.get("depends_on", []),
+                    }
+                    for i, s in enumerate(plan.get("steps", []))
+                ],
+                "questions": plan.get("questions", []),
+                "dry_run": True,
+            }
+
+        # Execute
+        plan_id = impl_mod.execute_plan(
+            plan=plan,
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=model,
+            auto_approve=True,
+            budget_usd=budget_usd,
+            max_concurrent=max_concurrent,
+        )
+
+        return {
+            "plan_id": plan_id,
+            "milestone": plan.get("milestone", milestone),
+            "steps_created": len(plan.get("steps", [])),
+            "questions_skipped": len(plan.get("questions", [])) if skip_clarify else 0,
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def elmer_plan_status(plan_id: Optional[str] = None) -> dict:
+    """Show status of implementation plans with per-step progress.
+
+    Parameters:
+        plan_id: Specific plan to query (default: all plans).
+    """
+    try:
+        _, elmer_dir = _find_project()
+        plans = impl_mod.get_plan_status(elmer_dir, plan_id)
+
+        return {
+            "plans": [
+                {
+                    "id": p["id"],
+                    "milestone": p["milestone_ref"],
+                    "status": p["status"],
+                    "total_cost": p.get("total_cost", 0),
+                    "steps": p.get("steps", []),
+                }
+                for p in plans
+            ]
+        }
     except Exception as exc:
         return {"error": str(exc)}
 
