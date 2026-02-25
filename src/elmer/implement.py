@@ -242,12 +242,20 @@ def _build_step_context(
     plan_id: str,
     plan_json: dict,
     current_step: int,
+    *,
+    max_context_chars: int = 12000,
 ) -> str:
     """Build cross-step context block for injection into a step's topic.
 
     Tells the implementation session where it sits in the plan, what previous
     steps accomplished, and what's coming next. This is the primary mechanism
     for information flow between steps (ADR-040).
+
+    Context budget (ADR-044): for long plans, context grows linearly with step
+    count and can overflow the claude context window. We enforce a character
+    budget by prioritizing recent/dependency steps with full detail and
+    compressing older steps to one-line summaries. Key file artifacts are
+    limited to the most recent 3 steps that declare them.
     """
     steps = plan_json.get("steps", [])
     milestone = plan_json.get("milestone", "unknown")
@@ -264,8 +272,18 @@ def _build_step_context(
     plan_exps = state.get_plan_explorations(conn, plan_id)
     exp_by_step = {e["plan_step"]: e for e in plan_exps}
 
+    # Determine which previous steps get full detail vs one-line summary.
+    # "Recent" = last 3 steps before current, or direct dependencies.
+    step_deps = set(steps[current_step].get("depends_on", [])) if current_step < len(steps) else set()
+    recent_window = max(0, current_step - 3)
+    def _is_detailed(idx: int) -> bool:
+        return idx >= recent_window or idx in step_deps
+
     # Previous steps summary
-    artifact_lines: list[str] = []  # Collect key file artifacts separately
+    artifact_lines: list[str] = []
+    # Only collect key files from the 3 most recent approved steps
+    artifact_step_limit = 3
+    artifact_steps_collected = 0
 
     if current_step > 0:
         lines.append("### Previous Steps")
@@ -274,6 +292,13 @@ def _build_step_context(
             step_def = steps[i] if i < len(steps) else {}
             title = step_def.get("title", f"Step {i}")
             exp = exp_by_step.get(i)
+
+            if not _is_detailed(i):
+                # Compressed: one-line summary for older steps
+                status = exp["status"] if exp else "not created"
+                lines.append(f"- Step {i}: {title} [{status}]")
+                continue
+
             if exp:
                 status = exp["status"]
                 icon = {"approved": "+", "done": "*", "running": "~",
@@ -302,20 +327,23 @@ def _build_step_context(
                         pass
 
                     # Inject key file artifacts from approved steps (ADR-042)
-                    key_files = step_def.get("key_files", [])
-                    for kf in key_files:
-                        kf_path = project_dir / kf
-                        if kf_path.exists():
-                            try:
-                                content = kf_path.read_text()
-                                # Truncate large files
-                                if len(content) > 2000:
-                                    content = content[:2000] + "\n... (truncated)"
-                                artifact_lines.append(
-                                    f"#### {kf} (from Step {i})\n\n```\n{content}\n```"
-                                )
-                            except Exception:
-                                pass
+                    # Limited to most recent steps to control context size (ADR-044)
+                    if artifact_steps_collected < artifact_step_limit:
+                        key_files = step_def.get("key_files", [])
+                        for kf in key_files:
+                            kf_path = project_dir / kf
+                            if kf_path.exists():
+                                try:
+                                    content = kf_path.read_text()
+                                    if len(content) > 2000:
+                                        content = content[:2000] + "\n... (truncated)"
+                                    artifact_lines.append(
+                                        f"#### {kf} (from Step {i})\n\n```\n{content}\n```"
+                                    )
+                                except Exception:
+                                    pass
+                        if key_files:
+                            artifact_steps_collected += 1
             else:
                 lines.append(f"- Step {i}: {title} [not yet created]")
         lines.append("")
@@ -339,7 +367,18 @@ def _build_step_context(
         lines.append("")
 
     conn.close()
-    return "\n".join(lines)
+
+    # Enforce context budget: if total exceeds limit, progressively truncate
+    result = "\n".join(lines)
+    if len(result) > max_context_chars:
+        # Drop key file artifacts first (most expensive)
+        lines_no_artifacts = [l for l in lines
+                              if not l.startswith("#### ") and not l.startswith("```")]
+        result = "\n".join(lines_no_artifacts)
+        if len(result) > max_context_chars:
+            result = result[:max_context_chars] + "\n... (context truncated)"
+
+    return result
 
 
 def execute_plan(
@@ -399,6 +438,7 @@ def execute_plan(
         id=plan_id,
         milestone_ref=milestone_ref,
         plan_json=json.dumps(plan),
+        budget_usd=budget_usd,
     )
     conn.close()
 
@@ -436,13 +476,27 @@ def execute_plan(
 
         archetype = step.get("archetype", "implement")
         verify_cmd = step.get("verify_cmd")
+        setup_cmd = step.get("setup_cmd")
 
         # Cross-step context injection (ADR-040): tell this step about
         # the plan, what previous steps accomplished, and what's next
         step_context = _build_step_context(
             elmer_dir, project_dir, plan_id, plan, i,
         )
-        enriched_topic = step["topic"] + "\n\n" + step_context
+
+        # Inject verify_cmd so the agent knows its success criterion (ADR-043)
+        verify_block = ""
+        if verify_cmd:
+            verify_block = (
+                "\n\n## Verification\n\n"
+                f"After completing your work, this command will be run to verify it:\n\n"
+                f"```\n{verify_cmd}\n```\n\n"
+                f"Run this command yourself before writing PROPOSAL.md. "
+                f"If it fails, fix the issues — do not skip or remove tests. "
+                f"Include the command output in your PROPOSAL.md."
+            )
+
+        enriched_topic = step["topic"] + verify_block + "\n\n" + step_context
 
         try:
             slug, _ = explore_mod.start_exploration(
@@ -458,6 +512,7 @@ def execute_plan(
                 verify_cmd=verify_cmd,
                 plan_id=plan_id,
                 plan_step=i,
+                setup_cmd=setup_cmd,
             )
             exploration_ids[i] = slug
             prev_id = slug
@@ -523,6 +578,7 @@ def get_plan_status(elmer_dir: Path, plan_id: Optional[str] = None) -> list[dict
                     total_cost_usd=total_cost,
                 )
                 plan_dict["status"] = "completed"
+                plan_dict["_newly_completed"] = True
         elif any(s == "failed" for s in statuses):
             if plan_dict["status"] == "active":
                 state.update_plan(conn, plan["id"], status="paused")
@@ -560,7 +616,9 @@ def show_plan_status(elmer_dir: Path, plan_id: Optional[str] = None) -> None:
         click.echo(f"  Milestone: {plan['milestone_ref']}")
         click.echo(f"  Status:    {plan['status']}")
         if plan.get("total_cost"):
-            click.echo(f"  Cost:      ${plan['total_cost']:.2f}")
+            budget = plan.get("budget_usd")
+            budget_str = f" / ${budget:.2f}" if budget else ""
+            click.echo(f"  Cost:      ${plan['total_cost']:.2f}{budget_str}")
         click.echo()
 
         steps = plan.get("steps", [])
@@ -634,3 +692,102 @@ def resume_plan(
             click.echo(f"  Retry failed: {e}", err=True)
 
     click.echo(f"Plan '{plan_id}' resumed. {len(failed)} step(s) retried.")
+
+
+def run_completion_check(
+    elmer_dir: Path,
+    project_dir: Path,
+    plan_id: str,
+    *,
+    notify=None,
+) -> bool:
+    """Run integration verification after all plan steps are approved (ADR-044).
+
+    Checks that the assembled project works as a whole. Uses the plan's
+    completion_verify_cmd (from plan JSON), the global [verification] on_done,
+    or the last step's verify_cmd as fallback.
+
+    Returns True if verification passed (or no command to run).
+    """
+    if notify is None:
+        notify = click.echo
+
+    conn = state.get_db(elmer_dir)
+    plan = state.get_plan(conn, plan_id)
+    if plan is None:
+        conn.close()
+        return True
+
+    # Determine the verification command
+    verify_cmd = None
+
+    # Priority 1: completion_verify_cmd in plan JSON
+    try:
+        plan_json = json.loads(plan["plan_json"])
+        verify_cmd = plan_json.get("completion_verify_cmd")
+    except (json.JSONDecodeError, KeyError):
+        plan_json = {}
+
+    # Priority 2: global [verification] on_done from config
+    if not verify_cmd:
+        cfg = config.load_config(elmer_dir)
+        verify_cmd = cfg.get("verification", {}).get("on_done")
+
+    # Priority 3: last step's verify_cmd
+    if not verify_cmd:
+        steps = plan_json.get("steps", [])
+        if steps:
+            verify_cmd = steps[-1].get("verify_cmd")
+
+    if not verify_cmd:
+        conn.close()
+        notify(f"  Plan {plan_id}: no completion verification command configured")
+        return True
+
+    # Run in the project directory (main branch, all steps merged)
+    notify(f"  Plan {plan_id}: running integration verification...")
+    notify(f"    Command: {verify_cmd}")
+
+    try:
+        result = subprocess.run(
+            verify_cmd,
+            shell=True,
+            cwd=str(project_dir),
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        output = (result.stdout + result.stderr).strip()
+        if len(output) > 2000:
+            output = output[:2000] + "\n... (truncated)"
+
+        if result.returncode == 0:
+            notify(f"  Plan {plan_id}: integration verification PASSED")
+            state.update_plan(
+                conn, plan_id,
+                completion_note=f"Integration verification passed: {verify_cmd}",
+            )
+            conn.close()
+            return True
+        else:
+            notify(f"  Plan {plan_id}: integration verification FAILED (exit {result.returncode})")
+            notify(f"    {output[:500]}")
+            state.update_plan(
+                conn, plan_id,
+                status="paused",
+                completion_note=f"Integration verification failed (exit {result.returncode}): {output[:500]}",
+            )
+            conn.close()
+            return False
+    except subprocess.TimeoutExpired:
+        notify(f"  Plan {plan_id}: integration verification timed out (600s)")
+        state.update_plan(
+            conn, plan_id,
+            completion_note="Integration verification timed out",
+        )
+        conn.close()
+        return False
+    except (FileNotFoundError, OSError) as e:
+        notify(f"  Plan {plan_id}: integration verification error: {e}")
+        conn.close()
+        return False

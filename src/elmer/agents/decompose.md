@@ -38,6 +38,7 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
       "title": "Short human-readable title",
       "topic": "Full implementation prompt for the Claude session. Be specific: name files to create, patterns to follow, ADRs to respect. This is the ONLY context the implementation session receives besides the project docs.",
       "verify_cmd": "shell command that exits 0 on success (e.g., 'pnpm build && pnpm test')",
+      "setup_cmd": "pnpm install",
       "depends_on": [],
       "archetype": "implement",
       "key_files": ["package.json", "lib/config.ts"]
@@ -46,11 +47,13 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
       "title": "Second step",
       "topic": "Full implementation prompt...",
       "verify_cmd": "pnpm test -- --run search.test",
+      "setup_cmd": "pnpm install",
       "depends_on": [0],
       "archetype": "implement",
       "key_files": []
     }
   ],
+  "completion_verify_cmd": "pnpm install && pnpm build && pnpm test && pnpm lint",
   "questions": [
     "Questions that need human answers before implementation can begin. Only ask about things that genuinely block implementation — API keys, service credentials, deployment targets, ambiguous requirements."
   ]
@@ -61,6 +64,8 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
 
 - **`prerequisites`** — Environment variables, commands, and files that must exist before plan execution. Checked before any step launches. Omit if no prerequisites.
 - **`key_files`** — Files this step creates that subsequent steps need to see. Their content is injected into the next step's context after this step is approved. Use for: config files, `.env.example`, service interfaces, schema files.
+- **`setup_cmd`** — Shell command run in the worktree before the implementation session starts. Used for dependency installation (e.g., `pnpm install`). Each step's worktree is created fresh from the main branch — gitignored artifacts like `node_modules/` don't exist. Without `setup_cmd`, the implementation agent must install dependencies itself, wasting time and risking errors.
+- **`completion_verify_cmd`** — (Plan-level, not per-step.) Shell command run after ALL steps are approved to verify the assembled project works as a whole. Falls back to the last step's `verify_cmd` if not specified.
 
 ## Rules
 
@@ -97,3 +102,7 @@ When the project has no code yet (only documentation), apply these additional ru
 14. **Separate concerns per step.** For a full-stack app: database schema → service layer → API routes → frontend pages → integration tests. Each layer should be its own step so verification is meaningful (you can test services without UI, API routes without frontend, etc.).
 
 15. **Don't defer .env.example.** Every step that introduces a new environment variable must update `.env.example`. The scaffold step must create it with every variable the project will ever need (based on DESIGN.md), even if most start empty. This is the contract between the project and its deployment environment.
+
+16. **Every step after step 0 needs `setup_cmd`.** Each step runs in a fresh git worktree. Gitignored artifacts (`node_modules/`, `target/`, `.venv/`) don't carry over. Set `"setup_cmd": "pnpm install"` (or `pip install -e .`, `cargo build`, etc.) on every step that has a package manager lockfile. Without this, the implementation agent wastes time discovering and running install commands, and verify_cmd fails on missing dependencies.
+
+17. **Include `completion_verify_cmd` at the plan level.** After all steps merge, the assembled project should be verified end-to-end. Set this to the full build+test+lint command (e.g., `"completion_verify_cmd": "pnpm install && pnpm build && pnpm test && pnpm lint"`). This catches integration issues that per-step verification misses.

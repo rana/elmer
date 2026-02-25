@@ -474,12 +474,24 @@ def _run_cycle(
                 except RuntimeError as e:
                     logger.warning("Topic generation failed: %s", e)
 
-    # Step 6c: Check implementation plan completion
+    # Step 6c: Check implementation plan completion and run integration verification
     try:
         active_plans = impl_mod.get_plan_status(elmer_dir)
         for plan in active_plans:
-            if plan["status"] == "completed":
+            if plan.get("_newly_completed"):
                 logger.info("Plan completed: %s (%s)", plan["id"], plan["milestone_ref"])
+                # Run integration verification (ADR-044)
+                try:
+                    passed = impl_mod.run_completion_check(
+                        elmer_dir, project_dir, plan["id"],
+                        notify=logger.info,
+                    )
+                    if passed:
+                        logger.info("Plan %s: integration verification passed", plan["id"])
+                    else:
+                        logger.warning("Plan %s: integration verification FAILED — paused for review", plan["id"])
+                except Exception as e:
+                    logger.warning("Plan %s: completion check error: %s", plan["id"], e)
     except Exception as e:
         logger.warning("Plan status check failed: %s", e)
 

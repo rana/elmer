@@ -74,32 +74,42 @@ def evaluate(
         conn.close()
         return False
 
-    # Verification shortcut: if verify_cmd passed, check diff size guard
-    # before auto-approving (ADR-041). Configurable via
-    # [verification] auto_approve_on_pass (default: true).
+    # Verification shortcut: if verify_cmd passed, tests are the authority.
+    # For plan steps, bypass diff size guard entirely — scaffold steps
+    # routinely create 20+ files and tests are the definitive quality check.
+    # For standalone explorations, apply diff size guard as a safety net.
     verify_cmd = exp["verify_cmd"] if "verify_cmd" in exp.keys() else None
     auto_approve_on_pass = verify_cfg.get("auto_approve_on_pass", True)
+    is_plan_step = bool(exp["plan_id"] if "plan_id" in exp.keys() else None)
 
     if verify_cmd and auto_approve_on_pass:
-        diff = worktree.get_branch_diff(project_dir, exp["branch"])
-        file_count = _count_files_in_diff(diff)
-        if file_count <= max_files:
-            # Small diff + passing tests = safe to auto-approve
+        if is_plan_step:
+            # Plan steps: tests passed = approve regardless of diff size.
+            # The verify_cmd is the decompose agent's chosen quality gate.
             gate.approve_exploration(elmer_dir, project_dir, exploration_id)
             return True
-        # Large diff even with passing tests — fall through to AI review
+        else:
+            # Standalone explorations: apply diff size guard
+            diff = worktree.get_branch_diff(project_dir, exp["branch"])
+            file_count = _count_files_in_diff(diff)
+            if file_count <= max_files:
+                gate.approve_exploration(elmer_dir, project_dir, exploration_id)
+                return True
+            # Large diff — fall through to AI review
 
     # AI review gate
     model = aa_cfg.get("model", "sonnet")
     max_turns = aa_cfg.get("max_turns", 3)
     criteria = aa_cfg.get("criteria", "document-only proposals with no code changes")
 
-    # Get diff stat (may already have it from above, but re-fetch to simplify flow)
+    # Get diff stat
     diff = worktree.get_branch_diff(project_dir, exp["branch"])
 
-    # Quick check: if too many files changed, skip AI review
+    # Quick check: if too many files changed, skip AI review (cost savings).
+    # Exception: plan steps should still get AI review if they reached here
+    # (verification shortcut was disabled or verify_cmd absent).
     file_count = _count_files_in_diff(diff)
-    if file_count > max_files:
+    if file_count > max_files and not is_plan_step:
         return False
 
     # Try agent-aware invocation, fall back to template substitution

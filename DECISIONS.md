@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-25 ADRs recorded.
+27 ADRs recorded.
 
 ## Domain Index
 
@@ -33,6 +33,8 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-040 | Intelligence | Cross-step context, plan loading, fallback verification |
 | ADR-041 | Safety | Dependency cascade, proposal validation, verification guard |
 | ADR-042 | Intelligence | Prerequisites, artifact flow, greenfield decomposition |
+| ADR-043 | Safety | Verify-cmd visibility, plan budget enforcement, amend cost attribution |
+| ADR-044 | Resilience | Context budget, plan completion verification, worktree setup commands |
 
 ---
 
@@ -572,11 +574,15 @@ The validation runs before both the verification shortcut and the AI review gate
 
 **Problem:** ADR-038 introduced a verification shortcut: if `verify_cmd` passed, auto-approve skips the AI review entirely. The rationale was "verification is deterministic proof the code works." But this is too permissive — a passing test suite doesn't verify architectural soundness, diff scope, or proposal quality.
 
-**Solution:** Two refinements:
+**Solution:** Three refinements:
 
-1. **Diff size guard** — even with passing verification, check the number of files changed against `max_files_changed` (from `[auto_approve]` config, default 10). Small diff + passing tests = safe to shortcut. Large diff + passing tests = fall through to AI review, because broad changes need architectural review even if they compile.
+1. **Diff size guard for standalone explorations** — for non-plan explorations with passing verification, check file count against `max_files_changed` (default 10). Small diff + passing tests = safe to shortcut. Large diff = fall through to AI review.
 
-2. **Configurable shortcut** — new config option `[verification] auto_approve_on_pass` (default: `true`). Set to `false` to require AI review for all explorations regardless of verification status. Useful for projects where architectural discipline matters more than throughput.
+2. **Plan steps bypass diff size guard** — plan steps with passing `verify_cmd` auto-approve regardless of diff size. The decompose agent chose the verify_cmd as the definitive quality gate, and scaffold steps routinely create 20+ files. Without this bypass, greenfield Step 0 would block every plan.
+
+3. **Configurable shortcut** — `[verification] auto_approve_on_pass` (default: `true`). Set to `false` to require AI review for all explorations regardless of verification status.
+
+The `max_files_changed` guard still applies to the AI-review-only path for standalone explorations. Plan steps without `verify_cmd` still go through AI review with no file count limit.
 
 ```toml
 [verification]
@@ -584,8 +590,10 @@ on_done = "npm test && npm run lint"
 auto_approve_on_pass = true    # false = always require AI review
 
 [auto_approve]
-max_files_changed = 10         # diff size guard for verification shortcut
+max_files_changed = 10         # diff size guard (standalone explorations only)
 ```
+
+*Revised: 2026-02-25, plan steps bypass diff size guard for autonomous operation*
 
 **Files modified:** `state.py` (get_pending_blocked query), `explore.py` (cascade in schedule_ready), `autoapprove.py` (structural validation, verification guard).
 
@@ -653,3 +661,109 @@ After a step is approved and merged, `_build_step_context()` reads the declared 
 **Why one example of each pattern matters more than documentation:** AI agents follow patterns by imitation, not by description. Telling an agent "services go in /lib/services/ with zero framework imports" is less effective than showing it an actual service at that path. When Step 0 creates one real service, Steps 1-5 can reference it as `"follow the pattern in /lib/services/embeddings.ts"` — and the `key_files` artifact flow ensures the agent sees the actual content.
 
 **Files modified:** `implement.py` (validate_prerequisites, artifact injection in _build_step_context), `cli.py` (dry-run prerequisite display), `agents/decompose.md` (prerequisite field, key_files field, greenfield rules 11-15).
+
+## ADR-043: Verification Visibility, Plan Budget Enforcement, and Amend Cost Attribution
+
+**Decision:** Three improvements that close the loop between the AI agent's awareness of its success criteria, the system's ability to cap costs, and the accuracy of plan-level cost reporting.
+
+### Verification Command Visibility
+
+**Problem:** The implementation agent receives its topic (task description) and cross-step context, but NOT the `verify_cmd` that will judge its work. The agent is told generically to "run build/test/lint" (in the implement archetype instructions), but the actual verification command might be `pnpm test -- --run search.test && pnpm lint`. The agent might skip linting, complete its work, and then fail verification — wasting an amend cycle on something entirely preventable.
+
+**Solution:** `execute_plan()` now injects a `## Verification` block into each step's enriched topic:
+
+```
+## Verification
+
+After completing your work, this command will be run to verify it:
+
+    pnpm test -- --run search.test && pnpm lint
+
+Run this command yourself before writing PROPOSAL.md.
+```
+
+This gives the agent explicit knowledge of its success criterion. The agent can run the exact command before declaring completion, catching issues before the external verification hook fires.
+
+**Why inject, not just document:** The implement archetype says "run project's build/test/lint commands." But the verify_cmd may be step-specific (e.g., a targeted test file) or include commands the agent wouldn't guess. Explicit injection eliminates guesswork.
+
+### Plan-Level Budget Enforcement
+
+**Problem:** Budget is divided evenly across steps at plan creation time. If Step 0 costs $25 on a $50 plan budget (each step gets $16.67), Steps 1-2 still launch at $16.67 each, bringing total to $58. Per-step budgets are enforced by the Claude CLI, but there's no plan-level circuit breaker.
+
+**Solution:** Two changes:
+
+1. **Store plan budget:** `plans` table gains a `budget_usd` column. `create_plan()` stores the original budget.
+
+2. **Enforce in scheduler:** `schedule_ready()` checks cumulative plan spend (via `get_plan_spend()`) before launching pending plan explorations. If spend >= budget, the exploration is marked as failed with `"(plan budget exceeded)"` and the plan is paused.
+
+`get_plan_spend()` in `state.py` computes the true cumulative cost: exploration session costs + meta-operation costs (amends, auto-approve reviews) via a JOIN across `explorations` and `costs` tables.
+
+**Why enforce at scheduling, not execution:** By the time a step starts executing, it's already consuming resources. Checking before launch prevents the spend entirely. The scheduler runs every daemon cycle, so the check is frequent.
+
+### Amend Cost Attribution
+
+**Problem:** When auto-amend fires, the amend session's cost is recorded in the `costs` table as a meta-operation (`operation="amend"`) but NOT added to the exploration's `cost_usd` field. Plan total cost uses `SUM(exp.cost_usd)`, so amend costs are invisible in plan status output and budget enforcement.
+
+**Solution:** After an amend session completes and its cost is parsed from the log, the cost is also accumulated into the exploration's `cost_usd`:
+
+```python
+current_cost = exp["cost_usd"] or 0.0
+state.update_exploration(conn, exp["id"], cost_usd=current_cost + cost_result.cost_usd)
+```
+
+This means `exp["cost_usd"]` now represents the true total cost of the exploration (initial + all amends). Plan budget enforcement sees accurate numbers. Plan status display shows accurate per-step and total costs.
+
+**Plan status display** now shows budget: `Cost: $23.50 / $50.00` when a budget is set.
+
+**Files modified:** `implement.py` (verify_cmd injection in execute_plan, budget storage in create_plan, budget display in show_plan_status), `state.py` (budget_usd column migration, create_plan budget param, get_plan_spend query), `explore.py` (budget enforcement in schedule_ready), `review.py` (amend cost roll-up).
+
+## ADR-044: Context Budget, Plan Completion Verification, and Worktree Setup Commands
+
+**Decision:** Three improvements that address scaling failures in long plans, integration verification gaps when all steps pass, and environment readiness in fresh worktrees.
+
+### Context Budget for Cross-Step Context
+
+**Problem:** `_build_step_context()` (ADR-040) grows linearly with step count. For each previous step, it includes: a status line, a proposal summary (up to 200 chars), file change lists, and key file artifacts (up to 2000 chars each). A 15-step plan at step 14 could produce 30KB+ of context — plus the step's own topic, verify_cmd block, and the implement agent's system prompt. This pushes against or exceeds Claude's effective context window, causing late-plan steps to receive truncated or degraded context.
+
+**Solution:** Three mechanisms in `_build_step_context()`:
+
+1. **Prioritized detail levels** — Steps within the last 3 before the current step, and direct dependency steps, get full detail (summary, file changes, key file artifacts). Older steps are compressed to one-line status summaries. This means step 12 of a 15-step plan sees steps 0-8 as one-liners and steps 9-11 with full detail.
+
+2. **Artifact step limit** — Key file artifacts are collected from at most 3 recent approved steps. Older steps' artifacts are omitted. The most important artifacts are from the most recent steps (which built on the earlier ones).
+
+3. **Hard character budget** — If the total context exceeds `max_context_chars` (default 12,000), key file code blocks are dropped first. If still over budget, the entire context is truncated with a marker. This is a safety net — the prioritization above should keep context well within budget for plans up to ~20 steps.
+
+**Why 12,000 chars default:** The step topic itself can be 1-5KB. The verify_cmd block is ~200 chars. The implement agent's system prompt is ~3KB. The project's CLAUDE.md is injected separately. Total prompt needs to stay well under Claude's context limit. 12KB for cross-step context leaves ample room.
+
+**Why not summarize with AI:** AI summarization adds latency and cost per step launch. The structural compression (one-line for old steps, full for recent) is deterministic, free, and predictable. If an agent needs older context, it can read the project docs or git log.
+
+### Plan Completion Verification
+
+**Problem:** When all plan steps are approved, `get_plan_status()` transitions the plan to "completed." But per-step verification tests in isolation — each step runs its verify_cmd in its own worktree against its own changes. Nothing verifies that the assembled pieces work together. A scaffold step might create a config file; a later step might depend on a key that the scaffold step didn't define. Both steps pass individually, but the integration fails.
+
+**Solution:** `run_completion_check()` in `implement.py` runs after a plan transitions to "completed":
+
+1. **Command resolution** — Uses `completion_verify_cmd` from the plan JSON (preferred), falls back to `[verification] on_done` from config, then to the last step's `verify_cmd`.
+2. **Runs in project_dir** — The main branch, where all steps have been merged. This is the true integration environment.
+3. **600s timeout** — Longer than per-step verification (300s) because integration tests may be heavier.
+4. **Pass/fail handling** — On pass, stores a success note in the plan. On fail, pauses the plan with the error output so the human can investigate.
+
+The daemon's cycle step 6c triggers `run_completion_check()` when a plan is newly completed (detected via `_newly_completed` flag set by `get_plan_status()`).
+
+**Why not auto-fix:** Per-step failures auto-amend because the fix scope is clear (one step's changes). Integration failures could be caused by any step's changes, cross-step interactions, or missing glue code. Automated fix would require understanding the full plan's intent. This is a human review boundary.
+
+### Worktree Setup Commands
+
+**Problem:** Each plan step runs in a fresh git worktree created from the main branch. Gitignored artifacts — `node_modules/`, `.venv/`, `target/`, compiled outputs — don't exist in the worktree. When step 1's worktree is created after step 0 merged `package.json`, the worktree has `package.json` but not `node_modules/`. If the implementation agent doesn't run `pnpm install` first, all imports fail, the build breaks, and verify_cmd fails on something entirely unrelated to the agent's work.
+
+The implement agent *should* run install commands (its system prompt says to), but it doesn't always do so, especially when the topic doesn't mention it. This wastes amend cycles on a deterministic, preventable failure.
+
+**Solution:** Steps can declare `"setup_cmd": "pnpm install"` in the plan JSON. The command runs in the worktree after creation but before the Claude session spawns, in both `start_exploration()` (immediate start) and `launch_pending()` (deferred start). Stored in the `explorations` table so deferred steps remember their setup command.
+
+- **Non-fatal:** If setup_cmd fails, a warning is logged but the exploration still starts. The agent can attempt its own recovery. This avoids blocking on transient install failures (network timeouts, registry hiccups).
+- **5-minute timeout:** Long enough for `pnpm install` on a large project, short enough to not stall the pipeline.
+- **Idempotent by convention:** Install commands are inherently idempotent. Running `pnpm install` when `node_modules` exists is a no-op.
+
+The decompose agent's rules 16-17 instruct it to set `setup_cmd` on every step after step 0 and to include `completion_verify_cmd` at the plan level.
+
+**Files modified:** `implement.py` (context budget in _build_step_context, run_completion_check, setup_cmd passthrough), `explore.py` (_run_setup_cmd, setup_cmd in start_exploration and launch_pending), `state.py` (setup_cmd column, completion_note column), `daemon.py` (completion check in cycle step 6c), `agents/decompose.md` (setup_cmd and completion_verify_cmd fields, rules 16-17).

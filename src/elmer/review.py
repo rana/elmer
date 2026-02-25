@@ -432,6 +432,13 @@ def _refresh_running(
                     cost_usd=cost_result.cost_usd,
                     exploration_id=exp["id"],
                 )
+                # Roll amend cost into exploration's cost_usd for accurate
+                # plan-level totals (ADR-043)
+                current_cost = exp["cost_usd"] or 0.0
+                state.update_exploration(
+                    conn, exp["id"],
+                    cost_usd=current_cost + cost_result.cost_usd,
+                )
 
             # Update summary from revised proposal
             if proposal_path.exists():

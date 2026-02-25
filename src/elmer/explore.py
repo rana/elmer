@@ -132,6 +132,38 @@ def _append_proposal_path(prompt: str, worktree_path: Path) -> str:
     )
 
 
+def _run_setup_cmd(setup_cmd: str, worktree_path: Path) -> None:
+    """Run a setup command in a worktree before the claude session starts.
+
+    Used for dependency installation (e.g., pnpm install) so the worktree
+    has all dependencies available when the implementation agent begins.
+    Runs synchronously with a 5-minute timeout. Failures are non-fatal
+    (the agent can still run install itself), but logged as warnings.
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            setup_cmd,
+            shell=True,
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            import logging
+            logging.getLogger("elmer").warning(
+                "setup_cmd failed (exit %d) in %s: %s",
+                result.returncode, worktree_path,
+                (result.stderr or result.stdout)[:300],
+            )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        import logging
+        logging.getLogger("elmer").warning(
+            "setup_cmd error in %s: %s", worktree_path, e,
+        )
+
+
 def start_exploration(
     *,
     topic: str,
@@ -152,6 +184,7 @@ def start_exploration(
     verify_cmd: Optional[str] = None,
     plan_id: Optional[str] = None,
     plan_step: Optional[int] = None,
+    setup_cmd: Optional[str] = None,
 ) -> tuple[str, str]:
     """Start a new exploration. Returns (slug, archetype_used).
 
@@ -174,6 +207,9 @@ def start_exploration(
     On failure, auto-amends up to [verification] max_retries times (ADR-038).
 
     plan_id/plan_step: link this exploration to an implementation plan.
+
+    setup_cmd: shell command run in the worktree after creation, before
+    spawning the claude session. Used for dependency installation (ADR-044).
     """
     if not worker.check_claude_available():
         raise RuntimeError(
@@ -271,6 +307,7 @@ def start_exploration(
             verify_cmd=verify_cmd,
             plan_id=plan_id,
             plan_step=plan_step,
+            setup_cmd=setup_cmd,
         )
         for dep_id in depends_on:
             state.add_dependency(conn, slug, dep_id)
@@ -312,6 +349,10 @@ def start_exploration(
         )
     worktree.create_worktree(project_dir, branch, worktree_path)
 
+    # Run setup command before spawning worker (ADR-044: dependency installation)
+    if setup_cmd:
+        _run_setup_cmd(setup_cmd, worktree_path)
+
     pid = worker.spawn_claude(
         prompt=prompt,
         cwd=worktree_path,
@@ -341,6 +382,7 @@ def start_exploration(
         verify_cmd=verify_cmd,
         plan_id=plan_id,
         plan_step=plan_step,
+        setup_cmd=setup_cmd,
     )
 
     # Record dependencies even if all satisfied (for lineage tracking)
@@ -502,6 +544,11 @@ def launch_pending(
         return
 
     worktree.create_worktree(project_dir, branch, worktree_path)
+
+    # Run setup command before spawning worker (ADR-044: dependency installation)
+    setup_cmd = exp["setup_cmd"] if "setup_cmd" in exp.keys() else None
+    if setup_cmd:
+        _run_setup_cmd(setup_cmd, worktree_path)
 
     pid = worker.spawn_claude(
         prompt=prompt,
@@ -686,10 +733,44 @@ def schedule_ready(elmer_dir: Path, project_dir: Path) -> list[str]:
             state.update_plan(conn, plan_id, status="paused")
 
     ready = state.get_pending_ready(conn)
-    conn.close()
+
+    # Plan-level budget enforcement (ADR-043): skip scheduling if plan
+    # budget is exceeded. Cache per-plan spend to avoid repeated queries.
+    plan_spend_cache: dict[str, float] = {}
+    plan_budget_cache: dict[str, float | None] = {}
 
     launched = []
     for exp in ready:
+        plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+        if plan_id:
+            if plan_id not in plan_spend_cache:
+                plan_row = state.get_plan(conn, plan_id)
+                plan_budget_cache[plan_id] = plan_row["budget_usd"] if plan_row else None
+                plan_spend_cache[plan_id] = state.get_plan_spend(conn, plan_id)
+
+            budget = plan_budget_cache.get(plan_id)
+            spent = plan_spend_cache.get(plan_id, 0.0)
+            if budget is not None and spent >= budget:
+                state.update_exploration(
+                    conn, exp["id"],
+                    status="failed",
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                    proposal_summary=f"(plan budget exceeded: ${spent:.2f} >= ${budget:.2f})",
+                )
+                state.update_plan(conn, plan_id, status="paused")
+                continue
+
+    conn.close()
+
+    for exp in ready:
+        # Re-check: skip if we just marked it failed above
+        plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+        if plan_id:
+            budget = plan_budget_cache.get(plan_id)
+            spent = plan_spend_cache.get(plan_id, 0.0)
+            if budget is not None and spent >= budget:
+                continue
+
         launch_pending(
             exploration_id=exp["id"],
             elmer_dir=elmer_dir,

@@ -421,6 +421,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-25 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+27 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-25, ADR-042 prerequisites, artifact flow, greenfield decomposition (23 tools)*
+*Last updated: 2026-02-25, ADR-044 context budget, completion verification, worktree setup (23 tools)*
