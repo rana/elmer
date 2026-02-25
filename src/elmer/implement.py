@@ -5,6 +5,8 @@ Composes existing primitives (explore, batch, amend, approve) with new capabilit
 - Per-step verification hooks
 - Auto-amend on verification failure
 - Plan tracking and reporting
+- Cross-step context injection (ADR-040)
+- Plan loading from saved files
 """
 
 import json
@@ -15,7 +17,7 @@ from typing import Optional
 
 import click
 
-from . import config, explore as explore_mod, state, worker
+from . import config, explore as explore_mod, state, worker, worktree as wt_mod
 
 
 def _read_project_context(project_dir: Path) -> str:
@@ -180,6 +182,96 @@ def _inject_answers(plan: dict, answers: dict[int, str]) -> dict:
     return plan
 
 
+def load_plan(plan_path: Path) -> dict:
+    """Load a saved plan from a JSON file."""
+    raw = plan_path.read_text()
+    plan = json.loads(raw)
+    if "steps" not in plan:
+        raise ValueError(f"Plan file missing 'steps' key: {plan_path}")
+    return plan
+
+
+def _build_step_context(
+    elmer_dir: Path,
+    project_dir: Path,
+    plan_id: str,
+    plan_json: dict,
+    current_step: int,
+) -> str:
+    """Build cross-step context block for injection into a step's topic.
+
+    Tells the implementation session where it sits in the plan, what previous
+    steps accomplished, and what's coming next. This is the primary mechanism
+    for information flow between steps (ADR-040).
+    """
+    steps = plan_json.get("steps", [])
+    milestone = plan_json.get("milestone", "unknown")
+    lines = [
+        f"## Implementation Plan Context",
+        f"",
+        f"This is **Step {current_step} of {len(steps)}** in milestone \"{milestone}\".",
+        f"Plan ID: {plan_id}",
+        f"",
+    ]
+
+    # Query step statuses from DB
+    conn = state.get_db(elmer_dir)
+    plan_exps = state.get_plan_explorations(conn, plan_id)
+    exp_by_step = {e["plan_step"]: e for e in plan_exps}
+
+    # Previous steps summary
+    if current_step > 0:
+        lines.append("### Previous Steps")
+        lines.append("")
+        for i in range(current_step):
+            step_def = steps[i] if i < len(steps) else {}
+            title = step_def.get("title", f"Step {i}")
+            exp = exp_by_step.get(i)
+            if exp:
+                status = exp["status"]
+                icon = {"approved": "+", "done": "*", "running": "~",
+                        "failed": "!", "pending": "."}.get(status, "?")
+                lines.append(f"- {icon} Step {i}: {title} [{status}]")
+
+                # Inject proposal summary from approved/done steps
+                if status in ("approved", "done") and exp.get("proposal_summary"):
+                    summary = exp["proposal_summary"]
+                    if len(summary) > 200:
+                        summary = summary[:200] + "..."
+                    lines.append(f"  Summary: {summary}")
+
+                # Read key files changed from merged proposals (best-effort)
+                if status == "approved":
+                    try:
+                        branch = exp["branch"]
+                        diff = wt_mod.get_branch_diff(project_dir, branch)
+                        if diff:
+                            file_lines = [l.strip().split("|")[0].strip()
+                                          for l in diff.strip().splitlines()
+                                          if "|" in l][:10]
+                            if file_lines:
+                                lines.append(f"  Files changed: {', '.join(file_lines)}")
+                    except Exception:
+                        pass
+            else:
+                lines.append(f"- Step {i}: {title} [not yet created]")
+        lines.append("")
+
+    # Upcoming steps summary (brief, just titles)
+    remaining = [s for idx, s in enumerate(steps) if idx > current_step]
+    if remaining:
+        lines.append("### Upcoming Steps")
+        lines.append("")
+        for idx, s in enumerate(steps):
+            if idx <= current_step:
+                continue
+            lines.append(f"- Step {idx}: {s.get('title', '(untitled)')}")
+        lines.append("")
+
+    conn.close()
+    return "\n".join(lines)
+
+
 def execute_plan(
     *,
     plan: dict,
@@ -190,9 +282,11 @@ def execute_plan(
     auto_approve: bool = True,
     budget_usd: Optional[float] = None,
     max_concurrent: int = 1,
+    step_filter: Optional[list[int]] = None,
 ) -> str:
     """Convert a plan into chained explorations and launch.
 
+    If step_filter is provided, only those step indices are created.
     Returns the plan_id for tracking.
     """
     cfg = config.load_config(elmer_dir)
@@ -227,16 +321,25 @@ def execute_plan(
     )
     conn.close()
 
-    # Budget: divide across steps if set
+    # Determine which steps to execute
+    indices_to_run = step_filter if step_filter else list(range(len(steps)))
+
+    # Budget: divide across steps being run
     per_step_budget = None
     if budget_usd is not None:
-        per_step_budget = budget_usd / len(steps)
+        per_step_budget = budget_usd / len(indices_to_run)
 
     # Create explorations for each step
-    exploration_ids: list[str] = []
+    exploration_ids: dict[int, str] = {}  # step index -> exploration ID
     prev_id: Optional[str] = None
 
-    for i, step in enumerate(steps):
+    for i in indices_to_run:
+        if i < 0 or i >= len(steps):
+            click.echo(f"  Step {i}: out of range (0-{len(steps) - 1}), skipping", err=True)
+            continue
+
+        step = steps[i]
+
         # Determine dependencies
         step_deps = step.get("depends_on", [])
         depends_on: list[str] = []
@@ -244,7 +347,7 @@ def execute_plan(
         if step_deps:
             # Map step indices to exploration IDs
             for dep_idx in step_deps:
-                if dep_idx < len(exploration_ids):
+                if dep_idx in exploration_ids:
                     depends_on.append(exploration_ids[dep_idx])
         elif prev_id is not None and max_concurrent == 1:
             # Default to chain mode: each step depends on previous
@@ -253,9 +356,16 @@ def execute_plan(
         archetype = step.get("archetype", "implement")
         verify_cmd = step.get("verify_cmd")
 
+        # Cross-step context injection (ADR-040): tell this step about
+        # the plan, what previous steps accomplished, and what's next
+        step_context = _build_step_context(
+            elmer_dir, project_dir, plan_id, plan, i,
+        )
+        enriched_topic = step["topic"] + "\n\n" + step_context
+
         try:
             slug, _ = explore_mod.start_exploration(
-                topic=step["topic"],
+                topic=enriched_topic,
                 archetype=archetype,
                 model=model,
                 max_turns=max_turns,
@@ -268,7 +378,7 @@ def execute_plan(
                 plan_id=plan_id,
                 plan_step=i,
             )
-            exploration_ids.append(slug)
+            exploration_ids[i] = slug
             prev_id = slug
 
             click.echo(f"  Step {i}: {step.get('title', slug)}")
@@ -282,6 +392,8 @@ def execute_plan(
             click.echo(f"  Step {i}: FAILED to create — {e}", err=True)
 
     click.echo(f"\nPlan {plan_id}: {len(exploration_ids)} step(s) created")
+    if step_filter:
+        click.echo(f"  (partial execution: steps {step_filter})")
     return plan_id
 
 

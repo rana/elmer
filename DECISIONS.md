@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-22 ADRs recorded.
+23 ADRs recorded.
 
 ## Domain Index
 
@@ -30,6 +30,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-037 | Naming | Shorter slugs, explicit replica numbering, bounded archive filenames |
 | ADR-038 | Safety | Pre-merge verification hooks with auto-amend |
 | ADR-039 | Process | Milestone decomposition and autonomous implementation |
+| ADR-040 | Intelligence | Cross-step context, plan loading, fallback verification |
 
 ---
 
@@ -470,3 +471,68 @@ Plan status is derived from step statuses: all approved → completed, any faile
 **Context continuity across steps:** Each step runs in its own worktree with a fresh Claude context window. It sees the cumulative codebase (all previous steps merged) because chain mode merges before the next step starts. User answers from the clarify phase are injected into every step's topic, providing consistent context without cross-step prompt leakage.
 
 **Alternatives considered:** A single long-running exploration for the whole milestone (context window limits, no intermediate checkpoints, no verification between steps), human-in-the-loop between every step (defeats autonomy — verification hooks handle quality gates), a custom execution engine separate from explorations (unnecessary — explorations with chaining and verification already provide the right primitives), allowing the decompose agent to auto-execute without user review of the plan (violates conservative defaults — `--dry-run` and the clarify phase are safety valves).
+
+## ADR-040: Cross-Step Context Injection, Plan Loading, and Fallback Verification
+
+**Decision:** Three interconnected improvements to the implementation pipeline that address information flow between steps, workflow efficiency, and verification resilience.
+
+### Cross-Step Context Injection
+
+**Problem:** Each implementation step runs in a fresh Claude context window with only its own topic text. Steps have no awareness of the plan they belong to, what previous steps accomplished, or what's coming next. This leads to redundant work, missed integration points, and contradictory approaches between steps.
+
+**Solution:** `_build_step_context()` in `implement.py` builds a structured context block injected into each step's topic at execution time. Contains:
+
+1. **Position** — "Step 2 of 7 in milestone X, Plan ID: Y"
+2. **Previous steps** — status, proposal summary (truncated to 200 chars), files changed (from branch diff for approved steps)
+3. **Upcoming steps** — titles only, providing awareness of what's next without constraining implementation
+
+The context block is appended to the step's topic (not prepended) so the step's own instructions remain primary. Status icons match the existing convention (`.` pending, `~` running, `*` done, `+` approved, `!` failed).
+
+**Why dynamic, not static:** Context is built at execution time by querying the plans table and explorations table. This means later steps see the actual results of earlier steps (summaries, files changed) rather than predicted outcomes from the decompose phase. If a step is re-executed after amendment, it sees the updated state.
+
+### Plan Loading and Partial Execution
+
+**Problem:** `elmer implement "Milestone X"` always calls the decompose agent (opus model, ~$0.50-2.00). During iterative development — adjusting a plan, re-running failed steps, or testing specific steps in isolation — re-decomposition is wasteful and non-deterministic (the agent might produce a different plan).
+
+**Solution:** Two new CLI options:
+
+- `--load-plan FILE` — loads a saved plan JSON (from `--dry-run --save` or hand-edited), skips decomposition entirely. The plan file is the source of truth.
+- `--steps SPEC` — runs only specific steps. Supports three formats: single (`0`), comma-separated (`0,2,5`), and ranges (`0-3`, which expands to `0,1,2,3`). Can combine: `0,3-5` runs steps 0, 3, 4, 5.
+
+**New function:** `load_plan(plan_path: Path) -> dict` in `implement.py`. Validates the plan has a `steps` key. Returns the same dict structure as `decompose_milestone()`.
+
+**Workflow this enables:**
+```bash
+elmer implement "Milestone 1a" --dry-run --save     # Decompose once
+# Edit .elmer/plans/milestone-1a.json if needed
+elmer implement --load-plan .elmer/plans/milestone-1a.json --steps 0   # Test step 0
+elmer implement --load-plan .elmer/plans/milestone-1a.json --steps 1-3 # Run steps 1-3
+```
+
+### Fallback Verification
+
+**Problem:** When verification exhausts all amend retries, the exploration is marked as failed and the plan is paused. But the verification command may be overly strict — e.g., `npm test && npm run lint` fails on a linting rule while all core tests pass. The step's code might be sound enough to continue the plan.
+
+**Solution:** A two-tier verification strategy via `[verification] fallback` in config:
+
+```toml
+[verification]
+on_done = "npm test && npm run lint"
+fallback = "npm run build && npm test"
+timeout = 300
+max_retries = 2
+```
+
+When the primary `on_done` command exhausts retries and the exploration would be marked as failed, the fallback command runs. If the fallback passes, the exploration transitions to "done" (and continues through auto-approve). If the fallback also fails, the exploration is marked failed and the plan is paused as before.
+
+**Applied at both transition points:** running → done and amending → done. The fallback is a last resort — it runs only after all amend retries against the primary command are exhausted.
+
+### Enriched Amend Feedback
+
+**Problem:** When auto-amend fires for a plan step, the amend feedback contains only the verification failure output. The implementation session has no awareness of the plan context — which step this is, what goal it's trying to achieve, or what previous steps accomplished. This leads to unfocused fixes.
+
+**Solution:** `_attempt_auto_amend()` in `review.py` queries the plan and exploration tables (best-effort) when the exploration has a `plan_id`. Injects a `## Plan Context` section into the amend feedback containing: step position, step title and goal, and summaries of completed previous steps.
+
+**Files modified:** `implement.py` (cross-step context, plan loading), `cli.py` (--load-plan, --steps wiring), `review.py` (fallback verification, enriched amend feedback).
+
+**Why not an MCP tool for plan state queries:** The cross-step context injection and enriched amend feedback provide the most useful plan information at exactly the right moments. Adding an MCP tool for ad-hoc plan queries would add complexity without improving the common case. If specific steps need to query plan state during execution (not just at start), an MCP tool would be warranted — deferred until evidence shows the need.

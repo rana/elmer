@@ -94,6 +94,8 @@ elmer clean
 | `elmer implement --dry-run` | Preview the plan without executing |
 | `elmer implement --dry-run --save` | Save plan to `.elmer/plans/` for later review |
 | `elmer implement --answers-file F` | Pre-answer decompose questions from JSON/TOML file |
+| `elmer implement --load-plan F` | Load a saved plan JSON (skip decomposition) |
+| `elmer implement --steps 0-3` | Run only specific steps (supports `0`, `0,2,5`, `0-3`) |
 | `elmer implement --status` | Show active plan progress |
 | `elmer implement --resume PLAN` | Resume a paused plan (retry failed steps) |
 | `elmer daemon` | Start the daemon for continuous operation |
@@ -183,6 +185,9 @@ elmer implement "Milestone 1a" --dry-run    # See the plan without executing
 elmer implement "Milestone 1a" --dry-run --save  # Save plan for later
 elmer implement "Milestone 1a" -y           # Skip clarifying questions
 elmer implement "Milestone 1a" --answers-file answers.json  # Pre-answered questions
+elmer implement --load-plan .elmer/plans/milestone-1a.json  # Load saved plan
+elmer implement --load-plan plan.json --steps 0-2  # Run first 3 steps only
+elmer implement --load-plan plan.json --steps 3,4  # Run specific steps
 elmer implement "Milestone 1a" --budget 50  # $50 total across all steps
 elmer implement "Milestone 1a" --max-concurrent 3  # Allow parallel steps
 elmer implement --status                    # Show active plan progress
@@ -272,7 +277,9 @@ threshold = 5            # Approvals since last digest before daemon auto-synthe
 
 [verification]
 # on_done = "make test"      # Global verification command for all explorations
+# fallback = "make build"    # Fallback command when primary exhausts retries (ADR-040)
 max_retries = 2              # Auto-amend attempts before marking failed
+timeout = 300                # Verification timeout in seconds
 
 [implement]
 model = "opus"               # Model for implementation steps

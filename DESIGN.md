@@ -60,7 +60,7 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `pr.py` | PR creation via gh CLI |
 | `digest.py` | Convergence digest synthesis from exploration history |
 | `synthesize.py` | Ensemble synthesis — consolidate multiple proposals on the same topic |
-| `implement.py` | Milestone decomposition and autonomous implementation orchestration |
+| `implement.py` | Milestone decomposition, cross-step context, plan loading, autonomous implementation orchestration |
 | `mcp_server.py` | MCP server — structured tool access over stdio |
 
 ### Data Flow
@@ -421,6 +421,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-22 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+23 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-25, verification hooks (ADR-038), implement command (ADR-039), implement module, plans table, decompose agent (23 tools)*
+*Last updated: 2026-02-25, ADR-040 cross-step context, plan loading, fallback verification (23 tools)*

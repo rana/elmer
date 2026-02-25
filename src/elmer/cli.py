@@ -1,5 +1,6 @@
 """Elmer CLI — Autonomous research with branching."""
 
+import json
 import os
 import shutil
 import sys
@@ -594,12 +595,14 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
 @click.option("--dry-run", is_flag=True, help="Decompose and show plan only — don't execute")
 @click.option("--yes", "-y", "skip_clarify", is_flag=True, help="Skip clarification questions")
 @click.option("--answers-file", default=None, type=click.Path(exists=True), help="JSON/TOML file with pre-answered questions (key: question index)")
+@click.option("--load-plan", "load_plan_file", default=None, type=click.Path(exists=True), help="Load a saved plan JSON (skip decomposition)")
+@click.option("--steps", "step_indices", default=None, help="Run only specific steps (e.g., '0', '0,1,2', '0-3')")
 @click.option("--budget", "budget_usd", default=None, type=float, help="Total budget in USD for all steps")
 @click.option("--max-concurrent", default=1, type=int, help="Max parallel steps (default: 1 for chain safety)")
 @click.option("--resume", "resume_plan_id", default=None, help="Resume a paused plan")
 @click.option("--status", "show_status", is_flag=True, help="Show status of active plans")
 @click.option("--save", "save_plan", is_flag=True, help="Save decomposition to .elmer/plans/ without executing")
-def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, budget_usd, max_concurrent, resume_plan_id, show_status, save_plan):
+def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, load_plan_file, step_indices, budget_usd, max_concurrent, resume_plan_id, show_status, save_plan):
     """Decompose a milestone into implementation steps and execute autonomously.
 
     Reads project docs (ROADMAP.md, DESIGN.md, DECISIONS.md), decomposes the
@@ -613,6 +616,9 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
         elmer implement "Milestone 1a" --dry-run --save        # Save plan for later
         elmer implement "Milestone 1a" -y                      # Skip questions
         elmer implement "Milestone 1a" --answers-file a.json   # Pre-answered questions
+        elmer implement --load-plan .elmer/plans/m1a.json      # Load saved plan
+        elmer implement --load-plan plan.json --steps 0-2      # Run first 3 steps only
+        elmer implement --load-plan plan.json --steps 3,4      # Run specific steps
         elmer implement --resume milestone-1a                  # Resume paused plan
         elmer implement --status                               # Plan progress
         elmer implement "Milestone 1a" --budget 50             # $50 total budget
@@ -638,34 +644,60 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
             sys.exit(1)
         return
 
-    # Require milestone for decompose/execute
-    if not milestone:
-        click.echo("Error: provide a milestone (e.g., 'Milestone 1a') or use --status/--resume.", err=True)
-        sys.exit(1)
+    # Parse --steps into a list of ints
+    step_filter: list[int] | None = None
+    if step_indices:
+        step_filter = []
+        for part in step_indices.split(","):
+            part = part.strip()
+            if "-" in part:
+                lo, hi = part.split("-", 1)
+                step_filter.extend(range(int(lo), int(hi) + 1))
+            else:
+                step_filter.append(int(part))
 
-    # Phase 1: Decompose
-    click.echo(f"Decomposing: {milestone}")
-    click.echo("  Reading project docs and scanning filesystem...")
-    try:
-        plan = impl_mod.decompose_milestone(
-            milestone_ref=milestone,
-            elmer_dir=elmer_dir,
-            project_dir=project_dir,
-            model=model,
-        )
-    except (RuntimeError, ValueError) as e:
-        click.echo(f"Error: decomposition failed — {e}", err=True)
-        sys.exit(1)
+    # Phase 1: Load or Decompose
+    if load_plan_file:
+        # Load a saved plan — skip expensive decomposition
+        click.echo(f"Loading plan from: {load_plan_file}")
+        try:
+            plan = impl_mod.load_plan(Path(load_plan_file))
+            milestone = plan.get("milestone", milestone or "loaded-plan")
+        except (ValueError, json.JSONDecodeError) as e:
+            click.echo(f"Error: invalid plan file — {e}", err=True)
+            sys.exit(1)
+    else:
+        # Require milestone for decomposition
+        if not milestone:
+            click.echo("Error: provide a milestone (e.g., 'Milestone 1a') or use --status/--resume/--load-plan.", err=True)
+            sys.exit(1)
+
+        click.echo(f"Decomposing: {milestone}")
+        click.echo("  Reading project docs and scanning filesystem...")
+        try:
+            plan = impl_mod.decompose_milestone(
+                milestone_ref=milestone,
+                elmer_dir=elmer_dir,
+                project_dir=project_dir,
+                model=model,
+            )
+        except (RuntimeError, ValueError) as e:
+            click.echo(f"Error: decomposition failed — {e}", err=True)
+            sys.exit(1)
 
     steps = plan.get("steps", [])
     questions = plan.get("questions", [])
 
     # Display plan
-    click.echo(f"\nDecomposed into {len(steps)} implementation step(s):\n")
+    filter_label = ""
+    if step_filter:
+        filter_label = f" (running steps: {', '.join(str(s) for s in step_filter)})"
+    click.echo(f"\nDecomposed into {len(steps)} implementation step(s){filter_label}:\n")
     for i, step in enumerate(steps):
         deps = step.get("depends_on", [])
         dep_str = f" (<- {', '.join(str(d) for d in deps)})" if deps else ""
-        click.echo(f"  {i}. {step.get('title', '(untitled)')}{dep_str}")
+        selected = " *" if step_filter and i in step_filter else ""
+        click.echo(f"  {i}. {step.get('title', '(untitled)')}{dep_str}{selected}")
         if step.get("verify_cmd"):
             click.echo(f"     verify: {step['verify_cmd']}")
 
@@ -740,6 +772,7 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
             auto_approve=True,
             budget_usd=budget_usd,
             max_concurrent=max_concurrent,
+            step_filter=step_filter,
         )
         click.echo(f"\nPlan created: {plan_id}")
         click.echo(f"  First step launching. Use 'elmer status' to monitor progress.")

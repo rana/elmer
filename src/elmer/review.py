@@ -216,6 +216,42 @@ def _attempt_auto_amend(
         notify(f"  Verification failed after {max_retries} amendment(s): {exp['id']}")
         return False
 
+    # Build plan context for richer amend feedback (ADR-040)
+    plan_context = ""
+    plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+    plan_step = exp["plan_step"] if "plan_step" in exp.keys() else None
+    if plan_id and plan_step is not None:
+        try:
+            conn2 = state.get_db(elmer_dir)
+            plan_row = state.get_plan(conn2, plan_id)
+            if plan_row:
+                import json
+                plan_json = json.loads(plan_row["plan_json"])
+                steps = plan_json.get("steps", [])
+                if plan_step < len(steps):
+                    step_def = steps[plan_step]
+                    plan_context = (
+                        f"\n\n## Plan Context\n\n"
+                        f"This is **Step {plan_step} of {len(steps)}** in plan \"{plan_id}\".\n"
+                        f"Step title: {step_def.get('title', '(untitled)')}\n"
+                        f"Step goal: {step_def.get('topic', '(no topic)')[:300]}\n"
+                    )
+                    # Show what previous steps accomplished
+                    prev_exps = state.get_plan_explorations(conn2, plan_id)
+                    done_summaries = []
+                    for pe in prev_exps:
+                        if pe["plan_step"] < plan_step and pe["status"] in ("approved", "done"):
+                            ps = pe.get("proposal_summary") or ""
+                            if ps:
+                                idx = pe["plan_step"]
+                                prev_title = steps[idx].get("title", f"Step {idx}") if idx < len(steps) else f"Step {idx}"
+                                done_summaries.append(f"- Step {idx} ({prev_title}): {ps[:150]}")
+                    if done_summaries:
+                        plan_context += "\nPrevious steps completed:\n" + "\n".join(done_summaries) + "\n"
+            conn2.close()
+        except Exception:
+            pass  # Best-effort enrichment
+
     feedback = (
         f"Verification failed (attempt {amend_count}/{max_retries}).\n\n"
         f"Command: {verify_cmd}\n"
@@ -223,6 +259,7 @@ def _attempt_auto_amend(
         f"Output:\n```\n{output}\n```\n\n"
         f"Fix the issues and ensure the verification command passes. "
         f"Do not skip or remove tests — fix the underlying code."
+        f"{plan_context}"
     )
 
     notify(f"  Auto-amending (attempt {amend_count}/{max_retries}): {exp['id']}")
@@ -264,6 +301,7 @@ def _refresh_running(
     cfg = config.load_config(elmer_dir) if elmer_dir else {}
     verify_cfg = cfg.get("verification", {})
     global_verify = verify_cfg.get("on_done")
+    verify_fallback = verify_cfg.get("fallback")
     verify_timeout = verify_cfg.get("timeout", 300)
 
     newly_done = []
@@ -313,20 +351,42 @@ def _refresh_running(
                                 state.update_exploration(conn, exp["id"], **cost_fields)
                             continue  # amend session started; skip done transition
                         else:
-                            # Exhausted retries — mark failed
-                            state.update_exploration(
-                                conn, exp["id"],
-                                status="failed",
-                                completed_at=datetime.now(timezone.utc).isoformat(),
-                                proposal_summary=f"(verification failed: {verify_cmd})",
-                                **cost_fields,
-                            )
-                            # Pause the plan if this exploration belongs to one
-                            plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
-                            if plan_id:
-                                state.update_plan(conn, plan_id, status="paused")
-                                notify(f"  Plan paused: {plan_id}")
-                            continue
+                            # Exhausted retries — try fallback before failing
+                            if verify_fallback:
+                                fb_passed, _, _ = _run_verification(
+                                    verify_fallback, worktree_path, project_dir, verify_timeout,
+                                )
+                                if fb_passed:
+                                    notify(f"  Fallback verification passed: {exp['id']} (primary failed)")
+                                    # Continue to done transition below
+                                else:
+                                    notify(f"  Fallback verification also failed: {exp['id']}")
+                                    state.update_exploration(
+                                        conn, exp["id"],
+                                        status="failed",
+                                        completed_at=datetime.now(timezone.utc).isoformat(),
+                                        proposal_summary=f"(verification failed, fallback also failed: {verify_cmd})",
+                                        **cost_fields,
+                                    )
+                                    plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+                                    if plan_id:
+                                        state.update_plan(conn, plan_id, status="paused")
+                                        notify(f"  Plan paused: {plan_id}")
+                                    continue
+                            else:
+                                # No fallback — mark failed
+                                state.update_exploration(
+                                    conn, exp["id"],
+                                    status="failed",
+                                    completed_at=datetime.now(timezone.utc).isoformat(),
+                                    proposal_summary=f"(verification failed: {verify_cmd})",
+                                    **cost_fields,
+                                )
+                                plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+                                if plan_id:
+                                    state.update_plan(conn, plan_id, status="paused")
+                                    notify(f"  Plan paused: {plan_id}")
+                                continue
                     else:
                         notify(f"  Verification passed: {exp['id']}")
 
@@ -397,18 +457,39 @@ def _refresh_running(
                         if amended:
                             continue  # another amend cycle started
                         else:
-                            # Exhausted retries — mark failed
-                            state.update_exploration(
-                                conn, exp["id"],
-                                status="failed",
-                                completed_at=datetime.now(timezone.utc).isoformat(),
-                                proposal_summary=f"(verification failed after amend: {verify_cmd})",
-                            )
-                            plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
-                            if plan_id:
-                                state.update_plan(conn, plan_id, status="paused")
-                                notify(f"  Plan paused: {plan_id}")
-                            continue
+                            # Exhausted retries — try fallback before failing
+                            if verify_fallback:
+                                fb_passed, _, _ = _run_verification(
+                                    verify_fallback, worktree_path, project_dir, verify_timeout,
+                                )
+                                if fb_passed:
+                                    notify(f"  Fallback verification passed after amend: {exp['id']}")
+                                    # Fall through to done transition
+                                else:
+                                    notify(f"  Fallback also failed after amend: {exp['id']}")
+                                    state.update_exploration(
+                                        conn, exp["id"],
+                                        status="failed",
+                                        completed_at=datetime.now(timezone.utc).isoformat(),
+                                        proposal_summary=f"(verification+fallback failed after amend: {verify_cmd})",
+                                    )
+                                    plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+                                    if plan_id:
+                                        state.update_plan(conn, plan_id, status="paused")
+                                        notify(f"  Plan paused: {plan_id}")
+                                    continue
+                            else:
+                                state.update_exploration(
+                                    conn, exp["id"],
+                                    status="failed",
+                                    completed_at=datetime.now(timezone.utc).isoformat(),
+                                    proposal_summary=f"(verification failed after amend: {verify_cmd})",
+                                )
+                                plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+                                if plan_id:
+                                    state.update_plan(conn, plan_id, status="paused")
+                                    notify(f"  Plan paused: {plan_id}")
+                                continue
                     else:
                         notify(f"  Verification passed after amend: {exp['id']}")
 
