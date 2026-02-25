@@ -720,6 +720,20 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
         click.echo(f"\n  Loaded {len(file_answers)} pre-answered question(s) from {answers_file}")
 
     if dry_run:
+        # Show prerequisite check results
+        prereqs = plan.get("prerequisites", {})
+        if prereqs:
+            failures = impl_mod.validate_prerequisites(plan, project_dir)
+            if failures:
+                click.echo(f"\nPrerequisites ({len(failures)} failed):")
+                for f in failures:
+                    click.echo(f"  ! {f}")
+            else:
+                total = (len(prereqs.get("env_vars", []))
+                         + len(prereqs.get("commands", []))
+                         + len(prereqs.get("files", [])))
+                click.echo(f"\nPrerequisites: {total} checked, all passed")
+
         if questions:
             click.echo(f"\nQuestions ({len(questions)}):")
             for i, q in enumerate(questions):

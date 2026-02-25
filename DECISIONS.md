@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-24 ADRs recorded.
+25 ADRs recorded.
 
 ## Domain Index
 
@@ -32,6 +32,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-039 | Process | Milestone decomposition and autonomous implementation |
 | ADR-040 | Intelligence | Cross-step context, plan loading, fallback verification |
 | ADR-041 | Safety | Dependency cascade, proposal validation, verification guard |
+| ADR-042 | Intelligence | Prerequisites, artifact flow, greenfield decomposition |
 
 ---
 
@@ -587,3 +588,68 @@ max_files_changed = 10         # diff size guard for verification shortcut
 ```
 
 **Files modified:** `state.py` (get_pending_blocked query), `explore.py` (cascade in schedule_ready), `autoapprove.py` (structural validation, verification guard).
+
+## ADR-042: Pre-Flight Prerequisites, Artifact Flow, and Greenfield Decomposition
+
+**Decision:** Three improvements that address the gap between project documentation and operational readiness for AI implementation agents. Focused on greenfield projects where no code exists yet.
+
+### Pre-Flight Prerequisite Validation
+
+**Problem:** `execute_plan()` launches step 0 immediately. If required tools (`node`, `pnpm`) or environment variables (`DATABASE_URL`, `API_KEY`) are missing, the step runs for 10+ minutes, generates code that can't build, fails verification, exhausts amend retries, and wastes $5-20. The failure is predictable and preventable.
+
+**Solution:** Plans can include a `prerequisites` block:
+
+```json
+{
+  "prerequisites": {
+    "env_vars": ["DATABASE_URL", "VOYAGE_API_KEY"],
+    "commands": ["node --version", "pnpm --version"],
+    "files": ["DESIGN.md"]
+  }
+}
+```
+
+`validate_prerequisites()` in `implement.py` checks all three categories before `execute_plan()` creates any explorations. Failures block execution with clear error messages. `--dry-run` displays prerequisite status.
+
+**Why check files too:** In greenfield projects, design documentation is the input. If DESIGN.md doesn't exist, the implementation agent has nothing to work from. Checking files validates that the project is in the expected state.
+
+**Why not check in each step:** Prerequisites are plan-level concerns. If Step 0 needs `node` but Step 3 needs `VOYAGE_API_KEY`, you want to know both are missing before spending $5 on Steps 0-2. Fail fast, fail completely.
+
+### Key File Artifact Flow
+
+**Problem:** Cross-step context injection (ADR-040) provides proposal summaries and file diffs from previous steps. But when Step 0 scaffolds a greenfield project, the *content* of key files (config, `.env.example`, service interfaces) matters more than the diff stat. Step 1 needs to see `lib/config.ts` to know what constants to use. Step 2 needs to see `lib/services/search.ts` to follow the same patterns.
+
+**Solution:** Steps can declare `key_files` in the plan JSON:
+
+```json
+{
+  "title": "Scaffold project",
+  "key_files": ["package.json", "lib/config.ts", ".env.example"]
+}
+```
+
+After a step is approved and merged, `_build_step_context()` reads the declared key files from `project_dir` (which now contains the merged code) and injects their content into subsequent steps' context blocks, truncated at 2000 chars per file.
+
+**Why read from project_dir, not the worktree:** By the time the next step starts, the previous step has been approved and merged into main. The worktree may have been cleaned up. `project_dir` always reflects the cumulative state of all merged work.
+
+**Why not inject all changed files:** Most changed files are implementation details. A 500-line React component doesn't help the next step. `key_files` is the decompose agent's signal of "these are the patterns and contracts — the rest is implementation." Keep the context window focused.
+
+### Greenfield Decomposition Rules
+
+**Problem:** The decompose agent's 10 rules were generic. For greenfield projects (0% scaffolded), three critical patterns were implicit:
+
+1. Step 0 must create the build toolchain *and* one example of each architectural pattern
+2. `.env.example` must exist from Step 0 with every variable the project will need
+3. Prerequisites should distinguish "tools that must exist before coding" from "services that might not be configured yet" (the latter are questions, not prerequisites)
+
+**Solution:** Five new rules (11-15) added to the decompose agent (`agents/decompose.md`) under a "Greenfield Projects" section:
+
+- Rule 11: Step 0 creates foundation + `.env.example` + directory structure; declares `key_files`
+- Rule 12: Step 0 creates one real example of each pattern (service, route, test) — subsequent steps follow it
+- Rule 13: Declare prerequisites; env vars for external services are questions, not prerequisites
+- Rule 14: Separate concerns per step (schema → service → API → frontend → integration)
+- Rule 15: Every step that introduces a new env var updates `.env.example`
+
+**Why one example of each pattern matters more than documentation:** AI agents follow patterns by imitation, not by description. Telling an agent "services go in /lib/services/ with zero framework imports" is less effective than showing it an actual service at that path. When Step 0 creates one real service, Steps 1-5 can reference it as `"follow the pattern in /lib/services/embeddings.ts"` — and the `key_files` artifact flow ensures the agent sees the actual content.
+
+**Files modified:** `implement.py` (validate_prerequisites, artifact injection in _build_step_context), `cli.py` (dry-run prerequisite display), `agents/decompose.md` (prerequisite field, key_files field, greenfield rules 11-15).

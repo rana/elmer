@@ -28,20 +28,27 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
 ```
 {
   "milestone": "Milestone 1a",
+  "prerequisites": {
+    "env_vars": ["DATABASE_URL"],
+    "commands": ["node --version"],
+    "files": ["DESIGN.md"]
+  },
   "steps": [
     {
       "title": "Short human-readable title",
       "topic": "Full implementation prompt for the Claude session. Be specific: name files to create, patterns to follow, ADRs to respect. This is the ONLY context the implementation session receives besides the project docs.",
       "verify_cmd": "shell command that exits 0 on success (e.g., 'pnpm build && pnpm test')",
       "depends_on": [],
-      "archetype": "implement"
+      "archetype": "implement",
+      "key_files": ["package.json", "lib/config.ts"]
     },
     {
       "title": "Second step",
       "topic": "Full implementation prompt...",
       "verify_cmd": "pnpm test -- --run search.test",
       "depends_on": [0],
-      "archetype": "implement"
+      "archetype": "implement",
+      "key_files": []
     }
   ],
   "questions": [
@@ -49,6 +56,11 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
   ]
 }
 ```
+
+### Field reference
+
+- **`prerequisites`** — Environment variables, commands, and files that must exist before plan execution. Checked before any step launches. Omit if no prerequisites.
+- **`key_files`** — Files this step creates that subsequent steps need to see. Their content is injected into the next step's context after this step is approved. Use for: config files, `.env.example`, service interfaces, schema files.
 
 ## Rules
 
@@ -60,7 +72,7 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
 
 4. **Verification commands must be specific.** Not just "pnpm test" — use "pnpm test -- --run specific-test-file" when possible. The verification runs in the exploration's worktree directory (which contains the full project with the step's changes).
 
-5. **Topics must be self-contained.** The implementation session only reads CLAUDE.md and project docs. Your topic must specify exactly what to build, which files to create, which patterns to follow, and which ADRs govern the work.
+5. **Topics must be self-contained.** The implementation session only reads CLAUDE.md and project docs. Your topic must specify exactly what to build, which files to create, which patterns to follow, and which ADRs govern the work. Include concrete examples of the patterns the step should follow (e.g., "create a service at /lib/services/search.ts following the pattern in /lib/services/embeddings.ts").
 
 6. **First step scaffolds infrastructure.** If the project has no code yet, step 0 creates the build toolchain (package.json, tsconfig, eslint, etc.) so subsequent steps have working build/test commands.
 
@@ -71,3 +83,17 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
 9. **Each step produces working code.** After each step, the project should be in a buildable, testable state. No step should leave the project broken.
 
 10. **Respect the project's verify commands.** If CLAUDE.md documents build/test/lint commands, use those in verify_cmd. If no commands are documented yet (pre-scaffold), step 0's verify_cmd can be simple (e.g., "test -f package.json").
+
+## Greenfield Projects
+
+When the project has no code yet (only documentation), apply these additional rules:
+
+11. **Step 0 must create the foundation.** Initialize the project (e.g., `pnpm create next-app`, `cargo init`), set up build/test/lint toolchain, create `.env.example` with ALL required environment variables documented, and create the project's directory structure per its DESIGN.md. Mark `key_files` to include: package.json (or equivalent), config files, .env.example.
+
+12. **Step 0 creates one example of each pattern.** If the project uses services (`/lib/services/`), create one real service as the reference pattern. If it uses API routes, create one real route. Subsequent steps reference these as patterns to follow. This is the single most important thing for consistency across steps.
+
+13. **Declare prerequisites.** List the environment variables, CLI tools, and project files that must exist before the plan can run. For greenfield projects, prerequisites are typically just documentation files and CLI tools — env vars for external services should be questions, not prerequisites (they may not be configured yet).
+
+14. **Separate concerns per step.** For a full-stack app: database schema → service layer → API routes → frontend pages → integration tests. Each layer should be its own step so verification is meaningful (you can test services without UI, API routes without frontend, etc.).
+
+15. **Don't defer .env.example.** Every step that introduces a new environment variable must update `.env.example`. The scaffold step must create it with every variable the project will ever need (based on DESIGN.md), even if most start empty. This is the contract between the project and its deployment environment.

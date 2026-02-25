@@ -10,7 +10,9 @@ Composes existing primitives (explore, batch, amend, approve) with new capabilit
 """
 
 import json
+import os
 import re
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -191,6 +193,49 @@ def load_plan(plan_path: Path) -> dict:
     return plan
 
 
+def validate_prerequisites(
+    plan: dict,
+    project_dir: Path,
+) -> list[str]:
+    """Validate plan prerequisites before execution. Returns list of failures.
+
+    The decompose agent can specify prerequisites in the plan JSON:
+      {
+        "prerequisites": {
+          "env_vars": ["NEON_DATABASE_URL", "VOYAGE_API_KEY"],
+          "commands": ["node --version", "pnpm --version"],
+          "files": ["DESIGN.md", "package.json"]
+        }
+      }
+
+    Empty list = all prerequisites met. Non-empty = failures that block execution.
+    """
+    prereqs = plan.get("prerequisites", {})
+    failures: list[str] = []
+
+    # Check environment variables
+    for var in prereqs.get("env_vars", []):
+        if not os.environ.get(var):
+            failures.append(f"env var missing: {var}")
+
+    # Check commands are available
+    for cmd in prereqs.get("commands", []):
+        try:
+            subprocess.run(
+                cmd, shell=True, cwd=str(project_dir),
+                capture_output=True, timeout=10,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            failures.append(f"command failed: {cmd}")
+
+    # Check files exist in project
+    for filepath in prereqs.get("files", []):
+        if not (project_dir / filepath).exists():
+            failures.append(f"file missing: {filepath}")
+
+    return failures
+
+
 def _build_step_context(
     elmer_dir: Path,
     project_dir: Path,
@@ -220,6 +265,8 @@ def _build_step_context(
     exp_by_step = {e["plan_step"]: e for e in plan_exps}
 
     # Previous steps summary
+    artifact_lines: list[str] = []  # Collect key file artifacts separately
+
     if current_step > 0:
         lines.append("### Previous Steps")
         lines.append("")
@@ -253,8 +300,31 @@ def _build_step_context(
                                 lines.append(f"  Files changed: {', '.join(file_lines)}")
                     except Exception:
                         pass
+
+                    # Inject key file artifacts from approved steps (ADR-042)
+                    key_files = step_def.get("key_files", [])
+                    for kf in key_files:
+                        kf_path = project_dir / kf
+                        if kf_path.exists():
+                            try:
+                                content = kf_path.read_text()
+                                # Truncate large files
+                                if len(content) > 2000:
+                                    content = content[:2000] + "\n... (truncated)"
+                                artifact_lines.append(
+                                    f"#### {kf} (from Step {i})\n\n```\n{content}\n```"
+                                )
+                            except Exception:
+                                pass
             else:
                 lines.append(f"- Step {i}: {title} [not yet created]")
+        lines.append("")
+
+    # Append key file artifacts after step summary (keeps summary scannable)
+    if artifact_lines:
+        lines.append("### Key Files from Previous Steps")
+        lines.append("")
+        lines.extend(artifact_lines)
         lines.append("")
 
     # Upcoming steps summary (brief, just titles)
@@ -299,6 +369,17 @@ def execute_plan(
 
     if not steps:
         raise RuntimeError("Plan has no implementation steps")
+
+    # Pre-flight prerequisite validation (ADR-042)
+    failures = validate_prerequisites(plan, project_dir)
+    if failures:
+        click.echo("\nPrerequisite check failed:", err=True)
+        for f in failures:
+            click.echo(f"  - {f}", err=True)
+        raise RuntimeError(
+            f"Plan has {len(failures)} unmet prerequisite(s). "
+            "Fix these before executing, or remove 'prerequisites' from the plan."
+        )
 
     # Generate plan ID from milestone ref
     plan_id = explore_mod.slugify(milestone_ref) or "plan"
