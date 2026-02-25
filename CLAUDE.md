@@ -52,7 +52,7 @@ Full options and examples in README.md. Core subcommands:
 | `elmer logs ID` | Session log diagnostics (`--raw` for JSON) |
 | `elmer pr ID` | Push branch, create GitHub PR |
 | `elmer clean` | Remove failed/orphaned worktrees + state entries (garbage collection) |
-| `elmer implement "milestone"` | Decompose milestone into steps, execute autonomously (`--dry-run`, `--status`, `--resume`, `--budget`) |
+| `elmer implement "milestone"` | Decompose milestone into steps, execute autonomously (`--dry-run`, `--save`, `--answers-file`, `--status`, `--resume`, `--budget`) |
 | `elmer mcp` | Start MCP server — 23 tools for Claude Code integration |
 
 ## Rules

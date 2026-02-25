@@ -385,9 +385,9 @@ Archiving 5 replica proposals alongside the synthesis also created noise. The sy
    - Per-exploration: `--verify-cmd "pytest"` on `elmer explore`, stored in `explorations.verify_cmd`
    - Global: `[verification] on_done = "make test"` in `config.toml`, applied to all explorations without an explicit verify_cmd
 
-2. **Execution point.** In `review._refresh_running()`, after PROPOSAL.md exists and is committed to the branch (ADR-034), but before the status transitions to `done`. The verification runs in the worktree directory, which contains the full project with the exploration's changes on top — the correct CWD for testing code that hasn't been merged yet. Timeout: 300 seconds. Output truncated to 3000 characters.
+2. **Execution point.** In `review._refresh_running()`, after PROPOSAL.md exists and is committed to the branch (ADR-034), but before the status transitions to `done`. The verification runs in the worktree directory, which contains the full project with the exploration's changes on top — the correct CWD for testing code that hasn't been merged yet. Timeout: configurable via `[verification] timeout = 300` (default 300 seconds). Output truncated to 3000 characters.
 
-3. **Auto-amend on failure.** When verification fails (exit code ≠ 0), the system automatically amends the exploration with structured feedback containing the command, exit code, and full output. The amend agent (existing `elmer-meta-amend`) receives this context and fixes the code. After amendment completes, the next `_refresh_running()` cycle re-runs verification — creating a fix loop.
+3. **Auto-amend on failure.** When verification fails (exit code ≠ 0), the system automatically amends the exploration with structured feedback containing the command, exit code, and full output. The amend agent (existing `elmer-meta-amend`) receives this context and fixes the code. After amendment completes, the next `_refresh_running()` cycle re-runs verification in the amending → done transition path — creating a correct fix loop. This re-verification is critical: without it, the auto-approve bypass would assume verification passed when it was never re-checked after the amend. The amending path also adds the exploration to `newly_done` so auto-approve triggers correctly.
 
 4. **Retry budget.** `[verification] max_retries = 2` in config (default). `state.increment_amend_count()` tracks attempts per exploration. When retries are exhausted, the exploration is marked `failed`. If the exploration belongs to an implementation plan (`plan_id`), the plan is paused.
 
@@ -433,7 +433,7 @@ Archiving 5 replica proposals alongside the synthesis also created noise. The sy
    ```
    Each step has a title, full topic (the exploration prompt), optional verification command, dependency list (indices into the steps array), and archetype (defaults to `implement`).
 
-3. **Clarify.** If the decompose agent produced questions, `elmer implement` presents them interactively. User answers are injected into all step topics as a `## Context from user` section. `--yes/-y` skips clarification. `--dry-run` shows the plan without executing.
+3. **Clarify.** If the decompose agent produced questions, `elmer implement` presents them interactively. User answers are injected into all step topics as a `## Context from user` section. Three non-interactive paths: `--yes/-y` skips clarification entirely, `--answers-file answers.json` loads pre-answered questions from a JSON or TOML file (key: question index, value: answer string), `--dry-run` shows the plan without executing. `--dry-run --save` persists the plan to `.elmer/plans/` for later execution without re-running decomposition.
 
 4. **Execute.** Each step becomes a chained exploration (`elmer explore` with `--verify-cmd`, `depends_on`, `plan_id`, `plan_step`). Steps execute in dependency order — each waits for its dependencies to be approved and merged before starting. Chain mode (sequential by default, `--max-concurrent` for parallelism within dependency constraints). Auto-approve is on by default for implementation plans. Budget is divided evenly across steps when `--budget` is set.
 

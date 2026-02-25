@@ -92,6 +92,8 @@ elmer clean
 | `elmer insights` | List cross-project insights |
 | `elmer implement "milestone"` | Decompose milestone into steps and execute autonomously |
 | `elmer implement --dry-run` | Preview the plan without executing |
+| `elmer implement --dry-run --save` | Save plan to `.elmer/plans/` for later review |
+| `elmer implement --answers-file F` | Pre-answer decompose questions from JSON/TOML file |
 | `elmer implement --status` | Show active plan progress |
 | `elmer implement --resume PLAN` | Resume a paused plan (retry failed steps) |
 | `elmer daemon` | Start the daemon for continuous operation |
@@ -178,7 +180,9 @@ elmer pr my-exploration                # Push branch and create GitHub PR
 # Implement — milestone decomposition and autonomous execution
 elmer implement "Milestone 1a"              # Full flow: decompose -> clarify -> execute
 elmer implement "Milestone 1a" --dry-run    # See the plan without executing
+elmer implement "Milestone 1a" --dry-run --save  # Save plan for later
 elmer implement "Milestone 1a" -y           # Skip clarifying questions
+elmer implement "Milestone 1a" --answers-file answers.json  # Pre-answered questions
 elmer implement "Milestone 1a" --budget 50  # $50 total across all steps
 elmer implement "Milestone 1a" --max-concurrent 3  # Allow parallel steps
 elmer implement --status                    # Show active plan progress

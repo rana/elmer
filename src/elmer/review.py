@@ -168,7 +168,7 @@ def parse_log_details(log_path: Path) -> Optional[dict]:
     }
 
 
-def _run_verification(verify_cmd: str, cwd: Path, project_dir: Path) -> tuple[bool, int, str]:
+def _run_verification(verify_cmd: str, cwd: Path, project_dir: Path, timeout: int = 300) -> tuple[bool, int, str]:
     """Run a verification command. Returns (passed, returncode, output).
 
     Runs in the worktree directory (cwd) where the exploration's code lives,
@@ -182,7 +182,7 @@ def _run_verification(verify_cmd: str, cwd: Path, project_dir: Path) -> tuple[bo
             cwd=str(cwd),
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=timeout,
         )
         output = (result.stdout + result.stderr).strip()
         # Truncate to avoid massive amend prompts
@@ -190,7 +190,7 @@ def _run_verification(verify_cmd: str, cwd: Path, project_dir: Path) -> tuple[bo
             output = output[:3000] + "\n... (truncated)"
         return result.returncode == 0, result.returncode, output
     except subprocess.TimeoutExpired:
-        return False, -1, "(verification command timed out after 300s)"
+        return False, -1, f"(verification command timed out after {timeout}s)"
     except (FileNotFoundError, OSError) as e:
         return False, -1, f"(verification command error: {e})"
 
@@ -262,7 +262,9 @@ def _refresh_running(
 
     # Load global verification config once
     cfg = config.load_config(elmer_dir) if elmer_dir else {}
-    global_verify = cfg.get("verification", {}).get("on_done")
+    verify_cfg = cfg.get("verification", {})
+    global_verify = verify_cfg.get("on_done")
+    verify_timeout = verify_cfg.get("timeout", 300)
 
     newly_done = []
     for exp in explorations:
@@ -297,7 +299,7 @@ def _refresh_running(
 
                 if verify_cmd and project_dir:
                     passed, returncode, output = _run_verification(
-                        verify_cmd, worktree_path, project_dir,
+                        verify_cmd, worktree_path, project_dir, verify_timeout,
                     )
                     if not passed:
                         # Attempt auto-amend with verification failure context
@@ -349,7 +351,7 @@ def _refresh_running(
                     **cost_fields,
                 )
 
-    # Check amending explorations — transition back to done when finished
+    # Check amending explorations — re-verify and transition when finished
     amending = state.list_explorations(conn, status="amending")
     for exp in amending:
         pid = exp["pid"]
@@ -376,12 +378,47 @@ def _refresh_running(
                 # Re-commit PROPOSAL.md after amendment (ADR-034)
                 wt_mod.commit_proposal_to_branch(worktree_path, exp["id"])
 
+                # Re-run verification after amend (critical: without this,
+                # the auto-approve bypass assumes verification passed but it
+                # was never re-checked after the amend session)
+                verify_cmd = exp["verify_cmd"] if "verify_cmd" in exp.keys() else None
+                if not verify_cmd:
+                    verify_cmd = global_verify
+
+                if verify_cmd and project_dir:
+                    passed, returncode, output = _run_verification(
+                        verify_cmd, worktree_path, project_dir, verify_timeout,
+                    )
+                    if not passed:
+                        amended = _attempt_auto_amend(
+                            elmer_dir, project_dir, exp,
+                            verify_cmd, returncode, output, notify,
+                        )
+                        if amended:
+                            continue  # another amend cycle started
+                        else:
+                            # Exhausted retries — mark failed
+                            state.update_exploration(
+                                conn, exp["id"],
+                                status="failed",
+                                completed_at=datetime.now(timezone.utc).isoformat(),
+                                proposal_summary=f"(verification failed after amend: {verify_cmd})",
+                            )
+                            plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+                            if plan_id:
+                                state.update_plan(conn, plan_id, status="paused")
+                                notify(f"  Plan paused: {plan_id}")
+                            continue
+                    else:
+                        notify(f"  Verification passed after amend: {exp['id']}")
+
                 summary = _extract_summary(proposal_path)
                 state.update_exploration(
                     conn, exp["id"],
                     status="done",
                     proposal_summary=summary,
                 )
+                newly_done.append(exp)
             else:
                 state.update_exploration(conn, exp["id"], status="done")
 

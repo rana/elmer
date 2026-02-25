@@ -593,11 +593,13 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
 @click.option("--max-turns", default=None, type=int, help="Max turns per step")
 @click.option("--dry-run", is_flag=True, help="Decompose and show plan only — don't execute")
 @click.option("--yes", "-y", "skip_clarify", is_flag=True, help="Skip clarification questions")
+@click.option("--answers-file", default=None, type=click.Path(exists=True), help="JSON/TOML file with pre-answered questions (key: question index)")
 @click.option("--budget", "budget_usd", default=None, type=float, help="Total budget in USD for all steps")
 @click.option("--max-concurrent", default=1, type=int, help="Max parallel steps (default: 1 for chain safety)")
 @click.option("--resume", "resume_plan_id", default=None, help="Resume a paused plan")
 @click.option("--status", "show_status", is_flag=True, help="Show status of active plans")
-def implement(milestone, model, max_turns, dry_run, skip_clarify, budget_usd, max_concurrent, resume_plan_id, show_status):
+@click.option("--save", "save_plan", is_flag=True, help="Save decomposition to .elmer/plans/ without executing")
+def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, budget_usd, max_concurrent, resume_plan_id, show_status, save_plan):
     """Decompose a milestone into implementation steps and execute autonomously.
 
     Reads project docs (ROADMAP.md, DESIGN.md, DECISIONS.md), decomposes the
@@ -606,12 +608,14 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, budget_usd, ma
 
     \b
     Examples:
-        elmer implement "Milestone 1a"              # Full flow: decompose -> clarify -> execute
-        elmer implement "Milestone 1a" --dry-run    # See the plan without executing
-        elmer implement "Milestone 1a" -y           # Skip questions, go
-        elmer implement --resume milestone-1a       # Resume after a paused step
-        elmer implement --status                    # Show active plan progress
-        elmer implement "Milestone 1a" --budget 50  # $50 total across all steps
+        elmer implement "Milestone 1a"                         # Full flow
+        elmer implement "Milestone 1a" --dry-run               # See plan only
+        elmer implement "Milestone 1a" --dry-run --save        # Save plan for later
+        elmer implement "Milestone 1a" -y                      # Skip questions
+        elmer implement "Milestone 1a" --answers-file a.json   # Pre-answered questions
+        elmer implement --resume milestone-1a                  # Resume paused plan
+        elmer implement --status                               # Plan progress
+        elmer implement "Milestone 1a" --budget 50             # $50 total budget
     """
     project_dir = _require_project()
     elmer_dir = _require_elmer(project_dir)
@@ -665,17 +669,48 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, budget_usd, ma
         if step.get("verify_cmd"):
             click.echo(f"     verify: {step['verify_cmd']}")
 
+    # Load pre-answered questions from file if provided
+    file_answers: dict[int, str] = {}
+    if answers_file:
+        import json as _json
+        answers_path = Path(answers_file)
+        raw = answers_path.read_text()
+        if answers_path.suffix == ".toml":
+            import tomllib
+            parsed = tomllib.loads(raw)
+            # Support both {"0": "answer"} and {"answers": {"0": "answer"}}
+            answers_dict = parsed.get("answers", parsed)
+        else:
+            answers_dict = _json.loads(raw)
+            if "answers" in answers_dict:
+                answers_dict = answers_dict["answers"]
+        file_answers = {int(k): v for k, v in answers_dict.items()}
+        click.echo(f"\n  Loaded {len(file_answers)} pre-answered question(s) from {answers_file}")
+
     if dry_run:
         if questions:
             click.echo(f"\nQuestions ({len(questions)}):")
             for i, q in enumerate(questions):
-                click.echo(f"  [{i}] {q}")
+                ans = file_answers.get(i)
+                suffix = f"  -> {ans}" if ans else ""
+                click.echo(f"  [{i}] {q}{suffix}")
+        if save_plan:
+            import json as _json
+            plans_dir = elmer_dir / "plans"
+            plans_dir.mkdir(exist_ok=True)
+            plan_file = plans_dir / f"{impl_mod.explore_mod.slugify(milestone) or 'plan'}.json"
+            plan_file.write_text(_json.dumps(plan, indent=2))
+            click.echo(f"\nPlan saved to: {plan_file}")
+            if file_answers:
+                answers_out = plan_file.with_suffix(".answers.json")
+                answers_out.write_text(_json.dumps(file_answers, indent=2))
+                click.echo(f"Answers saved to: {answers_out}")
         click.echo("\n(dry run — no explorations created)")
         return
 
-    # Phase 2: Clarify (unless --yes)
-    answers: dict[int, str] = {}
-    if questions and not skip_clarify:
+    # Phase 2: Clarify (unless --yes or --answers-file)
+    answers: dict[int, str] = dict(file_answers)
+    if questions and not skip_clarify and not file_answers:
         click.echo(f"\nQuestions before implementation:\n")
         for i, q in enumerate(questions):
             answer = click.prompt(f"  [{i}] {q}", default="", show_default=False)
@@ -688,6 +723,8 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, budget_usd, ma
         if not click.confirm("\nProceed with plan?", default=True):
             click.echo("Aborted.")
             return
+    elif file_answers:
+        plan = impl_mod._inject_answers(plan, answers)
     elif questions and skip_clarify:
         click.echo(f"\n  Skipping {len(questions)} question(s) (--yes)")
 

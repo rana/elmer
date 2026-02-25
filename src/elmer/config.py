@@ -132,6 +132,7 @@ GITIGNORE = """\
 worktrees/
 logs/
 digests/
+plans/
 state.db
 daemon.pid
 """
