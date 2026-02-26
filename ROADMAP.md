@@ -59,8 +59,8 @@ When a step failure reveals the plan is wrong (not just the implementation), all
 
 ### B. Execution Intelligence
 
-**B1. Amend failure pattern detection** (Medium)
-When auto-amend retries all produce the same error output, it's a systemic issue (missing env var, broken dependency) not a code bug. Compare failure outputs across amend attempts; if identical, fail fast instead of burning budget on identical retries.
+**B1. Amend failure pattern detection** — RESOLVED (ADR-050)
+`_is_repeated_failure()` compares verification output with previous attempt's stored output. Identical output (first 500 chars) triggers fail-fast, skipping the amend session. Stored in `.elmer/logs/{id}.verify`, cleaned on success.
 
 **B2. Graceful session checkpoint** (Large)
 Instead of hard-killing sessions that exceed TTL via `worker.terminate()`, implement a checkpoint mechanism. Save partial work before termination so it can be resumed rather than restarted from scratch.
@@ -127,4 +127,4 @@ srf has 6 Claude Code skills (`.claude/skills/`). Elmer could invoke project-def
 
 See Open Questions in CONTEXT.md. Features discussed but not committed are tracked there.
 
-*Last updated: 2026-02-25, A1+A2 resolved (ADR-049), 18 remaining future directions*
+*Last updated: 2026-02-25, A1+A2 (ADR-049), B1 (ADR-050) resolved, 17 remaining future directions*

@@ -421,6 +421,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-32 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+33 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-25, ADR-049 retry dependency repair, pre-approval completion check (23 tools)*
+*Last updated: 2026-02-25, ADR-049/050 (23 tools)*

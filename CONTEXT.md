@@ -63,7 +63,7 @@ All seven development phases complete:
 6. **Phase 6 (Convergence):** Decline reasons, convergence digests, digest-aware generation, daemon synthesis step. Closes the feedback loop.
 7. **Phase 7 (Implementation Engine):** Milestone decomposition (`elmer implement`) — AI decomposes milestones into ordered plan steps with dependencies, then executes each as a separate exploration with cross-step context, verification hooks, auto-amend, and cascade failure handling. 11 ADRs (ADR-038 through ADR-048).
 
-The tool is functional and in active use on multiple projects. 32 ADRs recorded.
+The tool is functional and in active use on multiple projects. 33 ADRs recorded.
 
 ## What's Working
 
@@ -95,4 +95,4 @@ The tool is functional and in active use on multiple projects. 32 ADRs recorded.
 - ~~**Retry dependency management**~~ — resolved in ADR-049. `_rebuild_plan_dependencies()` reconstructs the dependency graph from plan JSON after retries.
 - ~~**Plan completion check ordering**~~ — resolved in ADR-049. Daemon runs pre-approval completion check in worktree before approving the last plan step.
 
-*Last updated: 2026-02-25, A1+A2 resolved (ADR-049)*
+*Last updated: 2026-02-25, A1+A2 (ADR-049), B1 (ADR-050) resolved*

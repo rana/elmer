@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-32 ADRs recorded.
+33 ADRs recorded.
 
 ## Domain Index
 
@@ -40,6 +40,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-047 | Resilience | Parallel conflict detection, daemon auto-retry for plan steps |
 | ADR-048 | Observability | Budget validation, dependency visibility, cost observability |
 | ADR-049 | Safety | Retry dependency repair, pre-approval plan completion check |
+| ADR-050 | Execution | Amend failure pattern detection — fail fast on systemic issues |
 
 ---
 
@@ -1042,3 +1043,26 @@ The post-merge completion check in daemon Step 6c is retained as a fallback for 
 The `plans` table CREATE TABLE statement was missing `budget_usd` and `completion_note` columns — they were only added via ALTER TABLE migrations that ran before the CREATE TABLE for fresh databases. Fixed by including both columns in the table definition. Existing databases are unaffected (ALTER TABLE migrations still run for backwards compatibility).
 
 **Files modified:** `gate.py` (`_rebuild_plan_dependencies`, wired into `retry_exploration`), `implement.py` (`get_completion_verify_cmd`, `is_last_plan_step`, `run_completion_check` cwd parameter, `resume_plan` root/cascade separation), `daemon.py` (pre-approval completion check in Step 2), `state.py` (plans table schema fix).
+
+---
+
+## ADR-050: Amend Failure Pattern Detection
+
+**Problem:** When auto-amend retries all produce the same verification error output, the root cause is systemic (missing environment variable, broken dependency, incorrect test fixture) rather than a code bug the agent can fix. Each amend attempt costs money — a session runs, produces code changes, then verification fails with the exact same output. With `max_retries=2`, this wastes 2 full Claude sessions before failing.
+
+Real-world example from srf-yogananda-teachings: a `validate` command failed because a required cross-reference target didn't exist. The amend agent restructured code each time, but the missing cross-reference was environmental. Three amend sessions ($4.50 total) produced three different code approaches, all failing identically.
+
+**Solution:** `_is_repeated_failure()` in `review.py` compares the current verification failure output with the previous attempt's output. If the first 500 characters are identical (after whitespace normalization), the failure is classified as systemic and `_attempt_auto_amend()` returns False immediately — skipping the amend session.
+
+Implementation:
+- Verification output is stored in `.elmer/logs/{id}.verify` (one file per exploration)
+- On first failure: stores output, returns False (no comparison available yet)
+- On subsequent failures: compares with stored output. If identical, returns True (systemic)
+- If different, updates stored output and returns False (new failure mode worth retrying)
+- On verification success, the `.verify` file is deleted
+
+The 500-character comparison window is a deliberate trade-off. Too short (< 100 chars) catches false positives from common error prefixes. Too long (full output) misses matches where only a timestamp or PID differs. 500 chars captures the error message and first few lines of stack trace — enough to identify the failure mode.
+
+The check only fires when `amend_count > 1` — the first amend always proceeds because the initial failure might be a flaky test or timing issue. Repeated identical output is the signal that the problem is structural.
+
+**Files modified:** `review.py` (`_is_repeated_failure`, called from `_attempt_auto_amend`, `.verify` file cleanup on success).

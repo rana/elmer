@@ -195,6 +195,36 @@ def _run_verification(verify_cmd: str, cwd: Path, project_dir: Path, timeout: in
         return False, -1, f"(verification command error: {e})"
 
 
+def _is_repeated_failure(elmer_dir: Path, exploration_id: str, output: str) -> bool:
+    """Check if verification output matches the previous attempt's output.
+
+    Detects systemic failures (missing env var, broken dependency) where
+    auto-amend cannot help because the root cause is environmental, not in
+    the code the agent is editing (ADR-050).
+
+    Compares the first 500 chars of normalized output — enough to detect
+    identical error messages while tolerating timestamp/pid differences.
+    """
+    verify_path = elmer_dir / "logs" / f"{exploration_id}.verify"
+    current = output.strip()[:500]
+
+    if verify_path.exists():
+        try:
+            previous = verify_path.read_text().strip()[:500]
+            if current == previous:
+                return True
+        except OSError:
+            pass
+
+    # Store current output for next comparison
+    try:
+        verify_path.write_text(current)
+    except OSError:
+        pass
+
+    return False
+
+
 def _attempt_auto_amend(
     elmer_dir: Path,
     project_dir: Path,
@@ -214,6 +244,14 @@ def _attempt_auto_amend(
 
     if amend_count > max_retries:
         notify(f"  Verification failed after {max_retries} amendment(s): {exp['id']}")
+        return False
+
+    # Detect repeated identical failures — systemic issues that amend can't fix (ADR-050)
+    if amend_count > 1 and _is_repeated_failure(elmer_dir, exp["id"], output):
+        notify(
+            f"  Identical verification failure detected for {exp['id']} — "
+            f"systemic issue (not a code bug). Failing fast to save budget."
+        )
         return False
 
     # Build plan context for richer amend feedback (ADR-040)
@@ -437,6 +475,10 @@ def _refresh_running(
                                 continue
                     else:
                         notify(f"  Verification passed: {exp['id']}")
+                        # Clean up verify output file on success
+                        _vf = elmer_dir / "logs" / f"{exp['id']}.verify"
+                        if _vf.exists():
+                            _vf.unlink(missing_ok=True)
 
                 summary = _extract_summary(proposal_path)
                 state.update_exploration(
@@ -547,6 +589,9 @@ def _refresh_running(
                                 continue
                     else:
                         notify(f"  Verification passed after amend: {exp['id']}")
+                        _vf = elmer_dir / "logs" / f"{exp['id']}.verify"
+                        if _vf.exists():
+                            _vf.unlink(missing_ok=True)
 
                 summary = _extract_summary(proposal_path)
                 state.update_exploration(
