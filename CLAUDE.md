@@ -6,7 +6,7 @@ Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, rules, conventions
 2. **CONTEXT.md** — project methodology, collaboration model, current state
 3. **DESIGN.md** — architecture, data model, module responsibilities
-4. **DECISIONS.md** — ADRs with full rationale (31 recorded)
+4. **DECISIONS.md** — ADRs with full rationale (32 recorded)
 5. **ROADMAP.md** — phase history, **Future Directions** (20 prioritized improvements), deferred features
 6. **README.md** — user-facing docs, install, full command reference
 7. **GUIDE.md** — practical usage playbook, workflows, patterns
@@ -15,15 +15,15 @@ Elmer is an autonomous research tool that uses git branches as isolation boundar
 
 ### Active Backlog
 
-ROADMAP.md § Future Directions has 20 concrete improvements across 6 themes (A–F), grounded in pipeline audit and real-world usage on srf-yogananda-teachings. Priority order for new sessions:
+ROADMAP.md § Future Directions has 18 remaining improvements across 6 themes (A–F), grounded in pipeline audit and real-world usage on srf-yogananda-teachings. Priority order for new sessions:
 
-1. **A1** — Retry dependency management (correctness bug)
-2. **A2** — Plan completion check ordering (safety)
-3. **D2** — Pre-code project support (unblocks doc-only projects)
-4. **B1** — Amend failure pattern detection (budget waste)
-5. **D1** — Configurable document coherence verification (generalizes `validate`)
+1. **D2** — Pre-code project support (unblocks doc-only projects)
+2. **B1** — Amend failure pattern detection (budget waste)
+3. **D1** — Configurable document coherence verification (generalizes `validate`)
+4. **C3** — NULL cost handling in SUM queries (small, correctness)
+5. **A3** — Plan revision / replanning (large, architecture)
 
-If asked to improve Elmer or work on next steps, start from this list. Full descriptions with complexity ratings are in ROADMAP.md.
+A1 (retry dependency management) and A2 (plan completion check ordering) completed — ADR-049. If asked to improve Elmer or work on next steps, start from this list. Full descriptions with complexity ratings are in ROADMAP.md.
 
 ## Tech Stack
 
@@ -135,4 +135,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-25, Phase 7 complete, future directions documented (31 ADRs)*
+*Last updated: 2026-02-25, A1+A2 backlog fixes — retry dependency repair, pre-approval completion check (32 ADRs)*

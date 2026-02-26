@@ -808,12 +808,25 @@ def resume_plan(
         click.echo(f"Plan '{plan_id}' resumed. No failed steps — pending steps will be scheduled.")
         return
 
-    # Reset amend counts and retry failed explorations
+    # Separate root-cause failures from cascade failures (ADR-049).
+    # Cascade-failed steps will be reset to pending by _rebuild_plan_dependencies()
+    # after the root-cause steps are retried — no need to retry them explicitly.
+    root_failures = [
+        e for e in failed
+        if not (e.get("proposal_summary") or "").startswith("(dependency failed:")
+    ]
+    cascade_failures = [
+        e for e in failed
+        if (e.get("proposal_summary") or "").startswith("(dependency failed:")
+    ]
+
+    # Reset amend counts and retry root-cause failed explorations
     state.update_plan(conn, plan_id, status="active")
     conn.close()
 
     from . import gate  # late import to avoid circular
-    for exp in failed:
+    retried = 0
+    for exp in root_failures:
         click.echo(f"Retrying: {exp['id']}")
         try:
             gate.retry_exploration(
@@ -821,43 +834,50 @@ def resume_plan(
                 project_dir=project_dir,
                 exploration_id=exp["id"],
             )
+            retried += 1
         except RuntimeError as e:
             click.echo(f"  Retry failed: {e}", err=True)
 
-    click.echo(f"Plan '{plan_id}' resumed. {len(failed)} step(s) retried.")
+    if cascade_failures and not root_failures:
+        # All failures are cascade-only — rebuild deps to reset them to pending
+        gate._rebuild_plan_dependencies(elmer_dir, plan_id, notify=click.echo)
+
+    click.echo(
+        f"Plan '{plan_id}' resumed. {retried} step(s) retried"
+        + (f", {len(cascade_failures)} cascade-failed step(s) reset to pending" if cascade_failures else "")
+        + "."
+    )
 
 
-def run_completion_check(
+def get_completion_verify_cmd(
     elmer_dir: Path,
-    project_dir: Path,
     plan_id: str,
-    *,
-    notify=None,
-) -> bool:
-    """Run integration verification after all plan steps are approved (ADR-044).
+) -> tuple[str | None, str | None]:
+    """Resolve the completion verification command for a plan.
 
-    Checks that the assembled project works as a whole. Uses the plan's
-    completion_verify_cmd (from plan JSON), the global [verification] on_done,
-    or the last step's verify_cmd as fallback.
+    Returns (verify_cmd, source) where source describes where the command
+    came from (for logging), or (None, None) if no command is configured.
 
-    Returns True if verification passed (or no command to run).
+    Priority order:
+    1. completion_verify_cmd in plan JSON
+    2. global [verification] on_done from config
+    3. last step's verify_cmd
     """
-    if notify is None:
-        notify = click.echo
-
     conn = state.get_db(elmer_dir)
     plan = state.get_plan(conn, plan_id)
     if plan is None:
         conn.close()
-        return True
+        return None, None
 
-    # Determine the verification command
     verify_cmd = None
+    source = None
 
     # Priority 1: completion_verify_cmd in plan JSON
     try:
         plan_json = json.loads(plan["plan_json"])
         verify_cmd = plan_json.get("completion_verify_cmd")
+        if verify_cmd:
+            source = "plan completion_verify_cmd"
     except (json.JSONDecodeError, KeyError):
         plan_json = {}
 
@@ -865,27 +885,89 @@ def run_completion_check(
     if not verify_cmd:
         cfg = config.load_config(elmer_dir)
         verify_cmd = cfg.get("verification", {}).get("on_done")
+        if verify_cmd:
+            source = "config [verification] on_done"
 
     # Priority 3: last step's verify_cmd
     if not verify_cmd:
         steps = plan_json.get("steps", [])
         if steps:
             verify_cmd = steps[-1].get("verify_cmd")
+            if verify_cmd:
+                source = "last step verify_cmd"
+
+    conn.close()
+    return verify_cmd, source
+
+
+def is_last_plan_step(
+    elmer_dir: Path,
+    plan_id: str,
+    exploration_id: str,
+) -> bool:
+    """Check if approving this exploration would complete the plan.
+
+    Returns True if all OTHER steps in the plan are already approved
+    and this is the only non-approved step remaining.
+    """
+    conn = state.get_db(elmer_dir)
+    plan_exps = state.get_plan_explorations(conn, plan_id)
+    conn.close()
+
+    if not plan_exps:
+        return False
+
+    non_approved = [e for e in plan_exps if e["status"] != "approved"]
+    # This is the last step if the only non-approved exploration is this one
+    return len(non_approved) == 1 and non_approved[0]["id"] == exploration_id
+
+
+def run_completion_check(
+    elmer_dir: Path,
+    project_dir: Path,
+    plan_id: str,
+    *,
+    cwd: Path | None = None,
+    notify=None,
+) -> bool:
+    """Run integration verification for a plan (ADR-044, ADR-049).
+
+    Checks that the assembled project works as a whole. Uses the plan's
+    completion_verify_cmd (from plan JSON), the global [verification] on_done,
+    or the last step's verify_cmd as fallback.
+
+    If cwd is provided, runs the command there (e.g., in the last step's worktree
+    for pre-approval checks). Otherwise runs in project_dir (post-merge).
+
+    Returns True if verification passed (or no command to run).
+    """
+    if notify is None:
+        notify = click.echo
+
+    verify_cmd, source = get_completion_verify_cmd(elmer_dir, plan_id)
+
+    conn = state.get_db(elmer_dir)
+    plan = state.get_plan(conn, plan_id)
+    if plan is None:
+        conn.close()
+        return True
 
     if not verify_cmd:
         conn.close()
         notify(f"  Plan {plan_id}: no completion verification command configured")
         return True
 
-    # Run in the project directory (main branch, all steps merged)
-    notify(f"  Plan {plan_id}: running integration verification...")
+    # Run in specified cwd (worktree for pre-approval, project_dir for post-merge)
+    run_dir = cwd or project_dir
+    location = "worktree" if cwd else "project"
+    notify(f"  Plan {plan_id}: running integration verification ({location})...")
     notify(f"    Command: {verify_cmd}")
 
     try:
         result = subprocess.run(
             verify_cmd,
             shell=True,
-            cwd=str(project_dir),
+            cwd=str(run_dir),
             capture_output=True,
             text=True,
             timeout=600,

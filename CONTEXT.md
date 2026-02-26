@@ -63,7 +63,7 @@ All seven development phases complete:
 6. **Phase 6 (Convergence):** Decline reasons, convergence digests, digest-aware generation, daemon synthesis step. Closes the feedback loop.
 7. **Phase 7 (Implementation Engine):** Milestone decomposition (`elmer implement`) — AI decomposes milestones into ordered plan steps with dependencies, then executes each as a separate exploration with cross-step context, verification hooks, auto-amend, and cascade failure handling. 11 ADRs (ADR-038 through ADR-048).
 
-The tool is functional and in active use on multiple projects. 31 ADRs recorded.
+The tool is functional and in active use on multiple projects. 32 ADRs recorded.
 
 ## What's Working
 
@@ -92,7 +92,7 @@ The tool is functional and in active use on multiple projects. 31 ADRs recorded.
 - **Cross-project MCP** — every MCP tool infers project from `cwd`. No way to address multiple projects in a single Claude Code session. Adding a `project_path` parameter to tools that need it is the likely path, with `None` defaulting to cwd. Deferred because most usage is single-project.
 - **Composable status queries** — MCP status/review tools return full result sets; filtering happens client-side, wasting tokens. A `filter` parameter on `elmer_status` (e.g., `status=done AND archetype=prototype`) would collapse multi-call workflows. Deferred because current usage is manageable.
 - **Document-heavy pre-code projects** — srf-yogananda-teachings (13 docs, 124 ADRs, 1.5 MB architecture, zero code) exposed that `elmer implement` assumes verification commands exist. Projects in design phase need document-coherence verification, not build/test. See Future Directions D1–D5 in ROADMAP.md.
-- **Retry dependency management** — when a plan step is retried, the old exploration is deleted with its dependency records. Cascade-failed dependents become orphaned. Known correctness bug affecting both `resume_plan()` and daemon auto-retry. See Future Directions A1 in ROADMAP.md.
-- **Plan completion check ordering** — plan-level verification runs after the last step merges to main. If it fails, broken code is already integrated. See Future Directions A2 in ROADMAP.md.
+- ~~**Retry dependency management**~~ — resolved in ADR-049. `_rebuild_plan_dependencies()` reconstructs the dependency graph from plan JSON after retries.
+- ~~**Plan completion check ordering**~~ — resolved in ADR-049. Daemon runs pre-approval completion check in worktree before approving the last plan step.
 
-*Last updated: 2026-02-25, Phase 7 complete, srf-yogananda-teachings analysis, future directions*
+*Last updated: 2026-02-25, A1+A2 resolved (ADR-049)*

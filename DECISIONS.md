@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-31 ADRs recorded.
+32 ADRs recorded.
 
 ## Domain Index
 
@@ -39,6 +39,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-046 | Quality | Plan validation, merge conflict recovery, daemon plan auto-approve |
 | ADR-047 | Resilience | Parallel conflict detection, daemon auto-retry for plan steps |
 | ADR-048 | Observability | Budget validation, dependency visibility, cost observability |
+| ADR-049 | Safety | Retry dependency repair, pre-approval plan completion check |
 
 ---
 
@@ -995,3 +996,49 @@ The cost data is genuinely lost (the API was called, money was spent), but the s
 In daemon mode, these warnings appear in `daemon.log`, giving operators a signal to investigate. The fix doesn't invent cost data — it makes the gap visible so it can be accounted for manually or in budget slack calculations.
 
 **Files modified:** `implement.py` (budget validation in execute_plan), `cli.py` (budget display in dry-run), `review.py` (dependency visibility in show_status, cost parsing warnings in _refresh_running).
+
+---
+
+## ADR-049: Retry Dependency Repair and Pre-Approval Plan Completion Check
+
+Fixes two correctness/safety bugs in the plan lifecycle, both identified during Phase 7 pipeline audit and documented in ROADMAP.md Future Directions A1 and A2.
+
+### Retry Dependency Management (A1)
+
+**Problem:** When `gate.retry_exploration()` retries a failed plan step, `state.delete_exploration()` deletes the old exploration AND all its dependency records (both `exploration_id` and `depends_on_id` rows). Cascade-failed dependents remain in the database as `failed` with dangling dependency references. After a successful retry, these dependents need re-creation with correct dependencies pointing at the new exploration — but nothing rebuilds them.
+
+Concrete scenario: Plan with steps 0→1→2. Step 0 fails. Steps 1 and 2 cascade-fail. Daemon retries step 0, creating "step-0-2". Step 0-2 succeeds. But step 1 is still failed with a dependency reference to the now-deleted "step-0". When `resume_plan()` or daemon auto-retry attempts to recover step 1, it calls `retry_exploration()` which creates a new exploration with NO dependency records — losing the plan's ordering guarantees.
+
+**Solution:** `_rebuild_plan_dependencies()` in `gate.py` reconstructs the entire plan dependency graph from the plan JSON after any plan step retry:
+
+1. Reads the plan JSON to get the canonical `depends_on` index lists
+2. Maps step indices to current exploration IDs (which may differ from original due to retries)
+3. Clears all stale dependency records for plan explorations
+4. Rebuilds correct dependency records from the plan definition
+5. Resets cascade-failed dependents (those with `proposal_summary` starting with "(dependency failed:") to `pending` status so they can be scheduled when dependencies are met
+
+Called automatically from `retry_exploration()` when the retried exploration has a `plan_id`. Also called from `resume_plan()` for the case where only cascade failures exist (no root-cause failure to retry).
+
+`resume_plan()` now separates root-cause failures from cascade failures, only retrying root-cause failures explicitly. Cascade-failed steps are handled by the dependency rebuild.
+
+### Plan Completion Check Ordering (A2)
+
+**Problem:** The plan-level `run_completion_check()` runs AFTER the last step is approved and merged to main (via `get_plan_status()` detecting `_newly_completed`). If integration verification fails, the broken code is already on the main branch. The check is supposed to catch integration issues, but it runs too late to prevent them.
+
+**Solution:** The daemon's auto-approve loop (Step 2) now runs a pre-approval completion check before approving the last step of a plan:
+
+1. `is_last_plan_step()` detects when approving an exploration would complete its plan (all other steps already approved)
+2. `get_completion_verify_cmd()` resolves the verification command (extracted from `run_completion_check` for reuse)
+3. If a completion command exists, it runs in the step's WORKTREE before approval — the worktree was branched after all prior steps were merged, so it represents the fully assembled state
+4. If the check fails, the step is held as `done` for human review and the plan is paused
+5. If the check passes (or no command is configured), auto-approval proceeds normally
+
+The post-merge completion check in daemon Step 6c is retained as a fallback for plans that reach completion through non-daemon paths (e.g., manual `elmer approve`).
+
+`run_completion_check()` gains a `cwd` parameter to support running in a worktree (pre-approval) vs project directory (post-merge).
+
+### Schema Fix
+
+The `plans` table CREATE TABLE statement was missing `budget_usd` and `completion_note` columns — they were only added via ALTER TABLE migrations that ran before the CREATE TABLE for fresh databases. Fixed by including both columns in the table definition. Existing databases are unaffected (ALTER TABLE migrations still run for backwards compatibility).
+
+**Files modified:** `gate.py` (`_rebuild_plan_dependencies`, wired into `retry_exploration`), `implement.py` (`get_completion_verify_cmd`, `is_last_plan_step`, `run_completion_check` cwd parameter, `resume_plan` root/cascade separation), `daemon.py` (pre-approval completion check in Step 2), `state.py` (plans table schema fix).

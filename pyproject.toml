@@ -19,3 +19,8 @@ elmer = "elmer.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/elmer"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

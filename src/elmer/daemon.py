@@ -384,6 +384,8 @@ def _run_cycle(
     # ADR-046: always auto-approve plan steps in daemon mode regardless of
     # per-exploration auto_approve flag. Plan steps have verification as their
     # quality gate; blocking on human review defeats autonomous plan execution.
+    # ADR-049: for the LAST step of a plan, run the completion check BEFORE
+    # approving so broken code doesn't land on main.
     if auto_approve:
         conn = state.get_db(elmer_dir)
         done_exps = state.list_explorations(conn, status="done")
@@ -392,6 +394,33 @@ def _run_cycle(
         for exp in done_exps:
             is_plan_step = bool(exp["plan_id"] if "plan_id" in exp.keys() else None)
             if not exp["auto_approve"] or is_plan_step:
+                # Pre-approval completion check for last plan step (ADR-049)
+                if is_plan_step:
+                    plan_id = exp["plan_id"]
+                    try:
+                        if impl_mod.is_last_plan_step(elmer_dir, plan_id, exp["id"]):
+                            verify_cmd, _ = impl_mod.get_completion_verify_cmd(elmer_dir, plan_id)
+                            if verify_cmd:
+                                wt_path = Path(exp["worktree_path"])
+                                if wt_path.exists():
+                                    logger.info(
+                                        "Last plan step %s — running pre-approval completion check in worktree",
+                                        exp["id"],
+                                    )
+                                    passed = impl_mod.run_completion_check(
+                                        elmer_dir, project_dir, plan_id,
+                                        cwd=wt_path,
+                                        notify=logger.info,
+                                    )
+                                    if not passed:
+                                        logger.warning(
+                                            "Plan %s: pre-approval completion check FAILED for %s — holding for review",
+                                            plan_id, exp["id"],
+                                        )
+                                        continue  # Skip approval — leave as 'done' for human review
+                    except Exception as e:
+                        logger.warning("Pre-approval completion check error for %s: %s", exp["id"], e)
+
                 logger.info("Daemon auto-reviewing: %s%s", exp["id"],
                             " (plan step)" if is_plan_step else "")
                 approved = autoapprove.evaluate(elmer_dir, project_dir, exp["id"])

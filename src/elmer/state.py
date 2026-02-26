@@ -113,7 +113,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             plan_json TEXT NOT NULL,
             created_at TEXT NOT NULL,
             completed_at TEXT,
-            total_cost_usd REAL DEFAULT 0
+            total_cost_usd REAL DEFAULT 0,
+            budget_usd REAL,
+            completion_note TEXT
         )
     """)
 

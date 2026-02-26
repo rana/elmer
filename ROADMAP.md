@@ -48,11 +48,11 @@ Organized by theme, grounded in both internal pipeline audit and real-world usag
 
 ### A. Plan Lifecycle — Correctness & Recovery
 
-**A1. Retry dependency management** (Medium, correctness bug)
-When `gate.retry_exploration()` retries a failed plan step, it deletes the old exploration — including its dependency records. Cascade-failed dependents remain as failed with dangling references. After a successful retry, these dependents need re-creation with correct dependencies pointing at the new exploration. Affects both `resume_plan()` and daemon auto-retry. Pre-existing bug surfaced during ADR-047 analysis.
+**A1. Retry dependency management** — RESOLVED (ADR-049)
+`_rebuild_plan_dependencies()` reconstructs the plan dependency graph from plan JSON after any step retry. Cascade-failed dependents are reset to pending. `resume_plan()` separates root-cause from cascade failures.
 
-**A2. Plan completion check ordering** (Medium, safety)
-Plan-level `run_completion_check()` runs AFTER the last step is approved and merged. If integration verification fails, the broken code is already on main. Should run BEFORE final approval, or at minimum before auto-approving the last step.
+**A2. Plan completion check ordering** — RESOLVED (ADR-049)
+Daemon pre-approval completion check runs in the last step's worktree before approving. `is_last_plan_step()` detects the last step; `get_completion_verify_cmd()` resolves the command. Post-merge check retained as fallback.
 
 **A3. Plan revision / replanning** (Large, architecture)
 When a step failure reveals the plan is wrong (not just the implementation), allow mid-execution replanning. Requires: new meta-agent for plan revision, mapping existing step completions to revised plan, handling in-flight step cancellation, state management for plan transitions. Deferred from Phase 7 as too complex for incremental delivery.
@@ -127,4 +127,4 @@ srf has 6 Claude Code skills (`.claude/skills/`). Elmer could invoke project-def
 
 See Open Questions in CONTEXT.md. Features discussed but not committed are tracked there.
 
-*Last updated: 2026-02-25, Phase 7 complete (ADR-038–048), future directions documented*
+*Last updated: 2026-02-25, A1+A2 resolved (ADR-049), 18 remaining future directions*

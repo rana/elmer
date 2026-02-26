@@ -1,5 +1,6 @@
 """Approval gate — approve (merge) or decline (discard) explorations."""
 
+import json
 import re
 import shlex
 import shutil
@@ -641,6 +642,87 @@ def approve_all(
     return approved
 
 
+def _rebuild_plan_dependencies(
+    elmer_dir: Path,
+    plan_id: str,
+    *,
+    notify=None,
+) -> int:
+    """Rebuild dependency records for all explorations in a plan from the plan JSON.
+
+    After retrying a plan step, the old exploration (and its dependency records)
+    is deleted. This leaves dependents with dangling references. This function
+    reconstructs the correct dependency graph from the plan's step definitions
+    and resets cascade-failed dependents to 'pending' so they can be scheduled
+    when their dependencies are met (ADR-049).
+
+    Returns the number of dependents reset to pending.
+    """
+    if notify is None:
+        notify = lambda msg: None
+
+    conn = state.get_db(elmer_dir)
+    plan = state.get_plan(conn, plan_id)
+    if plan is None:
+        conn.close()
+        return 0
+
+    try:
+        plan_json = json.loads(plan["plan_json"])
+    except (json.JSONDecodeError, KeyError):
+        conn.close()
+        return 0
+
+    steps = plan_json.get("steps", [])
+    plan_exps = state.get_plan_explorations(conn, plan_id)
+
+    # Build step_index -> exploration mapping
+    exp_by_step: dict[int, dict] = {}
+    for e in plan_exps:
+        step_idx = e["plan_step"]
+        if step_idx is not None:
+            exp_by_step[step_idx] = dict(e)
+
+    reset_count = 0
+
+    for i, step_def in enumerate(steps):
+        exp = exp_by_step.get(i)
+        if exp is None:
+            continue
+
+        exp_id = exp["id"]
+
+        # Clear existing dependency records for this exploration
+        conn.execute(
+            "DELETE FROM dependencies WHERE exploration_id = ?", (exp_id,)
+        )
+
+        # Rebuild from plan JSON depends_on
+        step_deps = step_def.get("depends_on", [])
+        for dep_idx in step_deps:
+            dep_exp = exp_by_step.get(dep_idx)
+            if dep_exp is not None:
+                state.add_dependency(conn, exp_id, dep_exp["id"])
+
+        # Reset cascade-failed dependents to pending
+        if (
+            exp["status"] == "failed"
+            and (exp.get("proposal_summary") or "").startswith("(dependency failed:")
+        ):
+            state.update_exploration(
+                conn, exp_id,
+                status="pending",
+                completed_at=None,
+                proposal_summary=None,
+            )
+            reset_count += 1
+            notify(f"  Reset cascade-failed step {exp.get('plan_step', '?')} ({exp_id}) to pending")
+
+    conn.commit()
+    conn.close()
+    return reset_count
+
+
 def retry_exploration(
     elmer_dir: Path, project_dir: Path, exploration_id: str, *, notify=None,
 ) -> str:
@@ -777,6 +859,15 @@ def retry_exploration(
                 ensemble_role=ensemble_role,
             )
             conn.close()
+
+    # Rebuild plan dependency graph after retry (ADR-049): the old exploration's
+    # dependency records were deleted. Rebuild from plan JSON so dependents
+    # correctly reference the new exploration, and reset cascade-failed
+    # dependents to pending so they can be scheduled.
+    if plan_id:
+        reset = _rebuild_plan_dependencies(elmer_dir, plan_id, notify=notify)
+        if reset:
+            notify(f"  Reset {reset} cascade-failed dependent(s) to pending")
 
     return slug
 
