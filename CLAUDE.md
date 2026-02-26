@@ -15,7 +15,7 @@ Elmer is an autonomous research tool that uses git branches as isolation boundar
 
 ### Active Backlog
 
-All 10 Future Directions items from the pipeline audit are now complete. A1, A2 completed (ADR-049). A3 completed (ADR-067). B1 completed (ADR-050). C1 completed (ADR-059). C2 completed (ADR-060). C3 completed (ADR-057). D1+D2 completed (ADR-056). D4 completed (ADR-065). F1 completed (ADR-058). F2 completed (ADR-061). F3 completed (ADR-064). New work should come from real-world usage feedback or ROADMAP.md deferred features.
+All 10 original Future Directions items from the pipeline audit are complete. 22 new future directions added across 4 new themes: G (worker intelligence — digest/sibling/decline injection, mid-exploration questions), H (proposal quality — confidence annotations, structured schema, review notes), I (agent evolution — archetype diagnosis, methodology self-improvement), J (Agent Teams integration — ensemble via teams, collaborative decomposition, headless feasibility, inter-exploration messaging), plus A4 (exploration-to-plan pipeline). 8 prior items remain (B2–B3, C4, D3, D5, E1–E3). See ROADMAP.md Future Directions for full details.
 
 ## Tech Stack
 
@@ -131,4 +131,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-25, plan revision / replanning ADR-067 (50 ADRs)*
+*Last updated: 2026-02-25, 22 new future directions (G/H/I/J + A4), updated backlog and open questions (50 ADRs)*

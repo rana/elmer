@@ -63,7 +63,7 @@ All seven development phases complete:
 6. **Phase 6 (Convergence):** Decline reasons, convergence digests, digest-aware generation, daemon synthesis step. Closes the feedback loop.
 7. **Phase 7 (Implementation Engine):** Milestone decomposition (`elmer implement`) — AI decomposes milestones into ordered plan steps with dependencies, then executes each as a separate exploration with cross-step context, verification hooks, auto-amend, and cascade failure handling. 11 ADRs (ADR-038 through ADR-048).
 
-The tool is functional and in active use on multiple projects. 33 ADRs recorded.
+The tool is functional and in active use on multiple projects. 50 ADRs recorded.
 
 ## What's Working
 
@@ -87,12 +87,14 @@ The tool is functional and in active use on multiple projects. 33 ADRs recorded.
 - **Web UI for review** — CLI review works but rich formatting would help for large proposals
 - **Elmer-on-Elmer recursion** — running explorations on Elmer's own codebase (meta-tool use)
 - **Scaffolding template quality** — generated CONTEXT.md is structural but not philosophical; could better teach the institutional memory pattern
-- **Agent Teams integration** — within a single exploration, the Claude session could use Agent Teams for parallel sub-tasks. Partially addressed by ADR-026 (custom subagents). Agent Teams remain session-scoped and don't persist.
-- **Sibling-aware exploration prompts** — explorations have no knowledge of other in-flight or completed explorations. Partially addressed by convergence digests (ADR-030): the digest synthesizes cross-exploration understanding, which feeds into topic generation. Individual explorations remain independent by design. The remaining question is whether to inject digest context into exploration prompts (not just generation prompts).
+- **Agent Teams integration** — Agent Teams (experimental) enable multi-agent coordination within a session via shared task lists and inter-agent messaging. Partially addressed by ADR-026 (custom subagents). Agent Teams remain session-scoped and don't persist, which conflicts with Elmer's persistence model. The key opportunity is ensemble exploration with real-time debate (J1 in ROADMAP.md) and collaborative decomposition (J2). Blocking question: whether `claude -p` can coordinate Agent Teams headlessly (J3). See Future Directions J1–J4 in ROADMAP.md.
+- **Sibling-aware exploration prompts** — explorations have no knowledge of other in-flight or completed explorations. Partially addressed by convergence digests (ADR-030): the digest synthesizes cross-exploration understanding, which feeds into topic generation. Individual explorations remain independent by design. Resolution path: G1 (digest injection into exploration prompts) and G2 (sibling-aware prompts) in ROADMAP.md address this from both directions — accumulated wisdom via digests and real-time awareness via sibling summaries.
+- **Mid-exploration interactivity** — workers run to completion or TTL-death with no channel for human input during execution. The worker often hits forks where human judgment would prevent wasted turns. Resolution path: G4 (mid-exploration questions protocol) in ROADMAP.md designs a `waiting` state with structured `QUESTIONS.md` output, `elmer answer` command, and session resumption. The architectural question is whether this is worth the state model complexity or whether Agent Teams' messaging (J4) offers a better primitive.
+- **Structured proposal output** — PROPOSAL.md is free-form markdown, making proposals hard to parse programmatically. Structured frontmatter and conventional sections would enable smarter prioritization, automated conflict detection, and richer MCP responses. Resolution path: H2 (structured PROPOSAL.md schema) in ROADMAP.md. The open question is how much structure to impose without constraining exploration creativity.
 - **Cross-project MCP** — every MCP tool infers project from `cwd`. No way to address multiple projects in a single Claude Code session. Adding a `project_path` parameter to tools that need it is the likely path, with `None` defaulting to cwd. Deferred because most usage is single-project.
 - **Composable status queries** — MCP status/review tools return full result sets; filtering happens client-side, wasting tokens. A `filter` parameter on `elmer_status` (e.g., `status=done AND archetype=prototype`) would collapse multi-call workflows. Deferred because current usage is manageable.
 - **Document-heavy pre-code projects** — srf-yogananda-teachings (13 docs, 124 ADRs, 1.5 MB architecture, zero code) exposed that `elmer implement` assumes verification commands exist. Projects in design phase need document-coherence verification, not build/test. See Future Directions D1–D5 in ROADMAP.md.
 - ~~**Retry dependency management**~~ — resolved in ADR-049. `_rebuild_plan_dependencies()` reconstructs the dependency graph from plan JSON after retries.
 - ~~**Plan completion check ordering**~~ — resolved in ADR-049. Daemon runs pre-approval completion check in worktree before approving the last plan step.
 
-*Last updated: 2026-02-25, A1+A2 (ADR-049), B1 (ADR-050) resolved*
+*Last updated: 2026-02-25, added mid-exploration interactivity + structured proposals + updated Agent Teams and sibling-awareness entries; G/H/I/J future directions in ROADMAP.md*

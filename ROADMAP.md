@@ -57,6 +57,9 @@ Daemon pre-approval completion check runs in the last step's worktree before app
 **A3. Plan revision / replanning** — RESOLVED (ADR-067)
 `elmer replan <plan-id>` invokes a `replan` meta-agent that produces a revised plan preserving approved steps. `apply_revision()` remaps explorations, cancels dropped steps, creates new steps, rebuilds dependencies. Schema tracks `prior_plan_json`, `revision_count`, `replan_trigger_step`. Daemon auto-replan via `implement.auto_replan` config. MCP tool `elmer_replan` for Claude Code integration. Context injection includes revision note.
 
+**A4. Exploration-to-plan pipeline** (Medium)
+An approved exploration's PROPOSAL.md often contains the exact action items, file targets, and ordering needed for an implementation plan. `elmer implement --from-exploration ID` feeds the proposal directly to the decompose agent as structured context, eliminating the lossy manual translation from analysis to milestone description. The decompose agent receives both the milestone text and the full proposal, producing higher-fidelity plans that inherit the exploration's analysis.
+
 ### B. Execution Intelligence
 
 **B1. Amend failure pattern detection** — RESOLVED (ADR-050)
@@ -121,10 +124,65 @@ When synthesis fails (API outage), no mechanism to re-trigger. Add automatic re-
 **F3. Custom skills as verification hooks** — RESOLVED (ADR-064)
 New `hooks.py` module invokes project-defined Claude Code skills at lifecycle points (`on_done`, `pre_approve`, `post_approve`). Skills loaded from `.claude/skills/<name>/SKILL.md`. Configured in `[hooks]` config section. Skills must output `VERDICT: PASS/FAIL` to gate transitions.
 
+### G. Worker Intelligence
+
+Context enrichment for AI workers running inside explorations. Workers currently start with near-zero knowledge of the broader system's accumulated intelligence — digests, decline history, sibling explorations. These items feed system knowledge into worker prompts.
+
+**G1. Digest injection into exploration prompts** (Small)
+Inject the latest convergence digest (truncated, ~4K chars) into individual exploration worker prompts, not just topic generation. Workers currently re-discover insights that the digest already synthesizes. Add a `## Recent Project Digest` section in `explore.py`'s prompt assembly, parallel to the existing cross-project insights injection. Config: `[digest] inject_into_explorations = true`. Resolves the open question about injecting digest context into exploration prompts (CONTEXT.md).
+
+**G2. Sibling-aware exploration prompts** (Small)
+Inject a brief summary of other in-flight explorations (one line per sibling: topic + archetype) into the worker prompt. Prevents parallel explorations from duplicating analysis or proposing conflicting changes. Query `state.list_explorations()` for running/pending status, append as a note section. ~20 lines in `explore.py`. Partially addresses the sibling-awareness open question in CONTEXT.md.
+
+**G3. Decline-reason injection for related topics** (Medium)
+When an exploration's topic keywords match previously declined topics, inject those decline reasons into the worker prompt: `## Prior Declined Approaches` with topic and reason per entry. Capped at 3 entries, 500 chars total. Uses existing archive metadata reading from `digest.py`. The decline reason is the most concentrated learning signal in Elmer — currently it feeds only digests and generation, but the worker who most needs it never sees it.
+
+**G4. Mid-exploration questions protocol** (Large)
+A protocol for the worker to signal "I need input" during exploration. Worker writes `QUESTIONS.md` (structured: numbered questions with context) to the worktree, then finishes its session. New state: `waiting`. `elmer status` surfaces waiting explorations prominently. New command: `elmer answer ID` provides responses. System resumes with a new session in the same worktree, injecting questions + answers. MCP tool: `elmer_answer`. Agent methodology teaches the protocol. Distinct from B2 (crash checkpointing): B2 saves involuntary partial work before TTL-kill; G4 is intentional interactive pause for human input. ~300 lines across state.py, cli.py, explore.py, mcp_server.py.
+
+### H. Proposal Quality & Review
+
+Standardize proposal output and review signals to make proposals machine-parseable and reviewer-friendly.
+
+**H1. Confidence annotations in proposals** (Small)
+Teach agents to mark uncertainty levels per section: `[HIGH CONFIDENCE]`, `[UNCERTAIN — depends on X]`, `[SPECULATIVE]`. Forces explicit reasoning about knowledge vs. assumptions during exploration. The coordinator and auto-approve gate can prioritize review attention on uncertain sections. Agent methodology change in `src/elmer/agents/*.md` — no engine work required.
+
+**H2. Structured PROPOSAL.md schema** (Medium)
+Standardize PROPOSAL.md with YAML frontmatter (`type`, `confidence`, `key_files`, `decision_needed`) and conventional sections (Summary, Analysis, Recommendations, Open Questions). Makes proposals machine-parseable. Enables: smarter `--prioritize` ranking, automated conflict detection between proposals, richer MCP tool responses. Requires agent definition updates and optional frontmatter extraction in `review.py`.
+
+**H3. AI-authored review notes** (Small)
+Workers write a companion `REVIEW-NOTES.md` alongside PROPOSAL.md containing: sections of highest uncertainty, assumptions made, questions for the reviewer, what would change with more turns. Creates an honest meta-channel — the worker often "knows" where its proposal is weak but currently has no way to communicate this. Agent methodology change plus optional display in `elmer review ID`.
+
+### I. Agent Evolution
+
+Close the feedback loop between exploration outcomes and agent methodology.
+
+**I1. Archetype effectiveness diagnosis** (Medium)
+`elmer archetypes diagnose <name>` reads approval/decline rates, decline reasons, and verification failure counts for a given archetype. Produces a structured report: what topics succeed, what topics fail, common decline reasons, average turns used. Read-only — no automatic modifications. Uses existing `archstats.py` data plus archive metadata. Prerequisite for I2.
+
+**I2. Agent methodology self-improvement** (Large)
+After I1 provides diagnosis, a meta-agent generates revised agent prompt text based on observed failure patterns. `elmer archetypes refine <name>` produces a diff of the proposed changes for human review. Never automatic — human approves prompt changes. Requires I1 as prerequisite and a new meta-agent definition.
+
+### J. Agent Teams Integration
+
+Agent Teams (experimental Claude Code feature) enable multiple Claude Code instances to coordinate within a session via shared task lists and inter-agent messaging. Currently rejected for core Elmer operations because they're session-scoped and don't persist (CLAUDE.md constraint). However, specific use cases could benefit from intra-session parallelism with real-time debate between agents.
+
+**J1. Ensemble exploration via Agent Teams** (Medium)
+Replace the current ensemble mechanism (N separate `claude -p` sessions + post-hoc synthesis agent) with a single Agent Team where teammates explore from different archetype lenses and debate in real-time. The lead synthesizes findings naturally through inter-agent challenge rather than reading N completed proposals after the fact. Quality improvement: teammates can challenge each other's reasoning and build on findings, producing synthesis that's strictly better than post-hoc assembly. Requires J3 as prerequisite.
+
+**J2. Collaborative decomposition** (Medium)
+For `elmer implement`, the decompose meta-agent runs alone. A team-based decomposition spawns teammates to analyze different aspects of the codebase (dependency structure, test coverage, existing patterns) and debate the step ordering before the lead produces the final plan. Higher-quality plans at higher token cost. Appropriate for large milestones where decomposition quality is the bottleneck. Requires J3 as prerequisite.
+
+**J3. Headless Agent Teams feasibility** (Small — research)
+The blocking question for J1 and J2: can `claude -p` (print mode) create and coordinate Agent Teams? The docs describe interactive usage with tmux/iTerm2 split panes and `Shift+Down` cycling. Test whether team coordination works in headless mode. If not, the integration path narrows to a new "interactive exploration" mode that accepts the session-scoped constraint for higher-quality results. Key test: run `claude -p` with a prompt that requests an agent team and observe whether teammates spawn and coordinate.
+
+**J4. Inter-exploration messaging** (Large)
+The most ambitious Agent Teams integration: concurrent Elmer explorations on the same project could form an ad-hoc team, sharing findings via the mailbox system. Exploration A discovers a critical constraint; Exploration B receives it before committing to an incompatible approach. This transforms parallel explorations from independent to collaborative. Major architectural tension: Agent Teams are session-scoped, Elmer explorations are persistent. Would require either (a) wrapping the team in a persistent Elmer layer that survives session death, or (b) accepting that collaborative explorations are ephemeral but higher-quality. Depends on J3 feasibility results.
+
 ---
 
 ## Deferred / Uncertain
 
 See Open Questions in CONTEXT.md. Features discussed but not committed are tracked there.
 
-*Last updated: 2026-02-25, F3 (ADR-064) + D4 (ADR-065) resolved, daemon resilience ADR-062/063/066, 7 remaining future directions*
+*Last updated: 2026-02-25, added G (worker intelligence), H (proposal quality), I (agent evolution), J (Agent Teams), A4 (exploration-to-plan); 22 remaining future directions*
