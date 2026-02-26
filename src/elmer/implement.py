@@ -46,6 +46,14 @@ def _build_step_context(
         f"",
     ]
 
+    # Revision awareness (ADR-067)
+    revision_note = plan_json.get("revision_note")
+    if revision_note:
+        lines.append(
+            f"**NOTE: This plan was revised.** {revision_note}"
+        )
+        lines.append("")
+
     # Query step statuses from DB
     conn = state.get_db(elmer_dir)
     plan_exps = state.get_plan_explorations(conn, plan_id)

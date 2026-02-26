@@ -99,6 +99,9 @@ elmer clean
 | `elmer implement --steps 0-3` | Run only specific steps (supports `0`, `0,2,5`, `0-3`) |
 | `elmer implement --status` | Show active plan progress |
 | `elmer implement --resume PLAN` | Resume a paused plan (retry failed steps) |
+| `elmer replan PLAN [CONTEXT]` | Revise a paused plan when failure is structural |
+| `elmer replan PLAN --dry-run` | Preview revised plan without applying |
+| `elmer replan PLAN --dry-run --save` | Save revised plan for review |
 | `elmer daemon` | Start the daemon for continuous operation |
 | `elmer daemon status` | Check if the daemon is running |
 | `elmer daemon stop` | Gracefully stop the daemon |
@@ -189,6 +192,12 @@ elmer implement --load-plan plan.json --steps 3,4  # Run specific steps
 elmer implement "Milestone 1a" --max-concurrent 3  # Allow parallel steps
 elmer implement --status                    # Show active plan progress
 elmer implement --resume milestone-1a       # Resume after a paused step
+
+# Replan — revise a paused plan when failure is structural
+elmer replan milestone-1a "The API needs gRPC not REST"  # Revise with context
+elmer replan milestone-1a                   # Auto-extract failure context
+elmer replan milestone-1a --dry-run         # Preview revision
+elmer replan milestone-1a --dry-run --save  # Save revised plan for review
 
 # Daemon options
 elmer daemon --interval 300            # 5-minute cycle interval

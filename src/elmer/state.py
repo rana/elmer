@@ -81,6 +81,15 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         pass  # Column already exists
 
+    # Migrate plans table: add revision tracking columns (ADR-067)
+    for col, coltype in [("prior_plan_json", "TEXT"),
+                         ("revision_count", "INTEGER DEFAULT 0"),
+                         ("replan_trigger_step", "INTEGER")]:
+        try:
+            conn.execute(f"ALTER TABLE plans ADD COLUMN {col} {coltype}")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS dependencies (
             exploration_id TEXT NOT NULL,
@@ -111,7 +120,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             completed_at TEXT,
             total_cost_usd REAL DEFAULT 0,
-            completion_note TEXT
+            completion_note TEXT,
+            prior_plan_json TEXT,
+            revision_count INTEGER DEFAULT 0,
+            replan_trigger_step INTEGER
         )
     """)
 

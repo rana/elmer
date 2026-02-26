@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from . import archstats, batch as batch_mod, config, costs as costs_mod, daemon as daemon_mod, dashboard, decompose as decompose_mod, digest as digest_mod, explore as explore_mod, gate, generate as gen_mod, implement as impl_mod, insights as insights_mod, invariants as inv_mod, plan as plan_mod, pr as pr_mod, questions as questions_mod, review as review_mod, scaffold, skill_scaffold, state, worktree as wt
+from . import archstats, batch as batch_mod, config, costs as costs_mod, daemon as daemon_mod, dashboard, decompose as decompose_mod, digest as digest_mod, explore as explore_mod, gate, generate as gen_mod, implement as impl_mod, insights as insights_mod, invariants as inv_mod, plan as plan_mod, pr as pr_mod, questions as questions_mod, replan as replan_mod, review as review_mod, scaffold, skill_scaffold, state, worktree as wt
 
 
 @click.group()
@@ -776,6 +776,102 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
         click.echo(f"  First step launching. Use 'elmer status' to monitor progress.")
         click.echo(f"  Use 'elmer implement --status' for plan-level view.")
         click.echo(f"  If a step fails, use 'elmer implement --resume {plan_id}' to retry.")
+        click.echo(f"  For structural failures, use 'elmer replan {plan_id}' to revise the plan.")
+    except RuntimeError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("plan_id")
+@click.argument("context", required=False, default=None)
+@click.option("-m", "--model", default=None, help="Model for replan agent (default: opus)")
+@click.option("--dry-run", is_flag=True, help="Show revised plan without applying")
+@click.option("--save", is_flag=True, help="Save revised plan to .elmer/plans/ without applying")
+def replan(plan_id, context, model, dry_run, save):
+    """Revise a paused plan when step failure reveals a structural problem.
+
+    When a step fails because the plan itself is wrong (not just the implementation),
+    use replan to invoke a meta-agent that produces a revised plan. Approved steps
+    are preserved; failed/pending steps are remapped or replaced.
+
+    \b
+    Examples:
+        elmer replan my-plan "The API needs gRPC not REST"
+        elmer replan my-plan --dry-run                       # Preview revision
+        elmer replan my-plan --dry-run --save                # Save for review
+        elmer replan my-plan                                 # Auto-diagnose from failure
+    """
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+
+    # Build failure context
+    if not context:
+        # Auto-extract from the failed step's proposal_summary and logs
+        conn = state.get_db(elmer_dir)
+        plan = state.get_plan(conn, plan_id)
+        if plan is None:
+            click.echo(f"Error: plan '{plan_id}' not found.", err=True)
+            sys.exit(1)
+        plan_exps = state.get_plan_explorations(conn, plan_id)
+        conn.close()
+
+        failed_exps = [
+            e for e in plan_exps
+            if e["status"] == "failed"
+            and not (e.get("proposal_summary") or "").startswith("(dependency failed:")
+        ]
+        if not failed_exps:
+            click.echo(f"Error: plan '{plan_id}' has no root-cause failed steps.", err=True)
+            sys.exit(1)
+
+        # Build context from failure info
+        context_parts = []
+        for exp in failed_exps:
+            step_idx = exp["plan_step"]
+            summary = exp.get("proposal_summary", "(no summary)")
+            amends = exp.get("amend_count", 0) or 0
+            vfails = exp.get("verification_failures", 0) or 0
+            context_parts.append(
+                f"Step {step_idx} ({exp['id']}) failed after {amends} amendments "
+                f"and {vfails} verification failures.\n"
+                f"Failure summary: {summary}"
+            )
+
+            # Check for log details
+            log_path = elmer_dir / "logs" / f"{exp['id']}.log"
+            if log_path.exists():
+                log_details = review_mod.parse_log_details(log_path)
+                if log_details and log_details.get("result_snippet"):
+                    context_parts.append(
+                        f"Last output:\n{log_details['result_snippet'][:500]}"
+                    )
+
+        context = "\n\n".join(context_parts)
+        click.echo(f"Auto-extracted failure context ({len(context)} chars)")
+
+    try:
+        result = replan_mod.replan(
+            plan_id=plan_id,
+            failure_context=context,
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=model,
+            dry_run=dry_run,
+        )
+
+        if dry_run:
+            if save:
+                # Save the revised plan
+                plans_dir = elmer_dir / "plans"
+                plans_dir.mkdir(exist_ok=True)
+                save_path = plans_dir / f"{plan_id}-revised.json"
+                save_path.write_text(json.dumps(result, indent=2))
+                click.echo(f"\nRevised plan saved: {save_path}")
+                click.echo(f"Load with: elmer implement --load-plan {save_path}")
+            else:
+                click.echo("\nDry run — no changes applied.")
+                click.echo("Use --save to save the revised plan, or remove --dry-run to apply.")
     except RuntimeError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)

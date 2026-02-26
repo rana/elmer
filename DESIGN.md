@@ -63,6 +63,7 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `decompose.py` | Milestone decomposition, plan parsing, validation, prerequisites, conflict detection |
 | `plan.py` | Plan lifecycle — status tracking, display, resume, completion verification |
 | `implement.py` | Execution orchestration — convert plans to chained explorations, cross-step context |
+| `replan.py` | Mid-execution plan revision — invoke replan agent, validate revision, apply step remapping |
 | `mcp_server.py` | MCP server — structured tool access over stdio |
 
 ### Data Flow

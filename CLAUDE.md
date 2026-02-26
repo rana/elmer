@@ -6,8 +6,8 @@ Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, rules, conventions
 2. **CONTEXT.md** — project methodology, collaboration model, current state
 3. **DESIGN.md** — architecture, data model, module responsibilities
-4. **DECISIONS.md** — ADRs with full rationale (49 recorded)
-5. **ROADMAP.md** — phase history, **Future Directions** (10 remaining improvements), deferred features
+4. **DECISIONS.md** — ADRs with full rationale (50 recorded)
+5. **ROADMAP.md** — phase history, **Future Directions** (remaining improvements), deferred features
 6. **README.md** — user-facing docs, install, full command reference
 7. **GUIDE.md** — practical usage playbook, workflows, patterns
 
@@ -15,11 +15,7 @@ Elmer is an autonomous research tool that uses git branches as isolation boundar
 
 ### Active Backlog
 
-ROADMAP.md § Future Directions has 10 remaining improvements across 6 themes (A–F), grounded in pipeline audit and real-world usage on srf-yogananda-teachings. Priority order for new sessions:
-
-1. **A3** — Plan revision / replanning (large, architecture)
-
-A1, A2 completed (ADR-049). B1 completed (ADR-050). C1 completed (ADR-059). C2 completed (ADR-060). C3 completed (ADR-057). D1+D2 completed (ADR-056). F1 completed (ADR-058). F2 completed (ADR-061). F3 completed (ADR-064). D4 completed (ADR-065). If asked to improve Elmer or work on next steps, start from this list. Full descriptions with complexity ratings are in ROADMAP.md.
+All 10 Future Directions items from the pipeline audit are now complete. A1, A2 completed (ADR-049). A3 completed (ADR-067). B1 completed (ADR-050). C1 completed (ADR-059). C2 completed (ADR-060). C3 completed (ADR-057). D1+D2 completed (ADR-056). D4 completed (ADR-065). F1 completed (ADR-058). F2 completed (ADR-061). F3 completed (ADR-064). New work should come from real-world usage feedback or ROADMAP.md deferred features.
 
 ## Tech Stack
 
@@ -64,7 +60,8 @@ Full options and examples in README.md. Core subcommands:
 | `elmer unblock ID` | Resolve external blocker, unblocking dependent explorations |
 | `elmer blockers` | List all external blockers with status |
 | `elmer implement "milestone"` | Decompose milestone into steps, execute autonomously (`--dry-run`, `--save`, `--answers-file`, `--load-plan`, `--steps`, `--status`, `--resume`) |
-| `elmer mcp` | Start MCP server — 23 tools for Claude Code integration |
+| `elmer replan ID [CONTEXT]` | Revise a paused plan when step failure is structural (`--dry-run`, `--save`, `-m`) |
+| `elmer mcp` | Start MCP server — 24 tools for Claude Code integration |
 
 ## Rules
 
@@ -134,4 +131,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-25, skill hooks + external blockers + daemon resilience ADR-062–066 (49 ADRs)*
+*Last updated: 2026-02-25, plan revision / replanning ADR-067 (50 ADRs)*

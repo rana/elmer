@@ -102,6 +102,11 @@ def show_plan_status(elmer_dir: Path, plan_id: Optional[str] = None) -> None:
         click.echo(f"  Status:    {plan['status']}")
         if plan.get("total_cost") is not None:
             click.echo(f"  Cost:      ${plan['total_cost']:.2f}")
+        revision_count = plan.get("revision_count") or 0
+        if revision_count > 0:
+            trigger = plan.get("replan_trigger_step")
+            trigger_note = f" (triggered by step {trigger})" if trigger is not None else ""
+            click.echo(f"  Revisions: {revision_count}{trigger_note}")
         click.echo()
 
         steps = plan.get("steps", [])

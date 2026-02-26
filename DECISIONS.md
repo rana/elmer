@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-49 ADRs recorded.
+50 ADRs recorded.
 
 ## Domain Index
 
@@ -57,6 +57,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-064 | Integration | Custom skills as verification hooks (F3) |
 | ADR-065 | Operations | External dependency tracking with blockers (D4) |
 | ADR-066 | Resilience | Stale PID recovery and cascade failure alerting |
+| ADR-067 | Architecture | Plan revision / replanning (A3) |
 
 ---
 
@@ -1349,3 +1350,54 @@ Plan integration: Plan steps can include `blocked_by` in their definition. The d
 **Why:** PID recycling can lock out the daemon on restart, requiring manual `.elmer/daemon.pid` deletion. Cascade failures can silently fail an entire plan without alerting the operator, defeating autonomous operation.
 
 **Files modified:** `daemon.py`, `explore.py`.
+
+## ADR-067: Plan Revision / Replanning (A3)
+
+**Decision:** Add mid-execution plan revision when a step failure reveals the plan itself is structurally wrong, not just the implementation attempt.
+
+### Problem
+
+When `elmer implement` executes a multi-step plan and a step fails after exhausting amend retries (ADR-050 pattern detection), the plan pauses. The only options are: retry the same failing step (likely to fail again for structural reasons), or abandon the plan and start over. Neither option salvages the work already approved and merged.
+
+### Solution
+
+A new `elmer replan <plan-id> "context"` command invokes a `replan` meta-agent that:
+
+1. **Reads** the current plan JSON, step statuses, and failure context
+2. **Produces** a revised plan JSON with a `step_mapping` (old index → new index or null) and `revision_note`
+3. **Preserves** all approved steps (marked with `preserved_from` in the revised plan)
+4. **Validates** the revision: approved steps can't be dropped, step mapping is consistent, dependencies form a valid DAG
+
+The `apply_revision()` function then:
+- Archives the old plan JSON in `prior_plan_json`
+- Cancels/deletes explorations for dropped steps
+- Remaps preserved/active explorations to new step indices
+- Creates new explorations for new steps (with revision context in topic)
+- Rebuilds the dependency graph from the revised plan
+- Sets plan status back to `active` with incremented `revision_count`
+
+### Schema changes
+
+Three new columns on `plans` table:
+- `prior_plan_json TEXT` — archive of pre-revision plan (for audit/rollback)
+- `revision_count INTEGER DEFAULT 0` — how many times revised
+- `replan_trigger_step INTEGER` — which step failure triggered the revision
+
+### Integration points
+
+- **CLI:** `elmer replan <plan-id> [context]` with `--dry-run` and `--save` options. Auto-extracts failure context from logs if no context provided.
+- **Daemon:** When `implement.auto_replan=true` in config, the daemon auto-replans after retry is exhausted (instead of requiring human intervention). Controlled by config to preserve conservative defaults.
+- **MCP:** `elmer_replan` tool with plan_id, failure_context, dry_run parameters.
+- **Context injection:** `_build_step_context()` now includes `revision_note` from the plan JSON, so new steps know they're executing in a revised plan.
+- **Plan status display:** Shows revision count and trigger step when plan has been revised.
+
+### Key constraints
+
+1. **Approved steps are immutable.** Merged work cannot be undone. The replan agent must work around it.
+2. **Step mapping must be consistent.** No duplicate target indices, no out-of-range references.
+3. **Minimal disruption preferred.** The replan agent is instructed to make targeted fixes (1-2 steps) rather than wholesale rewrites.
+4. **Auto-replan is opt-in.** `implement.auto_replan` defaults to false, preserving human oversight for structural plan changes.
+
+**Alternatives considered:** Manual plan editing (too error-prone for complex plans with dependencies), complete plan restart (wastes approved work), interactive step editor (requires TUI, violates simplicity principle).
+
+**Files modified:** `state.py` (schema), `replan.py` (new module), `agents/replan.md` (new agent), `cli.py`, `daemon.py`, `implement.py`, `plan.py`, `mcp_server.py`.

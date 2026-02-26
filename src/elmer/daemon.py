@@ -393,9 +393,39 @@ def _run_cycle(
                     if "## Previous Attempt Failed" not in e["topic"]
                 ]
                 if not retriable:
-                    logger.info(
-                        "Plan %s: failed steps already retried, needs human review", plan_id,
-                    )
+                    # ADR-067: auto-replan when retry is exhausted and config allows
+                    auto_replan = config.load_config(elmer_dir).get(
+                        "implement", {}
+                    ).get("auto_replan", False)
+                    if auto_replan:
+                        logger.info(
+                            "Plan %s: retries exhausted, attempting auto-replan", plan_id,
+                        )
+                        try:
+                            from . import replan as replan_mod
+                            result = replan_mod.replan(
+                                plan_id=plan_id,
+                                failure_context="Automatic replan: retry exhausted after failure-aware retry attempt.",
+                                elmer_dir=elmer_dir,
+                                project_dir=project_dir,
+                                auto_approve=True,
+                                notify=logger.info,
+                            )
+                            logger.info(
+                                "Plan %s: auto-replanned — %s preserved, %s created, %s cancelled",
+                                plan_id, result.get("preserved", 0),
+                                result.get("created", 0), result.get("cancelled", 0),
+                            )
+                        except (RuntimeError, Exception) as e:
+                            logger.warning(
+                                "Plan %s: auto-replan failed: %s", plan_id, e,
+                            )
+                    else:
+                        logger.info(
+                            "Plan %s: failed steps already retried, needs human review "
+                            "(hint: use 'elmer replan %s' or set implement.auto_replan=true)",
+                            plan_id, plan_id,
+                        )
                     continue
 
                 retried_any = False

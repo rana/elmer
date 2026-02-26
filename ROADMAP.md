@@ -54,8 +54,8 @@ Organized by theme, grounded in both internal pipeline audit and real-world usag
 **A2. Plan completion check ordering** — RESOLVED (ADR-049)
 Daemon pre-approval completion check runs in the last step's worktree before approving. `is_last_plan_step()` detects the last step; `get_completion_verify_cmd()` resolves the command. Post-merge check retained as fallback.
 
-**A3. Plan revision / replanning** (Large, architecture)
-When a step failure reveals the plan is wrong (not just the implementation), allow mid-execution replanning. Requires: new meta-agent for plan revision, mapping existing step completions to revised plan, handling in-flight step cancellation, state management for plan transitions. Deferred from Phase 7 as too complex for incremental delivery.
+**A3. Plan revision / replanning** — RESOLVED (ADR-067)
+`elmer replan <plan-id>` invokes a `replan` meta-agent that produces a revised plan preserving approved steps. `apply_revision()` remaps explorations, cancels dropped steps, creates new steps, rebuilds dependencies. Schema tracks `prior_plan_json`, `revision_count`, `replan_trigger_step`. Daemon auto-replan via `implement.auto_replan` config. MCP tool `elmer_replan` for Claude Code integration. Context injection includes revision note.
 
 ### B. Execution Intelligence
 

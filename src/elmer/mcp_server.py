@@ -27,6 +27,7 @@ from . import (
     plan as plan_mod,
     pr as pr_mod,
     questions as questions_mod,
+    replan as replan_mod,
     state,
     worker,
     worktree as wt,
@@ -1668,9 +1669,94 @@ def elmer_plan_status(plan_id: Optional[str] = None) -> dict:
                     "status": p["status"],
                     "total_cost": p.get("total_cost", 0),
                     "steps": p.get("steps", []),
+                    "revision_count": p.get("revision_count") or 0,
+                    "replan_trigger_step": p.get("replan_trigger_step"),
                 }
                 for p in plans
             ]
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def elmer_replan(
+    plan_id: str,
+    failure_context: str = "",
+    dry_run: bool = False,
+    model: Optional[str] = None,
+) -> dict:
+    """Revise a paused plan when step failure reveals a structural problem.
+
+    When a step fails because the plan itself is wrong (not just the
+    implementation), replan invokes a meta-agent that produces a revised
+    plan. Approved steps are preserved; failed/pending steps are remapped
+    or replaced.
+
+    Parameters:
+        plan_id: The plan to revise.
+        failure_context: Explanation of why the plan is structurally wrong.
+            If empty, auto-extracts from the failed step's logs.
+        dry_run: Preview the revised plan without applying it.
+        model: Model for the replan agent (default: opus).
+    """
+    try:
+        project_dir, elmer_dir = _find_project()
+
+        if not failure_context:
+            # Auto-extract failure context
+            conn = state.get_db(elmer_dir)
+            plan_exps = state.get_plan_explorations(conn, plan_id)
+            conn.close()
+
+            failed_exps = [
+                e for e in plan_exps
+                if e["status"] == "failed"
+                and not (e.get("proposal_summary") or "").startswith("(dependency failed:")
+            ]
+            parts = []
+            for exp in failed_exps:
+                parts.append(
+                    f"Step {exp['plan_step']} ({exp['id']}) failed: "
+                    f"{exp.get('proposal_summary', '(no summary)')}"
+                )
+            failure_context = "\n".join(parts) if parts else "Step failure (no details available)"
+
+        result = replan_mod.replan(
+            plan_id=plan_id,
+            failure_context=failure_context,
+            elmer_dir=elmer_dir,
+            project_dir=project_dir,
+            model=model,
+            dry_run=dry_run,
+        )
+
+        if dry_run:
+            return {
+                "status": "dry_run",
+                "revised_plan": {
+                    "milestone": result.get("milestone", ""),
+                    "revision_note": result.get("revision_note", ""),
+                    "steps": [
+                        {
+                            "index": i,
+                            "title": s.get("title", ""),
+                            "preserved_from": s.get("preserved_from"),
+                        }
+                        for i, s in enumerate(result.get("steps", []))
+                    ],
+                    "step_mapping": result.get("step_mapping", {}),
+                },
+            }
+
+        return {
+            "status": "revised",
+            "plan_id": plan_id,
+            "preserved": result.get("preserved", 0),
+            "remapped": result.get("remapped", 0),
+            "created": result.get("created", 0),
+            "cancelled": result.get("cancelled", 0),
+            "total_new_steps": result.get("total_new_steps", 0),
         }
     except Exception as exc:
         return {"error": str(exc)}
