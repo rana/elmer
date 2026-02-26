@@ -131,4 +131,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-26, autonomous operation — failure taxonomy, trust escalation, config validation, retry policy, key-files flow, 218 tests (ADR-076), 59 ADRs*
+*Last updated: 2026-02-26, document health reconciliation — cross-document counts, stale references, schema, config docs, GUIDE workflows, 218 tests, 59 ADRs, 25 MCP tools*

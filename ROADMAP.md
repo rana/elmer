@@ -48,56 +48,38 @@ Organized by theme, grounded in both internal pipeline audit and real-world usag
 
 ### A. Plan Lifecycle — Correctness & Recovery
 
-**A1. Retry dependency management** — RESOLVED (ADR-049)
-`_rebuild_plan_dependencies()` reconstructs the plan dependency graph from plan JSON after any step retry. Cascade-failed dependents are reset to pending. `resume_plan()` separates root-cause from cascade failures.
-
-**A2. Plan completion check ordering** — RESOLVED (ADR-049)
-Daemon pre-approval completion check runs in the last step's worktree before approving. `is_last_plan_step()` detects the last step; `get_completion_verify_cmd()` resolves the command. Post-merge check retained as fallback.
-
-**A3. Plan revision / replanning** — RESOLVED (ADR-067)
-`elmer replan <plan-id>` invokes a `replan` meta-agent that produces a revised plan preserving approved steps. `apply_revision()` remaps explorations, cancels dropped steps, creates new steps, rebuilds dependencies. Schema tracks `prior_plan_json`, `revision_count`, `replan_trigger_step`. Daemon auto-replan via `implement.auto_replan` config. MCP tool `elmer_replan` for Claude Code integration. Context injection includes revision note.
-
-**A4. Exploration-to-plan pipeline** — RESOLVED (ADR-068)
-`elmer implement --from-exploration ID` feeds the proposal directly to the decompose agent. `_read_exploration_proposal()` checks worktree first, falls back to archive. Proposal text injected as `## Source Exploration Proposal` context (~15K char cap). MCP tool `elmer_implement` gains `from_exploration` parameter.
+**A1.** Retry dependency management — RESOLVED (ADR-049)
+**A2.** Plan completion check ordering — RESOLVED (ADR-049)
+**A3.** Plan revision / replanning — RESOLVED (ADR-067)
+**A4.** Exploration-to-plan pipeline — RESOLVED (ADR-068)
 
 ### B. Execution Intelligence
 
-**B1. Amend failure pattern detection** — RESOLVED (ADR-050)
-`_is_repeated_failure()` compares verification output with previous attempt's stored output. Identical output (first 500 chars) triggers fail-fast, skipping the amend session. Stored in `.elmer/logs/{id}.verify`, cleaned on success.
+**B1.** Amend failure pattern detection — RESOLVED (ADR-050)
 
 **B2. Graceful session checkpoint** (Large)
 Instead of hard-killing sessions that exceed TTL via `worker.terminate()`, implement a checkpoint mechanism. Save partial work before termination so it can be resumed rather than restarted from scratch.
 
-**B3. Per-step model routing from project context** — RESOLVED (ADR-069)
-New `[implement.model_routing]` config section maps archetypes and special positions (scaffold=step 0) to model names. Priority: step.model (from decompose agent) > config routing > plan model. Routing applied in `implement.py:execute_plan()` during exploration creation.
+**B3.** Per-step model routing from project context — RESOLVED (ADR-069)
 
 ### C. Observability & Cost
 
-**C1. Verification failure tracking** — RESOLVED (ADR-059)
-`verification_failures` counter on explorations table. Incremented at both verification failure points in `_refresh_running()`. Surfaced in `show_plan_status()` per-step and in summary line.
-
-**C2. Verification execution time tracking** — RESOLVED (ADR-060)
-`verification_seconds` column on explorations table. `_run_verification()` returns elapsed time via `time.monotonic()`. Accumulated at all 4 call sites (initial, fallback, post-amend, post-amend fallback). Surfaced in plan status.
-
-**C3. NULL cost handling in SUM queries** — RESOLVED (ADR-057)
-Fixed Python truthiness conflation (`if cost:` → `if cost is not None:`) in `dashboard.py`, `plan.py`. Removed redundant SQL `IS NOT NULL` filter in `daemon.py`. Zero-cost entries now correctly distinguished from missing data.
+**C1.** Verification failure tracking — RESOLVED (ADR-059)
+**C2.** Verification execution time tracking — RESOLVED (ADR-060)
+**C3.** NULL cost handling in SUM queries — RESOLVED (ADR-057)
 
 **C4. Daemon observability dashboard** (Medium)
 Persistent status view (curses or web) showing real-time daemon cycle progress, plan status, cost tracking, and alerts. Currently all info requires running `elmer status` or reading daemon.log.
 
 ### D. Document-Heavy Projects (from srf-yogananda-teachings analysis)
 
-**D1. Configurable document coherence verification** — RESOLVED (ADR-056)
-`elmer validate` gains `--check` flag (read-only mode) and proper exit codes (exit 1 on failure). Custom invariant rules already supported via `[invariants] rules = [...]` in config.toml. Exit codes make `validate` usable as a `verify_cmd` or `on_done` command.
-
-**D2. Pre-code project support** — RESOLVED (ADR-056)
-`is_doc_only_project()` auto-detects projects without build-system files. `run_completion_check()` automatically runs document-coherence verification (via `invariants.run_coherence_check()`) as the plan completion check for doc-only projects. No configuration needed — projects with build systems use code verification, projects without get coherence verification.
+**D1.** Configurable document coherence verification — RESOLVED (ADR-056)
+**D2.** Pre-code project support — RESOLVED (ADR-056)
 
 **D3. Multi-document transactional updates** (Medium)
 Proposal graduation in srf (PRO-NNN → ADR/DES) requires coordinated updates to 4+ documents. If any update fails or creates inconsistency, the whole graduation should roll back. Currently, Elmer explorations touch files independently. A "transactional exploration" mode could bundle related document changes with pre-merge invariant validation.
 
-**D4. External dependency tracking** — RESOLVED (ADR-065)
-New `external_blockers` table and `blocked_by` column on explorations. CLI commands: `elmer block`, `elmer unblock`, `elmer blockers`. Explorations referencing unresolved blockers stay pending. Status display shows `blocked by:` for pending explorations.
+**D4.** External dependency tracking — RESOLVED (ADR-065)
 
 **D5. Arc/milestone orchestration** (Large)
 srf has 7 arcs and 15 milestones forming a multi-month delivery structure. Elmer's `implement` handles single plans but not hierarchical plan composition. A "plan of plans" or milestone grouping would let Elmer orchestrate arc-level delivery with per-milestone plans.
@@ -110,55 +92,32 @@ Current explorations assume code output on a branch. Data pipeline orchestration
 **E2. Parameter tuning explorations** (Medium)
 srf needs systematic A/B testing of chunk sizes, RRF weights, cache TTLs. A specialized archetype or exploration mode that varies parameters, measures against a golden set, and produces a recommendation report. The ensemble mechanism (ADR-031 replicas with archetype rotation) is a natural fit — each replica uses a different parameter configuration.
 
-**E3. Ensemble synthesis failure recovery** — RESOLVED (ADR-070)
-`resynthesize_ensemble()` in synthesize.py cleans up failed synthesis, reads partial output, and re-triggers with `previous_synthesis` context. `get_failed_syntheses()` finds failed synthesis ensemble IDs. `trigger_ready_ensembles()` auto-recovers failed syntheses each daemon cycle. Manual retry via existing `elmer retry` command.
+**E3.** Ensemble synthesis failure recovery — RESOLVED (ADR-070)
 
 ### F. Operational
 
-**F1. Stale pending exploration cleanup** — RESOLVED (ADR-058)
-`schedule_ready()` auto-cancels pending explorations older than `[session] pending_ttl_days` (default: 7). New `get_stale_pending()` SQL query. Plans containing stale steps are paused.
-
-**F2. Plan step duration estimation** — RESOLVED (ADR-061)
-`estimate_plan_duration()` sums `estimated_seconds` from plan JSON. Warns on partial/invalid estimates. `max_plan_hours` config option (advisory). Plan status shows estimated vs actual verification time.
-
-**F3. Custom skills as verification hooks** — RESOLVED (ADR-064)
-New `hooks.py` module invokes project-defined Claude Code skills at lifecycle points (`on_done`, `pre_approve`, `post_approve`). Skills loaded from `.claude/skills/<name>/SKILL.md`. Configured in `[hooks]` config section. Skills must output `VERDICT: PASS/FAIL` to gate transitions.
+**F1.** Stale pending exploration cleanup — RESOLVED (ADR-058)
+**F2.** Plan step duration estimation — RESOLVED (ADR-061)
+**F3.** Custom skills as verification hooks — RESOLVED (ADR-064)
 
 ### G. Worker Intelligence
 
-Context enrichment for AI workers running inside explorations. Workers currently start with near-zero knowledge of the broader system's accumulated intelligence — digests, decline history, sibling explorations. These items feed system knowledge into worker prompts.
-
-**G1. Digest injection into exploration prompts** — RESOLVED (ADR-071)
-`_inject_digest()` in explore.py reads latest digest via `digest_mod.get_latest_digest()`, truncates to 4K chars, injects as `## Recent Project Digest` section. Called in `_resolve_agent_and_prompt()`. Config: `[digest] inject_into_explorations = true` (default: true).
-
-**G2. Sibling-aware exploration prompts** — RESOLVED (ADR-071)
-`_inject_siblings()` in explore.py queries running/pending/amending explorations, excludes self (via slug parameter), injects up to 15 siblings as `## Other In-Flight Explorations`. Each line: status, topic (120 char cap), archetype. Called in `_resolve_agent_and_prompt()`.
-
-**G3. Decline-reason injection for related topics** — RESOLVED (ADR-071)
-`_inject_decline_reasons()` in explore.py tokenizes topic into keywords (4+ chars), matches against declined explorations and archive metadata. Injects up to 3 entries (500 char cap) as `## Prior Declined Approaches`. Checks both state DB and archived proposals.
+**G1.** Digest injection into exploration prompts — RESOLVED (ADR-071)
+**G2.** Sibling-aware exploration prompts — RESOLVED (ADR-071)
+**G3.** Decline-reason injection for related topics — RESOLVED (ADR-071)
 
 **G4. Mid-exploration questions protocol** (Large)
 A protocol for the worker to signal "I need input" during exploration. Worker writes `QUESTIONS.md` (structured: numbered questions with context) to the worktree, then finishes its session. New state: `waiting`. `elmer status` surfaces waiting explorations prominently. New command: `elmer answer ID` provides responses. System resumes with a new session in the same worktree, injecting questions + answers. MCP tool: `elmer_answer`. Agent methodology teaches the protocol. Distinct from B2 (crash checkpointing): B2 saves involuntary partial work before TTL-kill; G4 is intentional interactive pause for human input. ~300 lines across state.py, cli.py, explore.py, mcp_server.py.
 
 ### H. Proposal Quality & Review
 
-Standardize proposal output and review signals to make proposals machine-parseable and reviewer-friendly.
-
-**H1. Confidence annotations in proposals** — RESOLVED (ADR-072)
-All 17 proposal-producing agent definitions updated with `## Confidence Annotations` section teaching `[HIGH CONFIDENCE]`, `[UNCERTAIN — depends on X]`, `[SPECULATIVE]` tags. Agent methodology change only — no engine work required.
-
-**H2. Structured PROPOSAL.md schema** — RESOLVED (ADR-072)
-All 17 proposal-producing agents teach YAML frontmatter (`type`, `confidence`, `key_files`, `decision_needed`). `parse_proposal_frontmatter()` in review.py extracts metadata. Review display shows metadata line. Prioritization scoring uses `decision_needed` (+15) and `confidence: low` (+10) signals. MCP `_score_proposal()` enhanced.
-
-**H3. AI-authored review notes** — RESOLVED (ADR-072)
-All 17 proposal-producing agents teach `## Review Notes` section instructing agents to write REVIEW-NOTES.md alongside PROPOSAL.md. `show_proposal()` in review.py displays review notes after proposal. MCP `elmer_review` includes `review_notes` field in detail response.
+**H1.** Confidence annotations in proposals — RESOLVED (ADR-072)
+**H2.** Structured PROPOSAL.md schema — RESOLVED (ADR-072)
+**H3.** AI-authored review notes — RESOLVED (ADR-072)
 
 ### I. Agent Evolution
 
-Close the feedback loop between exploration outcomes and agent methodology.
-
-**I1. Archetype effectiveness diagnosis** — RESOLVED (ADR-073)
-`elmer archetypes diagnose <name>` implemented in archstats.py. `diagnose_archetype()` reads DB + archive, reports approval/decline rates, decline reasons, verification failure counts, avg turns, topic patterns. CLI subcommand added. MCP tool `elmer_archetype_diagnose`. Diagnostic summary identifies low approval rates and high verification failure rates. Prerequisite for I2.
+**I1.** Archetype effectiveness diagnosis — RESOLVED (ADR-073)
 
 **I2. Agent methodology self-improvement** (Large)
 After I1 provides diagnosis, a meta-agent generates revised agent prompt text based on observed failure patterns. `elmer archetypes refine <name>` produces a diff of the proposed changes for human review. Never automatic — human approves prompt changes. Requires I1 as prerequisite and a new meta-agent definition.
@@ -168,16 +127,16 @@ After I1 provides diagnosis, a meta-agent generates revised agent prompt text ba
 Agent Teams (experimental Claude Code feature) enable multiple Claude Code instances to coordinate within a session via shared task lists and inter-agent messaging. Currently rejected for core Elmer operations because they're session-scoped and don't persist (CLAUDE.md constraint). However, specific use cases could benefit from intra-session parallelism with real-time debate between agents.
 
 **J1. Ensemble exploration via Agent Teams** (Medium)
-Replace the current ensemble mechanism (N separate `claude -p` sessions + post-hoc synthesis agent) with a single Agent Team where teammates explore from different archetype lenses and debate in real-time. The lead synthesizes findings naturally through inter-agent challenge rather than reading N completed proposals after the fact. Quality improvement: teammates can challenge each other's reasoning and build on findings, producing synthesis that's strictly better than post-hoc assembly. Requires J3 as prerequisite.
+Replace the current ensemble mechanism (N separate `claude -p` sessions + post-hoc synthesis agent) with a single Agent Team where teammates explore from different archetype lenses and debate in real-time. Requires J3 as prerequisite.
 
 **J2. Collaborative decomposition** (Medium)
-For `elmer implement`, the decompose meta-agent runs alone. A team-based decomposition spawns teammates to analyze different aspects of the codebase (dependency structure, test coverage, existing patterns) and debate the step ordering before the lead produces the final plan. Higher-quality plans at higher token cost. Appropriate for large milestones where decomposition quality is the bottleneck. Requires J3 as prerequisite.
+For `elmer implement`, spawn teammates to analyze different codebase aspects and debate step ordering before the lead produces the final plan. Requires J3 as prerequisite.
 
 **J3. Headless Agent Teams feasibility** (Small — research)
-The blocking question for J1 and J2: can `claude -p` (print mode) create and coordinate Agent Teams? The docs describe interactive usage with tmux/iTerm2 split panes and `Shift+Down` cycling. Test whether team coordination works in headless mode. If not, the integration path narrows to a new "interactive exploration" mode that accepts the session-scoped constraint for higher-quality results. Key test: run `claude -p` with a prompt that requests an agent team and observe whether teammates spawn and coordinate.
+The blocking question for J1 and J2: can `claude -p` (print mode) create and coordinate Agent Teams? Test whether team coordination works in headless mode.
 
 **J4. Inter-exploration messaging** (Large)
-The most ambitious Agent Teams integration: concurrent Elmer explorations on the same project could form an ad-hoc team, sharing findings via the mailbox system. Exploration A discovers a critical constraint; Exploration B receives it before committing to an incompatible approach. This transforms parallel explorations from independent to collaborative. Major architectural tension: Agent Teams are session-scoped, Elmer explorations are persistent. Would require either (a) wrapping the team in a persistent Elmer layer that survives session death, or (b) accepting that collaborative explorations are ephemeral but higher-quality. Depends on J3 feasibility results.
+Concurrent Elmer explorations on the same project could form an ad-hoc team, sharing findings via the mailbox system. Major architectural tension: Agent Teams are session-scoped, Elmer explorations are persistent. Depends on J3 feasibility results.
 
 ---
 
@@ -185,4 +144,4 @@ The most ambitious Agent Teams integration: concurrent Elmer explorations on the
 
 See Open Questions in CONTEXT.md. Features discussed but not committed are tracked there.
 
-*Last updated: 2026-02-25, resolved G1–G3, H1–H3, E3, A4, I1, B3 (ADR-068–073); 12 remaining future directions*
+*Last updated: 2026-02-26, collapsed resolved directions to one-liners; 12 remaining future directions (B2, C4, D3, D5, E1, E2, G4, I2, J1–J4)*

@@ -245,9 +245,110 @@ elmer decline my-exploration "too broad — focus on JWT validation only"
 elmer decline my-exploration "already addressed by exploration X"
 ```
 
+### Workflow 8: Implementation Engine
+
+When you have a milestone or large feature to build, decompose it into ordered steps and let Elmer execute them autonomously.
+
+```bash
+# Preview the plan without executing
+elmer implement "Add user authentication with JWT" --dry-run
+
+# Save the plan for review
+elmer implement "Add user authentication with JWT" --dry-run --save
+
+# Execute — Elmer decomposes, asks clarifying questions, then runs
+elmer implement "Add user authentication with JWT"
+
+# Pre-answer questions for fully autonomous execution
+elmer implement "Add user authentication with JWT" --answers-file answers.json
+
+# Skip questions entirely
+elmer implement "Add user authentication with JWT" -y
+```
+
+The decompose agent (opus) reads your project docs and produces an ordered plan with dependencies, `key_files`, `verify_cmd` per step, and model routing. Each step becomes an exploration with cross-step context injection — approved predecessors' summaries feed into dependent step prompts.
+
+**Monitor progress:**
+
+```bash
+elmer implement --status              # Plan overview with per-step status
+elmer status                           # Normal exploration status (plan steps show up here too)
+```
+
+**When a step fails:**
+
+```bash
+# Resume after fixing the issue
+elmer implement --resume my-plan
+
+# If the failure is structural (wrong approach, not a bug)
+elmer replan my-plan "The API needs gRPC not REST"
+
+# Preview the revised plan
+elmer replan my-plan --dry-run
+```
+
+**From exploration to implementation:** If an exploration's PROPOSAL.md contains actionable implementation steps, feed it directly into decomposition:
+
+```bash
+elmer implement --from-exploration evaluate-auth-options
+```
+
+### Workflow 9: External Blockers
+
+When an exploration depends on something outside the codebase — a stakeholder decision, an API key, a prerequisite merge — register it as a blocker:
+
+```bash
+elmer block my-exploration "Waiting for API credentials from vendor"
+elmer blockers                        # List all blockers
+elmer unblock my-exploration          # When the blocker is resolved
+```
+
+Blocked explorations stay pending until unblocked. `elmer status` surfaces what's blocked and why.
+
+## Troubleshooting
+
+### Exploration Failed
+
+```bash
+elmer logs my-exploration              # Parsed diagnostics: errors, permission denials, turn count
+elmer logs my-exploration --raw        # Full JSON session log
+```
+
+Common causes:
+- **Permission denied**: The exploration agent tried to use a tool that's not allowed. Check `.claude/settings.json`.
+- **No PROPOSAL.md**: The agent ran out of turns or got stuck. Try `elmer retry my-exploration` or increase `--max-turns`.
+- **Wrong path**: The agent wrote PROPOSAL.md somewhere other than the worktree root. Check the log.
+
+### Stale Worktrees
+
+```bash
+elmer clean                            # Remove failed/orphaned worktrees and state entries
+```
+
+`clean` is a garbage collector. It removes worktrees and state for failed explorations, prunes orphaned git worktrees, and recovers from crashes. Safe to run anytime.
+
+### Merge Conflicts on Approve
+
+If `elmer approve` fails with a merge conflict:
+
+1. The conflict is in the worktree. Resolve it manually: `cd .elmer/worktrees/<id>/`, fix conflicts, `git add`, `git commit`.
+2. Or decline and re-explore with a more specific topic that avoids the conflicting files.
+3. For sequential changes that touch the same files, use `elmer batch --chain` to prevent conflicts.
+
+### Plan Step Stuck
+
+```bash
+elmer implement --status               # See which step is stuck and why
+elmer cancel step-exploration-id       # Cancel the stuck step
+elmer implement --resume my-plan       # Retry from the failed step
+```
+
+If the failure is structural (the approach won't work), use `elmer replan` instead of retrying.
+
 ## Writing Good Topics
 
-A topic is the question or task you give to Claude. It's the `$TOPIC` in the archetype template. Good topics produce good proposals.
+A topic is the question or task you give to Claude. It's the `-p` prompt that the agent receives. Good topics produce good proposals.
 
 **Be specific about what you want to know or do:**
 
@@ -444,14 +545,9 @@ Elmer and Claude Code skills overlap in analysis methodology but serve different
 
 `elmer init --agents` scaffolds local copies of bundled archetypes for customization. But sometimes you need a **new archetype** that doesn't exist in the bundled set — a domain-specific exploration methodology for your project.
 
-### Two Files Required
+### Agent Definition Required
 
-A custom archetype requires **both** files:
-
-1. **Archetype template** (fallback): `.elmer/archetypes/<name>.md`
-2. **Agent definition** (override): `.claude/agents/elmer-<name>.md`
-
-The archetype template must exist even when an agent definition overrides it — elmer validates the template exists before checking for agents. The template is the `$TOPIC`-substitution fallback; the agent is the modern system-prompt-based approach.
+A custom archetype requires an agent definition file at `.claude/agents/elmer-<name>.md`. This is the only invocation path — template mode (`$TOPIC` substitution) was removed in ADR-053.
 
 ### Agent Definition Format
 
@@ -483,37 +579,13 @@ PROPOSAL.md in the current working directory.
 - Analysis agents: `Read, Grep, Glob, Bash, Write` (Write for PROPOSAL.md only)
 - Action agents: `Read, Grep, Glob, Bash, Edit, Write` (can modify code)
 
-### Archetype Template Format
-
-Minimal fallback — used only when the agent definition isn't available:
-
-```markdown
-Your methodology description here.
-
-Read the project's documentation to ground yourself in its actual state.
-
-$TOPIC
-
-IMPORTANT: You MUST use the Write tool to create a file named PROPOSAL.md
-in the current working directory.
-```
-
 ### Example: Stakeholder Brief Archetype
 
 A project needs phase-level briefs for non-technical stakeholders:
 
 ```bash
-# Create both files
-mkdir -p .elmer/archetypes .claude/agents
+mkdir -p .claude/agents
 
-# Template fallback
-cat > .elmer/archetypes/stakeholder-brief.md << 'EOF'
-Stakeholder-facing brief. Synthesize existing design into readable proposal.
-Read project documentation. $TOPIC
-Write a PROPOSAL.md accessible to non-technical readers.
-EOF
-
-# Agent definition (the real prompt)
 cat > .claude/agents/elmer-stakeholder-brief.md << 'EOF'
 ---
 name: elmer-stakeholder-brief
@@ -587,6 +659,14 @@ elmer approve --all
 # "How much did this cost"
 elmer costs
 
+# "I have a milestone to implement"
+elmer implement "Add user authentication"
+
+# "A plan step failed structurally"
+elmer replan my-plan "Need different approach"
+
 # "Run it overnight"
 elmer daemon --auto-approve --generate
 ```
+
+*Last updated: 2026-02-26*

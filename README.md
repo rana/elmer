@@ -228,9 +228,9 @@ Archetypes define how Claude explores a topic. Each archetype is implemented as 
 
 Use `--auto-archetype` to let AI pick the best archetype for each topic. Use `-a` to force a specific one.
 
-Agent definitions are bundled with Elmer and used automatically. To customize, run `elmer init --agents` to scaffold local copies in `.claude/agents/`. Local copies override bundled defaults. Legacy `$TOPIC` template substitution (`.elmer/archetypes/`) is used as fallback when no agent definition exists. Use `elmer archetypes stats` to see which perform best.
+Agent definitions are bundled with Elmer and used automatically. To customize, run `elmer init --agents` to scaffold local copies in `.claude/agents/`. Local copies override bundled defaults. Use `elmer archetypes stats` to see which perform best.
 
-To create a **new archetype** from scratch, you need both files: `.elmer/archetypes/<name>.md` (template fallback) and `.claude/agents/elmer-<name>.md` (agent definition). See GUIDE.md "Creating Custom Archetypes" for details.
+To create a **new archetype**, create an agent definition at `.claude/agents/elmer-<name>.md` with YAML frontmatter. See GUIDE.md "Creating Custom Archetypes" for details.
 
 ## Topic List Files
 
@@ -273,6 +273,9 @@ archetype = "explore-act"
 model = "opus"
 max_turns = 50
 
+[session]
+pending_ttl_days = 7         # Auto-cancel pending explorations older than this (ADR-058)
+
 [insights]
 enabled = false          # Extract insights after approval
 inject = true            # Inject cross-project insights into prompts
@@ -281,6 +284,7 @@ inject = true            # Inject cross-project insights into prompts
 model = "sonnet"
 max_turns = 5
 threshold = 5            # Approvals since last digest before daemon auto-synthesizes
+inject_into_explorations = true  # Inject latest digest into worker prompts (ADR-071)
 
 [verification]
 # on_done = "make test"      # Global verification command for all explorations
@@ -289,10 +293,31 @@ max_retries = 2              # Auto-amend attempts before marking failed
 timeout = 300                # Verification timeout in seconds
 auto_approve_on_pass = true  # false = require AI review even if tests pass (ADR-041)
 
+[auto_approve]
+# policy = "review"          # "review" (default) or "verification_sufficient" (ADR-076)
+# max_approvals_per_cycle = 10  # Daemon per-cycle limit (ADR-054)
+
+[ensemble]
+# synthesis_model = "sonnet"
+# synthesis_max_turns = 10
+# default_replicas = 1       # Default replica count for explorations
+
 [implement]
 model = "opus"               # Model for implementation steps
 decompose_model = "opus"     # Model for milestone decomposition
 decompose_max_turns = 30     # Max turns for decomposition agent
+# auto_replan = false        # Auto-replan on structural failure (ADR-067)
+
+[implement.model_routing]
+# scaffold = "opus"          # Step 0 (foundation)
+# implement = "opus"         # Implementation steps
+# explore = "sonnet"         # Analysis-only steps
+# fallback = "sonnet"        # Steps without a specific route (ADR-069)
+
+[hooks]
+# on_done = "skill:my-check"     # Claude Code skill at lifecycle points (ADR-064)
+# pre_approve = ""
+# post_approve = ""
 
 [invariants]
 model = "sonnet"
@@ -365,7 +390,7 @@ Agents define exploration methodology as Claude Code custom subagents with tool 
 ## How Explorations Work
 
 1. `elmer explore "topic"` creates a git worktree on branch `elmer/<slug>`
-2. Resolves a Claude Code subagent for the archetype (or falls back to `$TOPIC` template)
+2. Resolves a Claude Code subagent for the archetype
 3. Spawns `claude --agents <JSON> --agent <name> -p "<topic>"` in the worktree (background)
 4. Claude reads project docs, investigates the topic, writes `PROPOSAL.md`
 5. `elmer status` detects when the session finishes
@@ -391,12 +416,12 @@ Add to your `.claude/mcp.json` (project-level) or `~/.claude/mcp.json` (global):
 }
 ```
 
-This gives Claude Code 23 tools in 5 categories, all returning structured JSON:
+This gives Claude Code 25 tools in 5 categories, all returning structured JSON:
 
-- **Read-only (8):** `elmer_status`, `elmer_review`, `elmer_costs`, `elmer_tree`, `elmer_archetypes`, `elmer_insights`, `elmer_config_get`, `elmer_recover_partial`
+- **Read-only (9):** `elmer_status`, `elmer_review`, `elmer_costs`, `elmer_tree`, `elmer_archetypes`, `elmer_archetype_diagnose`, `elmer_insights`, `elmer_config_get`, `elmer_recover_partial`
 - **Mutation (8):** `elmer_explore`, `elmer_approve`, `elmer_amend`, `elmer_decline`, `elmer_cancel`, `elmer_retry`, `elmer_clean`, `elmer_pr`
 - **Intelligence (4):** `elmer_generate`, `elmer_validate`, `elmer_mine_questions`, `elmer_digest`
-- **Implementation (2):** `elmer_implement`, `elmer_plan_status`
+- **Implementation (3):** `elmer_implement`, `elmer_plan_status`, `elmer_replan`
 - **Batch (1):** `elmer_batch`
 
 ### CLI Fallback
@@ -415,3 +440,5 @@ Claude Code learns the commands from the project's `CLAUDE.md`. Note that `elmer
 ## Name
 
 Elmer Fudd. Persistent hunter. Homage to the [Ralph Wiggum](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) naming tradition for autonomous Claude Code tools.
+
+*Last updated: 2026-02-26*

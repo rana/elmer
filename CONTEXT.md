@@ -63,14 +63,14 @@ All seven development phases complete:
 6. **Phase 6 (Convergence):** Decline reasons, convergence digests, digest-aware generation, daemon synthesis step. Closes the feedback loop.
 7. **Phase 7 (Implementation Engine):** Milestone decomposition (`elmer implement`) — AI decomposes milestones into ordered plan steps with dependencies, then executes each as a separate exploration with cross-step context, verification hooks, auto-amend, and cascade failure handling. 11 ADRs (ADR-038 through ADR-048).
 
-The tool is functional and in active use on multiple projects. 50 ADRs recorded.
+The tool is functional and in active use on multiple projects. 59 ADRs recorded.
 
 ## What's Working
 
 - Core exploration loop is reliable — worktree isolation, background workers, state tracking
 - Daemon mode runs overnight autonomously
 - Cross-project insights accumulate across approved explorations
-- MCP server provides structured access for Claude Code integration (21 tools)
+- MCP server provides structured access for Claude Code integration (25 tools)
 - Batch topics with `--chain` handle sequential refactoring without merge conflicts
 - Five-document scaffolding (`elmer init --docs`) bootstraps effective AI-assisted projects
 - Convergence digests synthesize understanding across approved/declined work
@@ -88,13 +88,9 @@ The tool is functional and in active use on multiple projects. 50 ADRs recorded.
 - **Elmer-on-Elmer recursion** — running explorations on Elmer's own codebase (meta-tool use)
 - **Scaffolding template quality** — generated CONTEXT.md is structural but not philosophical; could better teach the institutional memory pattern
 - **Agent Teams integration** — Agent Teams (experimental) enable multi-agent coordination within a session via shared task lists and inter-agent messaging. Partially addressed by ADR-026 (custom subagents). Agent Teams remain session-scoped and don't persist, which conflicts with Elmer's persistence model. The key opportunity is ensemble exploration with real-time debate (J1 in ROADMAP.md) and collaborative decomposition (J2). Blocking question: whether `claude -p` can coordinate Agent Teams headlessly (J3). See Future Directions J1–J4 in ROADMAP.md.
-- ~~**Sibling-aware exploration prompts**~~ — resolved in ADR-071. `_inject_digest()` (G1), `_inject_siblings()` (G2), and `_inject_decline_reasons()` (G3) in explore.py now enrich every exploration prompt with accumulated system intelligence.
 - **Mid-exploration interactivity** — workers run to completion or TTL-death with no channel for human input during execution. The worker often hits forks where human judgment would prevent wasted turns. Resolution path: G4 (mid-exploration questions protocol) in ROADMAP.md designs a `waiting` state with structured `QUESTIONS.md` output, `elmer answer` command, and session resumption. The architectural question is whether this is worth the state model complexity or whether Agent Teams' messaging (J4) offers a better primitive.
-- ~~**Structured proposal output**~~ — resolved in ADR-072. All 17 agents now teach YAML frontmatter (`type`, `confidence`, `key_files`, `decision_needed`), confidence annotations, and REVIEW-NOTES.md. Frontmatter is optional — agents produce it when able without constraining creativity.
 - **Cross-project MCP** — every MCP tool infers project from `cwd`. No way to address multiple projects in a single Claude Code session. Adding a `project_path` parameter to tools that need it is the likely path, with `None` defaulting to cwd. Deferred because most usage is single-project.
 - **Composable status queries** — MCP status/review tools return full result sets; filtering happens client-side, wasting tokens. A `filter` parameter on `elmer_status` (e.g., `status=done AND archetype=prototype`) would collapse multi-call workflows. Deferred because current usage is manageable.
 - **Document-heavy pre-code projects** — srf-yogananda-teachings (13 docs, 124 ADRs, 1.5 MB architecture, zero code) exposed that `elmer implement` assumes verification commands exist. Projects in design phase need document-coherence verification, not build/test. See Future Directions D1–D5 in ROADMAP.md.
-- ~~**Retry dependency management**~~ — resolved in ADR-049. `_rebuild_plan_dependencies()` reconstructs the dependency graph from plan JSON after retries.
-- ~~**Plan completion check ordering**~~ — resolved in ADR-049. Daemon runs pre-approval completion check in worktree before approving the last plan step.
 
-*Last updated: 2026-02-25, resolved sibling-awareness (ADR-071) and structured proposals (ADR-072); 10 future directions implemented*
+*Last updated: 2026-02-26, document health reconciliation — counts, stale references, resolved open questions removed; 59 ADRs*

@@ -43,6 +43,7 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `worker.py` | Claude CLI invocation, process management, agent flag building |
 | `state.py` | SQLite state tracking |
 | `config.py` | Configuration loading, project initialization, agent resolution, IDE watcher exclusion |
+| `hooks.py` | Lifecycle hooks — invoke project-defined Claude Code skills at transition points |
 | `generate.py` | AI topic generation orchestration |
 | `autoapprove.py` | AI review gate for auto-approval |
 | `promptgen.py` | Two-stage AI prompt generation |
@@ -160,7 +161,7 @@ SQLite database at `.elmer/state.db`:
 explorations (
     id TEXT PRIMARY KEY,       -- slug
     topic TEXT,                -- original topic text
-    archetype TEXT,            -- template used
+    archetype TEXT,            -- agent used
     branch TEXT,               -- git branch name
     worktree_path TEXT,        -- absolute path to worktree
     status TEXT,               -- pending|running|done|approved|declined|failed
@@ -179,7 +180,21 @@ explorations (
     verify_cmd TEXT,               -- shell command to verify before done (ADR-038)
     plan_id TEXT,                  -- implementation plan this step belongs to (ADR-039)
     plan_step INTEGER,             -- step index within the plan
-    amend_count INTEGER DEFAULT 0  -- auto-amend attempts for verification
+    amend_count INTEGER DEFAULT 0, -- auto-amend attempts for verification
+    ensemble_id TEXT,              -- groups replicas and synthesis (ADR-031)
+    ensemble_role TEXT,            -- 'replica' or 'synthesis' (ADR-031)
+    failure_category TEXT,         -- machine-readable failure type (ADR-076)
+    verification_failures INTEGER DEFAULT 0,  -- count of verify_cmd failures (ADR-059)
+    verification_seconds REAL,     -- cumulative verification time (ADR-060)
+    blocked_by TEXT                -- external blocker ID (ADR-065)
+)
+
+external_blockers (
+    id TEXT PRIMARY KEY,       -- blocker identifier
+    description TEXT NOT NULL, -- what's blocking
+    status TEXT NOT NULL DEFAULT 'open',  -- open|resolved
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
 )
 
 dependencies (
@@ -229,15 +244,11 @@ daemon_log (
 
 Archetypes define exploration methodology. Two invocation modes (ADR-026):
 
-**Agent mode** (preferred): Archetype is a Claude Code custom subagent definition — markdown with YAML frontmatter (`name`, `description`, `tools`, optional `model`). The agent's system prompt provides methodology; the `-p` prompt provides the topic. Invoked via `--agents` inline JSON + `--agent` flags.
-
-**Template mode** (fallback): Markdown templates with `$TOPIC` substitution. Used when no agent definition exists.
+Each archetype is a Claude Code custom subagent definition — markdown with YAML frontmatter (`name`, `description`, `tools`, optional `model`). The agent's system prompt provides methodology; the `-p` prompt provides the topic. Invoked via `--agents` inline JSON + `--agent` flags (ADR-026). Template mode (`$TOPIC` substitution) was removed in ADR-053 — agent-only resolution.
 
 Agent resolution order:
 1. `.claude/agents/elmer-<name>.md` (project-local, scaffolded via `elmer init --agents`)
 2. Bundled `src/elmer/agents/<name>.md` (package defaults)
-3. `.elmer/archetypes/<name>.md` (template fallback)
-4. Bundled `src/elmer/archetypes/<name>.md` (template fallback)
 
 Meta-operation agent resolution uses `elmer-meta-<name>` prefix.
 
@@ -245,7 +256,7 @@ Exploration archetypes (9): explore, explore-act, prototype, implement, adr-prop
 
 Audit archetypes (8): consistency-audit, coherence-audit, architecture-audit, operational-audit, documentation-audit, opportunity-scan, workflow-audit, mission-audit. Tools: `Read, Grep, Glob, Bash, Write`.
 
-Meta-operation agents (11): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants, amend, digest, synthesize, decompose. Model: `sonnet` (except decompose which uses `opus` for deep architectural reasoning). The amend agent has `Read, Grep, Glob, Bash, Edit, Write` for editorial revision. The digest agent synthesizes convergence across approved/declined proposals. The decompose agent reads project docs and produces structured JSON implementation plans (ADR-039).
+Meta-operation agents (12): generate-topics, prompt-gen, review-gate, select-archetype, extract-insights, mine-questions, validate-invariants, amend, digest, synthesize, decompose, replan. Model: `sonnet` (except decompose which uses `opus` for deep architectural reasoning). The amend agent has `Read, Grep, Glob, Bash, Edit, Write` for editorial revision. The digest agent synthesizes convergence across approved/declined proposals. The decompose agent reads project docs and produces structured JSON implementation plans (ADR-039).
 
 ### Git Integration
 
@@ -310,7 +321,7 @@ Instead of static `$TOPIC` substitution:
 1. **Stage 1 (meta):** Synchronous `claude -p` reads project docs, available archetypes, and topic — produces a bespoke prompt
 2. **Stage 2 (execution):** Execute the generated prompt in the worktree
 
-The archetype becomes a hint to Stage 1, not a rigid template. Fallback: static templates when `--generate-prompt` is not used.
+The archetype becomes a hint to Stage 1, not a rigid template. When `--generate-prompt` is not used, the agent's system prompt provides the methodology directly.
 
 ### Auto-Approve Gate
 
@@ -335,7 +346,7 @@ Conservative default: decline when uncertain. Criteria configurable in `.elmer/c
 
 /path/to/project/.elmer/
 ├── config.toml          # Project-specific overrides
-├── archetypes/          # Project-specific templates (fallback)
+├── archetypes/          # Legacy templates (retained as reference, not used for execution)
 ├── state.db             # Project state
 ├── proposals/           # Archived PROPOSAL.md files (persistent)
 ├── digests/             # Convergence digest files (timestamped)
@@ -352,22 +363,13 @@ Insights extracted from approved proposals get stored in `~/.elmer/insights.db`.
 
 ### Elmer vs Claude Code Skills
 
-Elmer archetypes and Claude Code skills overlap in analysis methodology but serve different moments:
-
-| Dimension | Elmer archetypes | Claude Code skills |
-|-----------|-----------------|-------------------|
-| Execution | Background `claude -p` on git branches | Interactive, in-session |
-| Output | PROPOSAL.md on a branch | Action list in chat |
-| State | Tracked in SQLite, persistent | Ephemeral, dies with session |
-| Best for | Autonomous batch research, overnight runs | Interactive design thinking, quick audits |
-
-The overlap is tolerated. No shared template layer — they diverge independently because they serve different runtimes. `elmer init --skills` generates project-specific skills from doc signals.
+Elmer archetypes and Claude Code skills overlap in analysis methodology but serve different moments. The overlap is tolerated — they serve different runtimes (background `claude -p` vs interactive sessions). See GUIDE.md "When to Use Elmer vs Claude Code Skills" for the full comparison table and decision guide.
 
 ### MCP Server
 
-`mcp_server.py` exposes Elmer state and operations as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP). 23 tools total.
+`mcp_server.py` exposes Elmer state and operations as MCP tools over stdio JSON-RPC (ADR-024). Started via `elmer mcp`. Uses Anthropic's `mcp` Python SDK (FastMCP). 25 tools total.
 
-**Read-only tools (8):**
+**Read-only tools (9):**
 
 | Tool | Wraps | Returns |
 |------|-------|---------|
@@ -403,12 +405,13 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 | `elmer_mine_questions` | `questions.mine_questions()` + optional spawn | Extracts open questions from docs. Optionally spawns explorations. |
 | `elmer_digest` | `digest.run_digest()` | Synthesizes convergence digest from approved/declined proposals. Optional time and topic filters. |
 
-**Implementation tools (2):**
+**Implementation tools (3):**
 
 | Tool | Wraps | Effect |
 |------|-------|--------|
-| `elmer_implement` | `implement.decompose_milestone()` + `execute_plan()` | Decompose milestone into steps, optionally execute. Supports dry_run. |
+| `elmer_implement` | `implement.decompose_milestone()` + `execute_plan()` | Decompose milestone into steps, optionally execute. Supports dry_run, from_exploration. |
 | `elmer_plan_status` | `implement.get_plan_status()` | Plan progress with per-step status and cost. |
+| `elmer_replan` | `replan.run_replan()` | Revise a paused plan — invoke replan agent, validate revision, apply step remapping (ADR-067). |
 
 **Batch tool (1):**
 
@@ -426,6 +429,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-57 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+59 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-25, ADR-074 — document routing, per-step prerequisites, step metadata validation (23 tools)*
+*Last updated: 2026-02-26, document health reconciliation — schema, MCP tools, module table, template mode removal, agent counts (25 tools, 59 ADRs)*
