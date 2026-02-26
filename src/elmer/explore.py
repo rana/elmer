@@ -43,20 +43,6 @@ def _make_unique_slug(conn, base_slug: str, elmer_dir: Path) -> str:
     return f"{base_slug}-{counter}"
 
 
-def _assemble_prompt(
-    archetype_path: Path,
-    topic: str,
-    elmer_dir: Optional[Path] = None,
-    project_dir: Optional[Path] = None,
-) -> str:
-    """Load archetype template, substitute $TOPIC, inject cross-project insights."""
-    template = archetype_path.read_text()
-    prompt = template.replace("$TOPIC", topic)
-
-    # Inject cross-project insights if enabled
-    prompt = _inject_insights(prompt, topic, elmer_dir, project_dir)
-    return prompt
-
 
 def _inject_insights(
     prompt: str,
@@ -86,40 +72,37 @@ def _inject_insights(
 
 def _resolve_agent_and_prompt(
     archetype: str,
-    archetype_path: Path,
     topic: str,
     elmer_dir: Path,
     project_dir: Path,
     worktree_path: Optional[Path] = None,
-) -> tuple[Optional[dict], str]:
+) -> tuple[dict, str]:
     """Resolve agent config and build the prompt for an exploration.
 
-    If an agent definition exists for the archetype:
-      - Returns (agent_config, topic_prompt) — the topic is the prompt,
-        the agent's system prompt provides the methodology.
+    Returns (agent_config, topic_prompt) — the topic is the prompt,
+    the agent's system prompt provides the methodology.
 
-    If no agent definition exists:
-      - Returns (None, full_prompt) — falls back to template substitution.
+    Raises RuntimeError if no agent definition exists for the archetype.
 
     If worktree_path is provided, appends an explicit PROPOSAL.md path
     directive to prevent Claude from writing to the wrong directory.
     """
     agent_config = config.resolve_agent(project_dir, archetype)
 
-    if agent_config is not None:
-        # Agent provides the methodology via system prompt.
-        # The -p prompt is just the topic, with optional insights.
-        prompt = topic
-        prompt = _inject_insights(prompt, topic, elmer_dir, project_dir)
-        if worktree_path is not None:
-            prompt = _append_proposal_path(prompt, worktree_path)
-        return agent_config, prompt
+    if agent_config is None:
+        raise RuntimeError(
+            f"No agent definition found for archetype '{archetype}'. "
+            f"Ensure elmer-{archetype}.md exists in .claude/agents/ or "
+            f"src/elmer/agents/."
+        )
 
-    # Fallback: template with $TOPIC substitution
-    prompt = _assemble_prompt(archetype_path, topic, elmer_dir, project_dir)
+    # Agent provides the methodology via system prompt.
+    # The -p prompt is just the topic, with optional insights.
+    prompt = topic
+    prompt = _inject_insights(prompt, topic, elmer_dir, project_dir)
     if worktree_path is not None:
         prompt = _append_proposal_path(prompt, worktree_path)
-    return None, prompt
+    return agent_config, prompt
 
 
 def _append_proposal_path(prompt: str, worktree_path: Path) -> str:
@@ -240,8 +223,13 @@ def start_exploration(
             cost_usd=sel_result.cost_usd,
         )
 
-    # Resolve archetype template (validate it exists even if deferred)
-    archetype_path = config.resolve_archetype(elmer_dir, archetype)
+    # Validate agent definition exists (fail early, before creating worktree)
+    if not generate_prompt and config.resolve_agent(project_dir, archetype) is None:
+        conn.close()
+        raise RuntimeError(
+            f"No agent definition for archetype '{archetype}'. "
+            f"Ensure elmer-{archetype}.md exists in .claude/agents/ or src/elmer/agents/."
+        )
 
     # Generate unique slug (or use explicit override for ensemble replicas)
     if slug_override:
@@ -340,7 +328,7 @@ def start_exploration(
         )
     else:
         agent_config, prompt = _resolve_agent_and_prompt(
-            archetype, archetype_path, topic, elmer_dir, project_dir,
+            archetype, topic, elmer_dir, project_dir,
             worktree_path=worktree_path,
         )
     worktree.create_worktree(project_dir, branch, worktree_path)
@@ -509,16 +497,14 @@ def launch_pending(
                 exploration_id=exploration_id,
             )
         except RuntimeError:
-            # Fall back to static template if prompt generation fails
-            archetype_path = config.resolve_archetype(elmer_dir, archetype)
+            # Fall back to agent resolution if prompt generation fails
             agent_config, prompt = _resolve_agent_and_prompt(
-                archetype, archetype_path, topic, elmer_dir, project_dir,
+                archetype, topic, elmer_dir, project_dir,
                 worktree_path=worktree_path,
             )
     else:
-        archetype_path = config.resolve_archetype(elmer_dir, archetype)
         agent_config, prompt = _resolve_agent_and_prompt(
-            archetype, archetype_path, topic, elmer_dir, project_dir,
+            archetype, topic, elmer_dir, project_dir,
             worktree_path=worktree_path,
         )
 

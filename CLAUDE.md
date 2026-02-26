@@ -6,8 +6,8 @@ Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, rules, conventions
 2. **CONTEXT.md** — project methodology, collaboration model, current state
 3. **DESIGN.md** — architecture, data model, module responsibilities
-4. **DECISIONS.md** — ADRs with full rationale (34 recorded)
-5. **ROADMAP.md** — phase history, **Future Directions** (17 remaining improvements), deferred features
+4. **DECISIONS.md** — ADRs with full rationale (39 recorded)
+5. **ROADMAP.md** — phase history, **Future Directions** (15 remaining improvements), deferred features
 6. **README.md** — user-facing docs, install, full command reference
 7. **GUIDE.md** — practical usage playbook, workflows, patterns
 
@@ -15,15 +15,13 @@ Elmer is an autonomous research tool that uses git branches as isolation boundar
 
 ### Active Backlog
 
-ROADMAP.md § Future Directions has 17 remaining improvements across 6 themes (A–F), grounded in pipeline audit and real-world usage on srf-yogananda-teachings. Priority order for new sessions:
+ROADMAP.md § Future Directions has 15 remaining improvements across 6 themes (A–F), grounded in pipeline audit and real-world usage on srf-yogananda-teachings. Priority order for new sessions:
 
-1. **D2** — Pre-code project support (unblocks doc-only projects)
-2. **D1** — Configurable document coherence verification (generalizes `validate`)
-3. **C3** — NULL cost handling in SUM queries (small, correctness)
-4. **A3** — Plan revision / replanning (large, architecture)
-5. **B2** — Archetype-aware turn allocation (medium)
+1. **C3** — NULL cost handling in SUM queries (small, correctness)
+2. **A3** — Plan revision / replanning (large, architecture)
+3. **B2** — Graceful session checkpoint (large)
 
-A1, A2 completed (ADR-049). B1 completed (ADR-050). If asked to improve Elmer or work on next steps, start from this list. Full descriptions with complexity ratings are in ROADMAP.md.
+A1, A2 completed (ADR-049). B1 completed (ADR-050). D1+D2 completed (ADR-056). If asked to improve Elmer or work on next steps, start from this list. Full descriptions with complexity ratings are in ROADMAP.md.
 
 ## Tech Stack
 
@@ -56,7 +54,7 @@ Full options and examples in README.md. Core subcommands:
 | `elmer cancel ID` | Stop running/pending/amending exploration, cleanup |
 | `elmer retry [ID]` | Retry failed exploration(s) (`--failed`, `--max-concurrent`) |
 | `elmer costs` | Cost summary (`--exploration ID` for detail) |
-| `elmer validate` | Check document invariants |
+| `elmer validate` | Check document invariants (`--check` for read-only; exits 1 on failure) |
 | `elmer archetypes` | `list` or `stats` |
 | `elmer mine-questions` | Extract open questions from docs (`--spawn`, `--cluster`) |
 | `elmer insights` | List cross-project insights |
@@ -73,7 +71,7 @@ Full options and examples in README.md. Core subcommands:
 
 - No external database servers. SQLite only.
 - No async framework. Subprocess + PID tracking for background processes.
-- Archetypes as Claude Code custom subagents (ADR-026) — `$TOPIC` template fallback when no agent definition exists.
+- Archetypes as Claude Code custom subagents (ADR-026, ADR-053) — agent-only resolution, no template fallback.
 - Git worktrees, never directory copying. Worktrees share `.git`.
 - `claude -p` with `--agents`/`--agent` flags for headless sessions, never Agent Teams (session-scoped, don't persist).
 
@@ -135,4 +133,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-25, remove budget enforcement ADR-051 (34 ADRs)*
+*Last updated: 2026-02-25, doc-coherence verification ADR-056 (39 ADRs)*

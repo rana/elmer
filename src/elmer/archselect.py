@@ -19,23 +19,16 @@ def list_exploration_archetypes(elmer_dir: Path) -> dict[str, str]:
     """List available exploration archetypes with their first-line descriptions.
 
     Returns {name: description} for archetypes that are valid exploration targets.
-    Checks project-local archetypes first, then bundled. Meta-archetypes are excluded.
+    Reads from bundled agent definitions in src/elmer/agents/.
+    Meta-archetypes are excluded.
     """
     archetypes: dict[str, str] = {}
 
-    # Bundled archetypes
-    for path in sorted(config.ARCHETYPES_DIR.glob("*.md")):
+    # Bundled agent definitions
+    for path in sorted(config.AGENTS_DIR.glob("*.md")):
         name = path.stem
         if name not in META_ARCHETYPES:
             archetypes[name] = path.read_text().split("\n", 1)[0].strip()
-
-    # Project-local archetypes (override bundled descriptions)
-    local_dir = elmer_dir / "archetypes"
-    if local_dir.exists():
-        for path in sorted(local_dir.glob("*.md")):
-            name = path.stem
-            if name not in META_ARCHETYPES:
-                archetypes[name] = path.read_text().split("\n", 1)[0].strip()
 
     return archetypes
 
@@ -60,22 +53,12 @@ def select_archetype(
         f"- **{name}**: {desc}" for name, desc in sorted(available.items())
     )
 
-    # Try agent-aware invocation, fall back to template substitution
     agent_config = config.resolve_meta_agent(project_dir, "select-archetype")
 
-    if agent_config is not None:
-        meta_prompt = (
-            f"## Topic\n\n{topic}\n\n"
-            f"## Available Archetypes\n\n{archetype_list}"
-        )
-    else:
-        meta_path = config.resolve_archetype(elmer_dir, "select-archetype")
-        meta_template = meta_path.read_text()
-        meta_prompt = (
-            meta_template
-            .replace("$TOPIC", topic)
-            .replace("$ARCHETYPES", archetype_list)
-        )
+    meta_prompt = (
+        f"## Topic\n\n{topic}\n\n"
+        f"## Available Archetypes\n\n{archetype_list}"
+    )
 
     result = worker.run_claude(
         prompt=meta_prompt,

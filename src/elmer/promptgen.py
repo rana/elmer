@@ -21,30 +21,19 @@ def generate_prompt(
     to generate an optimal exploration prompt for the given topic.
     Returns (generated_prompt, claude_result) tuple.
     """
-    # Load the archetype template as a hint
-    archetype_path = config.resolve_archetype(elmer_dir, archetype)
-    archetype_hint = archetype_path.read_text()
+    # Load the archetype's agent definition as a methodology hint
+    archetype_agent = config.resolve_agent(project_dir, archetype)
+    archetype_hint = archetype_agent["prompt"] if archetype_agent else f"(no agent definition for '{archetype}')"
 
-    # Try agent-aware invocation, fall back to template substitution
     agent_config = config.resolve_meta_agent(project_dir, "prompt-gen")
 
-    if agent_config is not None:
-        meta_prompt = (
-            f"## Topic to Explore\n\n{topic}\n\n"
-            f"## Archetype Hint\n\n"
-            f"The user selected the \"{archetype}\" archetype. "
-            f"Here is its template for reference:\n\n"
-            f"```\n{archetype_hint}\n```"
-        )
-    else:
-        meta_path = config.resolve_archetype(elmer_dir, "prompt-gen")
-        meta_template = meta_path.read_text()
-        meta_prompt = (
-            meta_template
-            .replace("$TOPIC", topic)
-            .replace("$ARCHETYPE_NAME", archetype)
-            .replace("$ARCHETYPE_HINT", archetype_hint)
-        )
+    meta_prompt = (
+        f"## Topic to Explore\n\n{topic}\n\n"
+        f"## Archetype Hint\n\n"
+        f"The user selected the \"{archetype}\" archetype. "
+        f"Here is its methodology for reference:\n\n"
+        f"```\n{archetype_hint}\n```"
+    )
 
     # Run Stage 1 synchronously — Claude reads project docs and generates the prompt
     result = worker.run_claude(

@@ -68,7 +68,6 @@ def validate_invariants(
 
     rules_text = "\n".join(f"- {r}" for r in rules)
 
-    # Try agent-aware invocation, fall back to template substitution
     agent_config = config.resolve_meta_agent(project_dir, "validate-invariants")
 
     preview_suffix = ""
@@ -79,19 +78,15 @@ def validate_invariants(
             "Do NOT use Write or Edit tools. Only read and report."
         )
 
-    if agent_config is not None:
-        prompt = f"Check these invariant rules:\n\n{rules_text}{preview_suffix}"
-        # Strip write tools in preview mode for enforcement
-        if preview and "tools" in agent_config:
-            agent_config = dict(agent_config)
-            agent_config["tools"] = [
-                t for t in agent_config["tools"]
-                if t not in ("Write", "Edit", "NotebookEdit")
-            ]
-    else:
-        template_path = config.resolve_archetype(elmer_dir, "validate-invariants")
-        template = template_path.read_text()
-        prompt = template.replace("$RULES", rules_text) + preview_suffix
+    prompt = f"Check these invariant rules:\n\n{rules_text}{preview_suffix}"
+
+    # Strip write tools in preview mode for enforcement
+    if preview and agent_config is not None and "tools" in agent_config:
+        agent_config = dict(agent_config)
+        agent_config["tools"] = [
+            t for t in agent_config["tools"]
+            if t not in ("Write", "Edit", "NotebookEdit")
+        ]
 
     # Run validation
     result = worker.run_claude(
@@ -170,3 +165,85 @@ def _parse_fixes(output: str) -> list[str]:
         if match:
             fixes.append(match.group(1).strip())
     return fixes
+
+
+# ---------------------------------------------------------------------------
+# Document-only project detection (ADR-056)
+# ---------------------------------------------------------------------------
+
+# Build-system indicators: if any of these exist in project root, the project
+# has code and should use code-level verification (build/test/lint).
+_BUILD_INDICATORS = [
+    "package.json",
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "Makefile",
+    "CMakeLists.txt",
+    "Cargo.toml",
+    "go.mod",
+    "build.gradle",
+    "build.gradle.kts",
+    "pom.xml",
+    "Gemfile",
+    "composer.json",
+    "mix.exs",
+    "Dockerfile",
+]
+
+
+def is_doc_only_project(project_dir: Path) -> bool:
+    """Detect whether a project is documentation-only (no code build system).
+
+    Returns True when the project has no recognized build-system files.
+    Used to auto-select document-coherence verification as the completion
+    check for plans in pre-code or doc-only projects (ADR-056).
+    """
+    for indicator in _BUILD_INDICATORS:
+        if (project_dir / indicator).exists():
+            return False
+    return True
+
+
+def run_coherence_check(
+    *,
+    elmer_dir: Path,
+    project_dir: Path,
+    model: str | None = None,
+    max_turns: int | None = None,
+) -> tuple[bool, str]:
+    """Run document-coherence verification programmatically.
+
+    Convenience wrapper around validate_invariants() for use as a plan
+    completion check. Runs in check-only mode (no fixes applied).
+
+    Returns (passed, detail_text) where detail_text is a human-readable
+    summary suitable for logging.
+    """
+    cfg = config.load_config(elmer_dir)
+    inv_cfg = cfg.get("invariants", {})
+    model = model or inv_cfg.get("model", "sonnet")
+    max_turns = max_turns or inv_cfg.get("max_turns", 5)
+
+    result = validate_invariants(
+        elmer_dir=elmer_dir,
+        project_dir=project_dir,
+        model=model,
+        max_turns=max_turns,
+        preview=True,
+    )
+
+    # Build a summary string
+    lines = []
+    for chk in result.checks:
+        icon = "PASS" if chk.passed else "FAIL"
+        lines.append(f"  {icon}: {chk.invariant}")
+        if not chk.passed:
+            lines.append(f"        {chk.detail}")
+
+    passed_count = sum(1 for c in result.checks if c.passed)
+    total = len(result.checks)
+    lines.append(f"  {passed_count}/{total} invariants passed")
+
+    detail = "\n".join(lines)
+    return result.all_passed, detail

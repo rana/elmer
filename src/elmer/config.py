@@ -56,6 +56,7 @@ auto_archetype = false            # AI selects archetype for generated topics
 max_concurrent = 5
 generate_threshold = 2          # generate new topics when active < threshold
 generate_count = 5
+max_approvals_per_cycle = 10    # safety bound: max auto-approvals per cycle
 
 [insights]
 enabled = false                 # extract insights after approval
@@ -185,14 +186,6 @@ def init_project(project_dir: Path) -> Path:
     config_path = elmer_dir / "config.toml"
     if not config_path.exists():
         config_path.write_text(DEFAULT_CONFIG)
-
-    # Archetypes (copy bundled defaults)
-    archetypes_dest = elmer_dir / "archetypes"
-    archetypes_dest.mkdir(exist_ok=True)
-    for src_file in ARCHETYPES_DIR.glob("*.md"):
-        dest_file = archetypes_dest / src_file.name
-        if not dest_file.exists():
-            shutil.copy2(src_file, dest_file)
 
     # Working directories
     (elmer_dir / "worktrees").mkdir(exist_ok=True)

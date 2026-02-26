@@ -16,6 +16,7 @@ from mcp.server.fastmcp import FastMCP
 
 from . import (
     config,
+    decompose as decompose_mod,
     digest as digest_mod,
     explore as explore_mod,
     gate,
@@ -23,6 +24,7 @@ from . import (
     implement as impl_mod,
     insights as insights_mod,
     invariants as inv_mod,
+    plan as plan_mod,
     pr as pr_mod,
     questions as questions_mod,
     state,
@@ -412,16 +414,16 @@ def elmer_archetypes(include_stats: bool = False) -> dict:
         # Collect archetypes from both sources
         seen: dict[str, str] = {}  # name -> source
 
-        # Project-local archetypes take precedence
-        local_dir = elmer_dir / "archetypes"
-        if local_dir.exists():
-            for f in sorted(local_dir.glob("*.md")):
-                seen[f.stem] = "project"
+        # Bundled agent definitions
+        for f in sorted(config.AGENTS_DIR.glob("*.md")):
+            seen[f.stem] = "bundled"
 
-        # Bundled archetypes
-        for f in sorted(config.ARCHETYPES_DIR.glob("*.md")):
-            if f.stem not in seen:
-                seen[f.stem] = "bundled"
+        # Project-local agent definitions take precedence
+        local_agents_dir = project_dir / ".claude" / "agents"
+        if local_agents_dir.exists():
+            for f in sorted(local_agents_dir.glob("elmer-*.md")):
+                name = f.stem.removeprefix("elmer-")
+                seen[name] = "project"
 
         result = []
         stats_by_arch: dict[str, dict] = {}
@@ -1604,7 +1606,7 @@ def elmer_implement(
         project_dir, elmer_dir = _find_project()
 
         # Decompose
-        plan = impl_mod.decompose_milestone(
+        plan = decompose_mod.decompose_milestone(
             milestone_ref=milestone,
             elmer_dir=elmer_dir,
             project_dir=project_dir,
@@ -1656,7 +1658,7 @@ def elmer_plan_status(plan_id: Optional[str] = None) -> dict:
     """
     try:
         _, elmer_dir = _find_project()
-        plans = impl_mod.get_plan_status(elmer_dir, plan_id)
+        plans = plan_mod.get_plan_status(elmer_dir, plan_id)
 
         return {
             "plans": [

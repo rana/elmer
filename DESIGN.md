@@ -54,13 +54,15 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `scaffold.py` | Project scaffolding (five-document pattern) |
 | `skill_scaffold.py` | Claude Code skill scaffolding |
 | `archstats.py` | Archetype effectiveness statistics |
-| `invariants.py` | Document invariant enforcement |
+| `invariants.py` | Document invariant enforcement, doc-only project detection, coherence checks |
 | `dashboard.py` | Multi-project status aggregation |
 | `batch.py` | Topic list file parsing for batch command |
 | `pr.py` | PR creation via gh CLI |
 | `digest.py` | Convergence digest synthesis from exploration history |
 | `synthesize.py` | Ensemble synthesis — consolidate multiple proposals on the same topic |
-| `implement.py` | Milestone decomposition, cross-step context, plan loading, autonomous implementation orchestration |
+| `decompose.py` | Milestone decomposition, plan parsing, validation, prerequisites, conflict detection |
+| `plan.py` | Plan lifecycle — status tracking, display, resume, completion verification |
+| `implement.py` | Execution orchestration — convert plans to chained explorations, cross-step context |
 | `mcp_server.py` | MCP server — structured tool access over stdio |
 
 ### Data Flow
@@ -68,7 +70,7 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 ```
 explore → slugify(topic)
         → create git worktree on branch elmer/<slug>
-        → resolve agent (config.resolve_agent) or load template
+        → resolve agent definition (config.resolve_agent)
         → spawn claude -p --agents/--agent in worktree (background, PID tracked)
         → record in SQLite
 
@@ -104,6 +106,7 @@ implement → decompose milestone via meta-agent (opus, reads project docs)
           → daemon/scheduler executes steps in dependency order
           → verification hooks auto-amend on failure (ADR-038)
           → plan completes when all steps approved
+          → completion check: verify_cmd > on_done > doc-coherence (ADR-056)
 
 clean   → remove worktrees/state for failed/orphaned explorations
         → git worktree prune

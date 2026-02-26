@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from elmer import state
-from elmer.implement import get_completion_verify_cmd, is_last_plan_step
+from elmer.plan import get_completion_verify_cmd, is_last_plan_step
 
 
 @pytest.fixture

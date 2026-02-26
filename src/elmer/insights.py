@@ -82,18 +82,9 @@ def extract_insights(
     if not proposal_text.strip():
         return []
 
-    # Try agent-aware invocation, fall back to template substitution
     agent_config = config.resolve_meta_agent(project_dir, "extract-insights")
 
-    if agent_config is not None:
-        prompt = proposal_text
-    else:
-        try:
-            template_path = config.resolve_archetype(elmer_dir, "extract-insights")
-        except FileNotFoundError:
-            return []
-        template = template_path.read_text()
-        prompt = template.replace("$PROPOSAL", proposal_text)
+    prompt = proposal_text
 
     # Run extraction
     try:

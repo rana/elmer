@@ -51,24 +51,13 @@ def run_digest(
     # Build prompt
     agent_config = config.resolve_meta_agent(project_dir, "digest")
 
-    if agent_config is not None:
-        prompt = (
-            f"Synthesize a convergence digest from the following exploration data.\n\n"
-            f"## Exploration History\n\n{history or '(none yet)'}\n\n"
-            f"## Approved Proposals\n\n{approved_text or '(none)'}\n\n"
-            f"## Declined Proposals\n\n{declined_text or '(none)'}\n\n"
-            f"## Previous Digest\n\n{previous_digest or '(first digest — no prior synthesis)'}"
-        ).strip()
-    else:
-        template_path = config.resolve_archetype(elmer_dir, "digest")
-        template = template_path.read_text()
-        prompt = (
-            template
-            .replace("$HISTORY", history or "(none yet)")
-            .replace("$APPROVED_PROPOSALS", approved_text or "(none)")
-            .replace("$DECLINED_PROPOSALS", declined_text or "(none)")
-            .replace("$PREVIOUS_DIGEST", previous_digest or "(first digest — no prior synthesis)")
-        )
+    prompt = (
+        f"Synthesize a convergence digest from the following exploration data.\n\n"
+        f"## Exploration History\n\n{history or '(none yet)'}\n\n"
+        f"## Approved Proposals\n\n{approved_text or '(none)'}\n\n"
+        f"## Declined Proposals\n\n{declined_text or '(none)'}\n\n"
+        f"## Previous Digest\n\n{previous_digest or '(first digest — no prior synthesis)'}"
+    ).strip()
 
     result = worker.run_claude(
         prompt=prompt,

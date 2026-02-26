@@ -84,11 +84,11 @@ Persistent status view (curses or web) showing real-time daemon cycle progress, 
 
 ### D. Document-Heavy Projects (from srf-yogananda-teachings analysis)
 
-**D1. Configurable document coherence verification** (Medium-Large)
-Elmer's `validate` command checks invariants for its own 7-doc pattern. Projects like srf have 13 interdependent documents with their own identifier systems (ADR-NNN, DES-NNN, PRO-NNN). Need configurable invariant definitions — either in `.elmer/config.toml` or a dedicated `.elmer/invariants.toml` — so `validate` and `--verify-cmd` can enforce project-specific coherence rules.
+**D1. Configurable document coherence verification** — RESOLVED (ADR-056)
+`elmer validate` gains `--check` flag (read-only mode) and proper exit codes (exit 1 on failure). Custom invariant rules already supported via `[invariants] rules = [...]` in config.toml. Exit codes make `validate` usable as a `verify_cmd` or `on_done` command.
 
-**D2. Pre-code project support** (Medium)
-Current `elmer implement` assumes verification commands (build, test, lint) exist. Documentation-only projects have no code to verify. The "verification" is document coherence: ADR counts match, cross-references resolve, identifier sequences are gapped correctly. Elmer should detect pre-code projects (no package.json/pyproject.toml/Makefile) and default to document-coherence verification.
+**D2. Pre-code project support** — RESOLVED (ADR-056)
+`is_doc_only_project()` auto-detects projects without build-system files. `run_completion_check()` automatically runs document-coherence verification (via `invariants.run_coherence_check()`) as the plan completion check for doc-only projects. No configuration needed — projects with build systems use code verification, projects without get coherence verification.
 
 **D3. Multi-document transactional updates** (Medium)
 Proposal graduation in srf (PRO-NNN → ADR/DES) requires coordinated updates to 4+ documents. If any update fails or creates inconsistency, the whole graduation should roll back. Currently, Elmer explorations touch files independently. A "transactional exploration" mode could bundle related document changes with pre-merge invariant validation.
@@ -127,4 +127,4 @@ srf has 6 Claude Code skills (`.claude/skills/`). Elmer could invoke project-def
 
 See Open Questions in CONTEXT.md. Features discussed but not committed are tracked there.
 
-*Last updated: 2026-02-25, A1+A2 (ADR-049), B1 (ADR-050) resolved, 17 remaining future directions*
+*Last updated: 2026-02-25, D1+D2 (ADR-056) resolved, 15 remaining future directions*

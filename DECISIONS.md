@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-34 ADRs recorded.
+39 ADRs recorded.
 
 ## Domain Index
 
@@ -42,6 +42,11 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-049 | Safety | Retry dependency repair, pre-approval plan completion check |
 | ADR-050 | Execution | Amend failure pattern detection — fail fast on systemic issues |
 | ADR-051 | Simplification | Remove budget enforcement — delegate to Claude CLI |
+| ADR-052 | Architecture | Decompose implement.py into decompose, plan, implement |
+| ADR-053 | Simplification | Remove template mode — agent-only resolution |
+| ADR-054 | Safety | Daemon per-cycle approval limits |
+| ADR-055 | Operations | Tighten auto-approve criteria for doc-only projects |
+| ADR-056 | Verification | Document-coherence verification for doc-only projects |
 
 ---
 
@@ -1077,3 +1082,101 @@ Meanwhile, Claude CLI already enforces per-session budgets via `--max-budget-usd
 **ADRs revised:** ADR-043 (removed plan budget enforcement subsection), ADR-048 (removed budget validation subsection).
 
 **Files modified:** `cli.py`, `explore.py`, `implement.py`, `daemon.py`, `worker.py`, `gate.py`, `state.py`, `mcp_server.py`, `config.py`, `costs.py`.
+
+---
+
+## ADR-052: Decompose implement.py into decompose, plan, implement
+
+**Decision:** Split the 985-line `implement.py` into three focused modules:
+
+- **`decompose.py`** — Milestone decomposition: `_read_project_context()`, `_scan_filesystem()`, `_parse_plan_json()`, `decompose_milestone()`, `inject_answers()`, `load_plan()`, `validate_prerequisites()`, `validate_plan()`, `detect_parallel_conflicts()`.
+- **`plan.py`** — Plan lifecycle: `get_plan_status()`, `show_plan_status()`, `resume_plan()`, `get_completion_verify_cmd()`, `is_last_plan_step()`, `run_completion_check()`.
+- **`implement.py`** — Execution orchestration: `execute_plan()`, `_build_step_context()`.
+
+**Why:** `implement.py` was doing three structurally different things — converting milestones to plans, executing plans as explorations, and tracking plan lifecycle. These have different dependencies, different change frequencies, and different callers. The daemon only needs `plan.py`. The CLI needs all three. The MCP server needs `decompose.py` + `implement.py` + `plan.py`.
+
+**What changed:**
+- `_inject_answers` renamed to `inject_answers` (public API in `decompose.py`, was already called externally from CLI).
+- `validate_plan` signature changed from `(plan, elmer_dir)` to `(plan, project_dir)` — it validates agent definitions via `resolve_agent(project_dir, ...)` instead of `resolve_archetype(elmer_dir, ...)`.
+- `daemon.py` imports `plan as plan_mod` instead of `implement as impl_mod` for lifecycle functions.
+- Test imports updated: `from elmer.plan import ...` instead of `from elmer.implement import ...`.
+
+**Files created:** `decompose.py`, `plan.py`.
+**Files modified:** `implement.py`, `cli.py`, `mcp_server.py`, `daemon.py`, `tests/test_completion_check.py`.
+
+---
+
+## ADR-053: Remove Template Mode — Agent-Only Resolution
+
+**Decision:** Remove the template-with-`$TOPIC`-substitution fallback from all archetype and meta-operation resolution. Agent definitions (ADR-026) are now the only invocation path.
+
+**Why:** Agent mode (custom Claude Code subagents via `--agents`/`--agent` flags) is strictly superior to template mode. Template mode existed as a backward-compatibility fallback from before ADR-026. It complicated the resolution chain with a 4-step path (project `.claude/agents/` → bundled `agents/` → project `.elmer/archetypes/` → bundled `archetypes/`). Removing steps 3-4 simplifies every meta-operation module and eliminates the dual-code-path maintenance burden.
+
+**Scope of change:**
+- `explore.py`: `_resolve_agent_and_prompt()` raises `RuntimeError` if no agent found instead of falling back to template. `_assemble_prompt()` removed (dead code). `archetype_path` parameter removed from `_resolve_agent_and_prompt()`. Validation in `start_exploration()` uses `resolve_agent()` instead of `resolve_archetype()`.
+- All meta-operation modules (`autoapprove.py`, `questions.py`, `insights.py`, `digest.py`, `generate.py`, `promptgen.py`, `archselect.py`, `invariants.py`): removed `else` branches with template fallback. Agent path code unchanged.
+- `promptgen.py`: archetype hint now comes from `resolve_agent()` prompt field instead of template file.
+- `archselect.py`: `list_exploration_archetypes()` reads from `AGENTS_DIR` instead of `ARCHETYPES_DIR`.
+- `config.py`: `init_project()` no longer copies templates to `.elmer/archetypes/`.
+- `cli.py` and `mcp_server.py`: archetype listing reads from `AGENTS_DIR` and `.claude/agents/elmer-*.md`.
+
+**What was retained:**
+- `resolve_archetype()` function in `config.py` — kept but no longer called by any operational code.
+- `ARCHETYPES_DIR` constant — bundled template files remain in `src/elmer/archetypes/` as reference material but are not used for execution.
+- All 28 agent definitions in `src/elmer/agents/` — these are the canonical source of archetype methodology.
+
+**Migration for existing projects:** Projects with custom archetypes in `.elmer/archetypes/` must convert them to agent definitions in `.claude/agents/elmer-<name>.md` with YAML frontmatter.
+
+**Files modified:** `explore.py`, `autoapprove.py`, `questions.py`, `insights.py`, `digest.py`, `generate.py`, `promptgen.py`, `archselect.py`, `invariants.py`, `config.py`, `cli.py`, `mcp_server.py`.
+
+---
+
+## ADR-054: Daemon Per-Cycle Approval Limits
+
+**Decision:** Add `max_approvals_per_cycle` configuration (default: 10) to limit how many explorations the daemon auto-approves in a single cycle.
+
+**Why:** For doc-only projects (like srf-yogananda-teachings), the existing auto-approve criteria "document-only proposals with no code changes" is tautologically true — every change is a document change. Without a per-cycle limit, the daemon running `--auto-approve --generate` could approve dozens of changes overnight without human checkpoint. The limit creates a natural pacing mechanism: after N approvals per cycle, remaining explorations queue for the next cycle. Combined with the 10-minute cycle interval, this gives humans time to spot-check.
+
+**Implementation:** Counter `cycle_approvals` in `_run_cycle()` increments on each `autoapprove.evaluate()` success. When the counter reaches `max_approvals_per_cycle`, the loop breaks with a log message. Remaining `done` explorations are deferred to the next cycle.
+
+**Configuration:** `[daemon] max_approvals_per_cycle = 10` in config.toml. Override per-project (srf sets 3).
+
+**Files modified:** `daemon.py`, `config.py`.
+
+---
+
+## ADR-055: Tighten Auto-Approve Criteria for Doc-Only Projects
+
+**Decision:** Replace generic "document-only proposals with no code changes" criteria with project-specific semantic criteria for srf-yogananda-teachings:
+
+- Maintain cross-reference integrity across all 13 project documents
+- Do not contradict existing ADRs
+- Preserve identifier sequence consistency (ADR-NNN, DES-NNN, PRO-NNN)
+- Do not introduce speculative content or ungrounded claims about the teachings
+- Maximum 5 files changed (reduced from 10)
+
+**Why:** The generic criteria was designed for code projects where "document-only" is a meaningful filter. For srf, every change is document-only. The criteria must instead evaluate *semantic quality* — whether the change maintains the project's architectural consistency and theological constraints.
+
+**Impact:** The AI review gate now has meaningful criteria to evaluate against. Combined with `max_approvals_per_cycle = 3` (ADR-054), srf operates with conservative autonomous bounds appropriate for a sacred-text project.
+
+**Files modified:** `srf-yogananda-teachings/.elmer/config.toml`.
+
+---
+
+## ADR-056: Document-Coherence Verification for Doc-Only Projects
+
+**Decision:** Merge ROADMAP items D1 (configurable document coherence verification) and D2 (pre-code project support) into a single feature. Three changes:
+
+1. `elmer validate` exits with code 1 on invariant failure (was always 0). New `--check` flag for read-only mode.
+2. `is_doc_only_project()` detects projects without build-system files (no package.json, pyproject.toml, Makefile, etc.).
+3. `run_completion_check()` auto-detects doc-only projects and runs document-coherence verification (via `invariants.run_coherence_check()`) as the plan completion check when no explicit verify_cmd is configured.
+
+**Why:** `elmer implement` was designed for code projects with build/test/lint verification commands. Doc-only projects like srf-yogananda-teachings have no code to build — their "verification" is document coherence. Without this, `elmer implement` on srf would silently skip completion verification, merging potentially inconsistent documents.
+
+The auto-detection approach (rather than a config flag) follows Elmer's principle of being "project-aware but not project-prescriptive." Projects with build systems use their existing verification. Projects without them get coherence verification automatically.
+
+**Design:** Document coherence is a project-level property checked *after* all plan steps merge to main. This is the right granularity: individual step verification (per-exploration `verify_cmd`) checks each change in isolation, while completion verification checks the assembled whole. Per-step document coherence would be redundant with the auto-approve review gate and expensive (each check spawns a Claude session).
+
+**Exit code semantics:** `elmer validate` now returns exit 1 when any invariant fails. This makes it usable as a `verify_cmd` or `on_done` command: `on_done = "elmer validate --check"`.
+
+**Files modified:** `cli.py` (exit codes, --check flag), `invariants.py` (is_doc_only_project, run_coherence_check), `plan.py` (auto-coherence fallback in run_completion_check).

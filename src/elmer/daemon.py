@@ -22,7 +22,7 @@ from . import (
     explore as explore_mod,
     gate,
     generate as gen_mod,
-    implement as impl_mod,
+    plan as plan_mod,
     review,
     state,
     synthesize as synth_mod,
@@ -385,15 +385,27 @@ def _run_cycle(
         done_exps = state.list_explorations(conn, status="done")
         conn.close()
 
+        # Safety bound: limit approvals per cycle (ADR-052)
+        daemon_cfg = config.load_config(elmer_dir).get("daemon", {})
+        max_approvals = daemon_cfg.get("max_approvals_per_cycle", 10)
+        cycle_approvals = 0
+
         for exp in done_exps:
+            if cycle_approvals >= max_approvals:
+                logger.info(
+                    "Reached max_approvals_per_cycle (%d) — deferring remaining to next cycle",
+                    max_approvals,
+                )
+                break
+
             is_plan_step = bool(exp["plan_id"] if "plan_id" in exp.keys() else None)
             if not exp["auto_approve"] or is_plan_step:
                 # Pre-approval completion check for last plan step (ADR-049)
                 if is_plan_step:
                     plan_id = exp["plan_id"]
                     try:
-                        if impl_mod.is_last_plan_step(elmer_dir, plan_id, exp["id"]):
-                            verify_cmd, _ = impl_mod.get_completion_verify_cmd(elmer_dir, plan_id)
+                        if plan_mod.is_last_plan_step(elmer_dir, plan_id, exp["id"]):
+                            verify_cmd, _ = plan_mod.get_completion_verify_cmd(elmer_dir, plan_id)
                             if verify_cmd:
                                 wt_path = Path(exp["worktree_path"])
                                 if wt_path.exists():
@@ -401,7 +413,7 @@ def _run_cycle(
                                         "Last plan step %s — running pre-approval completion check in worktree",
                                         exp["id"],
                                     )
-                                    passed = impl_mod.run_completion_check(
+                                    passed = plan_mod.run_completion_check(
                                         elmer_dir, project_dir, plan_id,
                                         cwd=wt_path,
                                         notify=logger.info,
@@ -421,6 +433,7 @@ def _run_cycle(
                 if approved:
                     logger.info("Daemon auto-approved: %s", exp["id"])
                     stats["approved"] += 1
+                    cycle_approvals += 1
                 else:
                     logger.info("Queued for human review: %s", exp["id"])
 
@@ -570,13 +583,13 @@ def _run_cycle(
 
     # Step 6c: Check implementation plan completion and run integration verification
     try:
-        active_plans = impl_mod.get_plan_status(elmer_dir)
+        active_plans = plan_mod.get_plan_status(elmer_dir)
         for plan in active_plans:
             if plan.get("_newly_completed"):
                 logger.info("Plan completed: %s (%s)", plan["id"], plan["milestone_ref"])
                 # Run integration verification (ADR-044)
                 try:
-                    passed = impl_mod.run_completion_check(
+                    passed = plan_mod.run_completion_check(
                         elmer_dir, project_dir, plan["id"],
                         notify=logger.info,
                     )

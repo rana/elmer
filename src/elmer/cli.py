@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from . import archstats, batch as batch_mod, config, costs as costs_mod, daemon as daemon_mod, dashboard, digest as digest_mod, explore as explore_mod, gate, generate as gen_mod, implement as impl_mod, insights as insights_mod, invariants as inv_mod, pr as pr_mod, questions as questions_mod, review as review_mod, scaffold, skill_scaffold, state, worktree as wt
+from . import archstats, batch as batch_mod, config, costs as costs_mod, daemon as daemon_mod, dashboard, decompose as decompose_mod, digest as digest_mod, explore as explore_mod, gate, generate as gen_mod, implement as impl_mod, insights as insights_mod, invariants as inv_mod, plan as plan_mod, pr as pr_mod, questions as questions_mod, review as review_mod, scaffold, skill_scaffold, state, worktree as wt
 
 
 @click.group()
@@ -417,13 +417,11 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
         cfg = config.load_config(elmer_dir)
         archetype = cfg.get("defaults", {}).get("archetype", "explore-act")
 
-    # Validate archetype exists (unless auto-archetype will override it)
+    # Validate agent definition exists (unless auto-archetype will override it)
     if not use_auto_archetype:
-        try:
-            config.resolve_archetype(elmer_dir, archetype)
-        except FileNotFoundError as e:
-            click.echo(f"Error: {e}", err=True)
-            click.echo(f"Filename '{file_path.stem}' doesn't match a known archetype. Use -a to specify one.", err=True)
+        if config.resolve_agent(project_dir, archetype) is None:
+            click.echo(f"Error: no agent definition for archetype '{archetype}'.", err=True)
+            click.echo(f"Use -a to specify one, or check .claude/agents/ and src/elmer/agents/.", err=True)
             sys.exit(1)
 
     cfg = config.load_config(elmer_dir)
@@ -598,13 +596,13 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
 
     # Status mode
     if show_status:
-        impl_mod.show_plan_status(elmer_dir, plan_id=resume_plan_id)
+        plan_mod.show_plan_status(elmer_dir, plan_id=resume_plan_id)
         return
 
     # Resume mode
     if resume_plan_id:
         try:
-            impl_mod.resume_plan(
+            plan_mod.resume_plan(
                 plan_id=resume_plan_id,
                 elmer_dir=elmer_dir,
                 project_dir=project_dir,
@@ -631,7 +629,7 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
         # Load a saved plan — skip expensive decomposition
         click.echo(f"Loading plan from: {load_plan_file}")
         try:
-            plan = impl_mod.load_plan(Path(load_plan_file))
+            plan = decompose_mod.load_plan(Path(load_plan_file))
             milestone = plan.get("milestone", milestone or "loaded-plan")
         except (ValueError, json.JSONDecodeError) as e:
             click.echo(f"Error: invalid plan file — {e}", err=True)
@@ -645,7 +643,7 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
         click.echo(f"Decomposing: {milestone}")
         click.echo("  Reading project docs and scanning filesystem...")
         try:
-            plan = impl_mod.decompose_milestone(
+            plan = decompose_mod.decompose_milestone(
                 milestone_ref=milestone,
                 elmer_dir=elmer_dir,
                 project_dir=project_dir,
@@ -691,7 +689,7 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
 
     if dry_run:
         # Validate plan structure (ADR-046)
-        plan_errors = impl_mod.validate_plan(plan, elmer_dir)
+        plan_errors = decompose_mod.validate_plan(plan, project_dir)
         if plan_errors:
             click.echo(f"\nPlan validation ({len(plan_errors)} error(s)):")
             for e in plan_errors:
@@ -700,7 +698,7 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
             click.echo(f"\nPlan validation: OK ({len(plan.get('steps', []))} steps, DAG valid)")
 
         # Check for parallel step conflicts (ADR-047)
-        conflicts = impl_mod.detect_parallel_conflicts(plan)
+        conflicts = decompose_mod.detect_parallel_conflicts(plan)
         if conflicts:
             click.echo(f"\nParallel conflict warnings ({len(conflicts)}):")
             for c in conflicts:
@@ -710,7 +708,7 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
         # Show prerequisite check results
         prereqs = plan.get("prerequisites", {})
         if prereqs:
-            failures = impl_mod.validate_prerequisites(plan, project_dir)
+            failures = decompose_mod.validate_prerequisites(plan, project_dir)
             if failures:
                 click.echo(f"\nPrerequisites ({len(failures)} failed):")
                 for f in failures:
@@ -731,7 +729,7 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
             import json as _json
             plans_dir = elmer_dir / "plans"
             plans_dir.mkdir(exist_ok=True)
-            plan_file = plans_dir / f"{impl_mod.explore_mod.slugify(milestone) or 'plan'}.json"
+            plan_file = plans_dir / f"{explore_mod.slugify(milestone) or 'plan'}.json"
             plan_file.write_text(_json.dumps(plan, indent=2))
             click.echo(f"\nPlan saved to: {plan_file}")
             if file_answers:
@@ -751,13 +749,13 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
                 answers[i] = answer
 
         if answers:
-            plan = impl_mod._inject_answers(plan, answers)
+            plan = decompose_mod.inject_answers(plan, answers)
 
         if not click.confirm("\nProceed with plan?", default=True):
             click.echo("Aborted.")
             return
     elif file_answers:
-        plan = impl_mod._inject_answers(plan, answers)
+        plan = decompose_mod.inject_answers(plan, answers)
     elif questions and skip_clarify:
         click.echo(f"\n  Skipping {len(questions)} question(s) (--yes)")
 
@@ -1325,16 +1323,21 @@ def costs(exploration_id):
 
 @cli.command()
 @click.option("-m", "--model", default=None, help="Model for invariant validation (default: sonnet)")
-def validate(model):
+@click.option("--check", is_flag=True, help="Check-only mode: report violations without applying fixes")
+def validate(model, check):
     """Validate document invariants.
 
     Checks that project documentation is internally consistent.
     Default rules check ADR counts, phase status, and feature claims.
     Custom rules can be configured in .elmer/config.toml.
 
+    Returns exit code 1 when invariants fail (useful as a verify_cmd).
+    Use --check for read-only mode that never modifies files.
+
     \b
     Examples:
-        elmer validate                  # Check with default rules
+        elmer validate                  # Check and fix
+        elmer validate --check          # Check only, no fixes
         elmer validate -m haiku         # Quick check with haiku
     """
     project_dir = _require_project()
@@ -1354,13 +1357,14 @@ def validate(model):
             project_dir=project_dir,
             model=inv_model,
             max_turns=inv_max_turns,
+            preview=check,
         )
 
-        for check in result.checks:
-            icon = "+" if check.passed else "!"
-            click.echo(f"  {icon} {check.invariant}")
-            if not check.passed:
-                click.echo(f"    {check.detail}")
+        for chk in result.checks:
+            icon = "+" if chk.passed else "!"
+            click.echo(f"  {icon} {chk.invariant}")
+            if not chk.passed:
+                click.echo(f"    {chk.detail}")
 
         if result.fixes:
             click.echo()
@@ -1376,6 +1380,7 @@ def validate(model):
             click.echo("All documents consistent.")
         else:
             click.echo("Some invariants failed — check fixes above.")
+            sys.exit(1)
     except (RuntimeError, FileNotFoundError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -1605,22 +1610,24 @@ def archetypes_list():
     project_dir = _require_project()
     elmer_dir = _require_elmer(project_dir)
 
-    local_dir = elmer_dir / "archetypes"
-    bundled_dir = config.ARCHETYPES_DIR
+    bundled_dir = config.AGENTS_DIR
 
-    # Collect unique archetype names
+    # Collect unique archetype names from agent definitions
     archs: dict[str, str] = {}  # name -> source
 
     if bundled_dir.exists():
         for f in sorted(bundled_dir.glob("*.md")):
             archs[f.stem] = "bundled"
 
-    if local_dir.exists():
-        for f in sorted(local_dir.glob("*.md")):
-            if f.stem in archs:
-                archs[f.stem] = "local (overrides bundled)"
+    # Check for project-local agent definitions in .claude/agents/
+    local_agents_dir = project_dir / ".claude" / "agents"
+    if local_agents_dir.exists():
+        for f in sorted(local_agents_dir.glob("elmer-*.md")):
+            name = f.stem.removeprefix("elmer-")
+            if name in archs:
+                archs[name] = "local (overrides bundled)"
             else:
-                archs[f.stem] = "local"
+                archs[name] = "local"
 
     if not archs:
         click.echo("No archetypes found.")

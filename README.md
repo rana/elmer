@@ -84,7 +84,8 @@ elmer clean
 | `elmer retry ID` | Retry a failed exploration with same parameters |
 | `elmer retry --failed` | Retry all failed explorations |
 | `elmer costs` | Show cost summary for all explorations |
-| `elmer validate` | Check document invariants |
+| `elmer validate` | Check document invariants (exits 1 on failure) |
+| `elmer validate --check` | Check-only mode — report violations without fixing |
 | `elmer archetypes list` | List available archetypes |
 | `elmer archetypes stats` | Show archetype effectiveness statistics |
 | `elmer mine-questions` | Extract open questions from project docs |

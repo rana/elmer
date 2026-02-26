@@ -35,26 +35,15 @@ def generate_topics(
     # Read latest digest for context-aware generation (best-effort)
     digest_context = _read_latest_digest(elmer_dir)
 
-    # Try agent-aware invocation, fall back to template substitution
     agent_config = config.resolve_meta_agent(project_dir, "generate-topics")
 
-    if agent_config is not None:
-        prompt = (
-            f"Generate exactly {count} research topics.\n\n"
-            f"## Exploration History\n\n"
-            f"{history or '(none yet)'}\n\n"
-            f"{followup_context}"
-            f"{digest_context}"
-        ).strip()
-    else:
-        template_path = config.resolve_archetype(elmer_dir, "generate-topics")
-        template = template_path.read_text()
-        prompt = (
-            template
-            .replace("$COUNT", str(count))
-            .replace("$HISTORY", history or "(none yet)")
-            .replace("$FOLLOWUP_CONTEXT", followup_context)
-        )
+    prompt = (
+        f"Generate exactly {count} research topics.\n\n"
+        f"## Exploration History\n\n"
+        f"{history or '(none yet)'}\n\n"
+        f"{followup_context}"
+        f"{digest_context}"
+    ).strip()
 
     # Run claude synchronously
     result = worker.run_claude(
