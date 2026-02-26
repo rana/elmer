@@ -157,15 +157,15 @@ This positions Elmer as infrastructure that makes both autonomous exploration (v
 
 **Decision:** Expose Elmer state and operations as MCP tools via a stdio JSON-RPC server (`elmer mcp`), using Anthropic's `mcp` Python SDK (FastMCP).
 
-Elmer's CLI returns formatted text tables that Claude Code must parse as unstructured text — lossy, brittle, and prone to misinterpretation. The MCP server wraps the same module functions (`state.py`, `costs.py`, `insights.py`, `config.py`, `explore.py`, `gate.py`) and returns structured JSON that Claude Code reasons about natively.
+Elmer's CLI returns formatted text tables that Claude Code must parse as unstructured text — lossy, brittle, and prone to misinterpretation. The MCP server wraps core module functions and returns structured JSON that Claude Code reasons about natively.
 
-17 tools total: 6 read-only (status, review, costs, tree, archetypes, insights) + 7 mutation (explore, approve, decline, cancel, retry, clean, pr) + 3 intelligence (generate, validate, mine-questions) + 1 batch. Mutation tools catch `SystemExit` from gate functions (which use `sys.exit(1)` for validation) and convert to structured error responses — the server never crashes.
+25 tools total: 9 read-only (status, review, costs, tree, archetypes, archetype_diagnose, insights, config_get, recover_partial) + 8 mutation (explore, approve, amend, decline, cancel, retry, clean, pr) + 4 intelligence (generate, validate, mine_questions, digest) + 3 implementation (implement, plan_status, replan) + 1 batch. Mutation tools catch `SystemExit` from gate functions (which use `sys.exit(1)` for validation) and convert to structured error responses — the server never crashes.
 
 The server is a presentation layer. Each tool opens a DB connection, queries, closes, and returns JSON — the same per-call pattern as CLI commands. No connection pooling, no persistent state between tool calls.
 
 **Alternatives considered:** REST API (adds web framework dependency, requires port management, conflicts with no-web-framework constraint), enhancing CLI with `--json` output flags (per-command work, doesn't provide tool discovery or schema introspection that MCP gives for free).
 
-*Revised: 2026-02-23, expanded to 17 tools*
+*Revised: 2026-02-26, updated tool count to 25 (9 read-only + 8 mutation + 4 intelligence + 3 implementation + 1 batch)*
 
 ## ADR-026: Exploration Archetypes as Claude Code Custom Subagents
 
@@ -181,18 +181,20 @@ Claude Code custom subagents (`.claude/agents/` markdown files with YAML frontma
 
 **Architecture:**
 
-23 bundled agent definitions in `src/elmer/agents/`:
-- 8 exploration agents (explore-act, explore, prototype, adr-proposal, benchmark, dead-end-analysis, devil-advocate, question-cluster)
+29 bundled agent definitions in `src/elmer/agents/`:
+- 9 exploration agents (explore-act, explore, prototype, implement, adr-proposal, benchmark, dead-end-analysis, devil-advocate, question-cluster)
 - 8 audit agents (consistency-audit, coherence-audit, architecture-audit, documentation-audit, mission-audit, operational-audit, opportunity-scan, workflow-audit)
-- 7 meta-operation agents (review-gate, generate-topics, select-archetype, extract-insights, mine-questions, validate-invariants, prompt-gen)
+- 12 meta-operation agents (review-gate, generate-topics, select-archetype, extract-insights, mine-questions, validate-invariants, prompt-gen, amend, decompose, digest, replan, synthesize)
 
 **Resolution order:** project-local `.claude/agents/elmer-<name>.md` → bundled `src/elmer/agents/<name>.md`. Meta agents use `elmer-meta-<name>` prefix.
 
 **Invocation:** `worker.py` builds `--agents '{name: {description, prompt, tools, model}}'` inline JSON + `--agent name` flags. The inline JSON approach avoids filesystem dependency — agents work correctly when `claude -p` runs in worktree directories where `.claude/agents/` doesn't exist.
 
-**Backwards compatibility:** When no agent definition exists for an archetype, the system falls back to the existing `$TOPIC` template substitution. All existing archetypes continue to work.
-
 **Alternatives considered:** Filesystem-based agents only (breaks in worktrees where `.claude/agents/` isn't visible), Agent Teams for parallel explorations (session-scoped, don't persist — consistent with ADR-002), prompt-only approach with tool restrictions in prompt text (unenforceable, wastes tokens), separate agent runner binary (unnecessary complexity when `claude -p` already supports `--agents`).
+
+Template fallback (`.elmer/archetypes/` with `$TOPIC` substitution) was removed in ADR-053 — agent-only resolution.
+
+*Revised: 2026-02-26, updated agent count 23→29 (9 exploration + 8 audit + 12 meta-operation). Removed stale template fallback clause — agent-only resolution per ADR-053.*
 
 *ADR-027 (reject→decline rename) retired: completed migration, rationale preserved in git history. The AI review gate protocol retains REJECT (see DESIGN.md, Auto-Approve Gate section).*
 

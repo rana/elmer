@@ -120,8 +120,7 @@ def init(docs, skills, agents):
     project_dir = _require_project()
     elmer_dir = config.init_project(project_dir)
     click.echo(f"Initialized .elmer/ in {project_dir}")
-    click.echo(f"  Config:     {elmer_dir / 'config.toml'}")
-    click.echo(f"  Archetypes: {elmer_dir / 'archetypes/'}")
+    click.echo(f"  Config: {elmer_dir / 'config.toml'}")
 
     if docs:
         created = scaffold.scaffold_docs(project_dir)
@@ -180,10 +179,10 @@ def init(docs, skills, agents):
     if not docs and not skills and not agents:
         click.echo()
         click.echo("Edit .elmer/config.toml to change defaults.")
-        click.echo("Add custom archetypes to .elmer/archetypes/.")
         click.echo("Use 'elmer init --docs' to scaffold project documentation.")
         click.echo("Use 'elmer init --skills' to scaffold Claude Code skills.")
-        click.echo("Use 'elmer init --agents' to scaffold Claude Code subagent definitions.")
+        click.echo("Use 'elmer init --agents' to scaffold subagent definitions for customization.")
+        click.echo("Use 'elmer mcp' to start the MCP server for Claude Code integration.")
 
 
 @cli.command()

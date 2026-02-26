@@ -443,7 +443,10 @@ elmer costs --exploration my-topic # detail for one exploration
 
 ```
 pending → running → done → approved
-                         → declined
+                        → declined
+                        → amending → done (editorial revision via elmer amend)
+                  → [verify] → done (tests pass)
+                             → amending → done (auto-amend on verification failure)
                   → failed → approved (partial work worth merging)
                            → declined
 ```
@@ -451,9 +454,12 @@ pending → running → done → approved
 - **pending**: Waiting for a dependency to be approved. No worktree yet. Will start automatically when unblocked.
 - **running**: Claude session active. Check `.elmer/logs/<id>.log` for progress.
 - **done**: Session finished. PROPOSAL.md exists on the branch. Ready for review.
-- **failed**: Session finished but no PROPOSAL.md. Check the log. You can still approve (to merge any other changes) or decline.
+- **amending**: Revision session active — triggered by `elmer amend` (editorial feedback) or auto-amend on verification failure. Returns to `done` when finished.
+- **failed**: Session finished but no PROPOSAL.md, or verification exhausted max retries. Check the log. You can still approve (to merge any other changes) or decline.
 - **approved**: Branch merged. Worktree cleaned up.
 - **declined**: Branch deleted. Worktree cleaned up. Log preserved.
+
+If `verify_cmd` is set (per-exploration or globally in config), verification runs automatically after PROPOSAL.md is committed. On pass → `done`. On fail → auto-amend (up to `max_retries`), then `failed`. See DESIGN.md State Model for the complete diagram.
 
 ## Patterns That Work Well
 
@@ -670,4 +676,4 @@ elmer replan my-plan "Need different approach"
 elmer daemon --auto-approve --generate
 ```
 
-*Last updated: 2026-02-26*
+*Last updated: 2026-02-26, deep review — added amending/verify states to state diagram*

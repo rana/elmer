@@ -110,6 +110,19 @@ implement → decompose milestone via meta-agent (opus, reads project docs)
           → plan completes when all steps approved
           → completion check: verify_cmd > on_done > doc-coherence (ADR-056)
 
+hooks   → lifecycle hooks (on_done, pre_approve, post_approve)
+        → invoke project-defined Claude Code skills at transition points
+        → skill receives proposal text as context
+        → pre_approve must pass for auto-approval to proceed (ADR-064)
+
+insights → on approval: extract generalizable findings via meta-agent
+         → store in ~/.elmer/insights.db (cross-project)
+         → on exploration start: inject relevant insights by keyword matching
+
+block   → register external blocker (stakeholder decision, prerequisite)
+        → blocked explorations stay pending until unblocked
+unblock → resolve blocker → unblocked explorations become schedulable
+
 clean   → remove worktrees/state for failed/orphaned explorations
         → git worktree prune
 ```
@@ -242,7 +255,7 @@ daemon_log (
 
 ### Archetypes & Agents
 
-Archetypes define exploration methodology. Two invocation modes (ADR-026):
+Archetypes define exploration methodology via Claude Code custom subagents (ADR-026, ADR-053).
 
 Each archetype is a Claude Code custom subagent definition — markdown with YAML frontmatter (`name`, `description`, `tools`, optional `model`). The agent's system prompt provides methodology; the `-p` prompt provides the topic. Invoked via `--agents` inline JSON + `--agent` flags (ADR-026). Template mode (`$TOPIC` substitution) was removed in ADR-053 — agent-only resolution.
 
@@ -430,4 +443,4 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 59 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-26, deep review — removed legacy archetypes/ from layout, fixed ARCHETYPES_DIR→AGENTS_DIR in MCP table (25 tools, 59 ADRs)*
+*Last updated: 2026-02-26, deep review pass 2 — fixed invocation modes vestige, added hooks/insights/blockers to data flow*

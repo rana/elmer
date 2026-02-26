@@ -125,7 +125,10 @@ max_turns = 10                          # per-hook turn limit
 
 [verification]
 # on_done = "pnpm build && pnpm test"  # global verification for all explorations
+# fallback = "make build"              # fallback command when primary exhausts retries
 max_retries = 2                         # auto-amend attempts before marking failed
+timeout = 300                           # verification timeout in seconds
+auto_approve_on_pass = true             # false = require AI review even if tests pass
 
 [implement]
 model = "opus"                    # model for implementation sessions
