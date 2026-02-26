@@ -570,3 +570,93 @@ def get_externally_blocked(conn: sqlite3.Connection) -> list[sqlite3.Row]:
             AND (',' || e.blocked_by || ',') LIKE ('%,' || b.id || ',%')
         )
     """).fetchall()
+
+
+# --- State invariant checks (ADR-075) ---
+
+
+def check_state_invariants(conn: sqlite3.Connection) -> list[str]:
+    """Check database state for consistency violations.
+
+    Returns a list of human-readable violation strings.
+    Empty list means all invariants pass. These are deterministic
+    SQL + logic checks — no AI, no filesystem access.
+    """
+    violations: list[str] = []
+
+    # 1. No exploration with plan_id set but plan_step NULL
+    rows = conn.execute(
+        "SELECT id FROM explorations WHERE plan_id IS NOT NULL AND plan_step IS NULL"
+    ).fetchall()
+    for r in rows:
+        violations.append(f"exploration {r['id']} has plan_id but NULL plan_step")
+
+    # 2. No dependency referencing a nonexistent exploration
+    rows = conn.execute("""
+        SELECT d.exploration_id, d.depends_on_id FROM dependencies d
+        WHERE NOT EXISTS (SELECT 1 FROM explorations e WHERE e.id = d.exploration_id)
+           OR NOT EXISTS (SELECT 1 FROM explorations e WHERE e.id = d.depends_on_id)
+    """).fetchall()
+    for r in rows:
+        violations.append(
+            f"dependency {r['exploration_id']} -> {r['depends_on_id']} references nonexistent exploration"
+        )
+
+    # 3. No plan step exploration referencing a nonexistent plan
+    rows = conn.execute("""
+        SELECT e.id, e.plan_id FROM explorations e
+        WHERE e.plan_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM plans p WHERE p.id = e.plan_id)
+    """).fetchall()
+    for r in rows:
+        violations.append(f"exploration {r['id']} references nonexistent plan {r['plan_id']}")
+
+    # 4. No dependency cycle (check all pending/running explorations)
+    all_deps = conn.execute("SELECT exploration_id, depends_on_id FROM dependencies").fetchall()
+    if all_deps:
+        graph: dict[str, list[str]] = {}
+        for d in all_deps:
+            graph.setdefault(d["exploration_id"], []).append(d["depends_on_id"])
+        # DFS cycle detection
+        visited: set[str] = set()
+        in_stack: set[str] = set()
+        has_cycle = False
+        for node in graph:
+            if node in visited:
+                continue
+            stack = [(node, False)]
+            while stack:
+                n, processed = stack.pop()
+                if processed:
+                    in_stack.discard(n)
+                    continue
+                if n in in_stack:
+                    has_cycle = True
+                    break
+                if n in visited:
+                    continue
+                visited.add(n)
+                in_stack.add(n)
+                stack.append((n, True))
+                for dep in graph.get(n, []):
+                    if dep not in visited:
+                        stack.append((dep, False))
+            if has_cycle:
+                violations.append("dependency cycle detected in exploration DAG")
+                break
+
+    # 5. Completed plan with non-approved steps
+    plans = conn.execute(
+        "SELECT id FROM plans WHERE status = 'completed'"
+    ).fetchall()
+    for p in plans:
+        non_approved = conn.execute(
+            "SELECT id, status FROM explorations WHERE plan_id = ? AND status != 'approved'",
+            (p["id"],),
+        ).fetchall()
+        for exp in non_approved:
+            violations.append(
+                f"completed plan {p['id']} has non-approved step {exp['id']} (status: {exp['status']})"
+            )
+
+    return violations

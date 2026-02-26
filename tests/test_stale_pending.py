@@ -13,19 +13,13 @@ from elmer import state
 
 @pytest.fixture
 def elmer_dir(tmp_path):
+    """Override: writes a config with a short TTL for stale-pending tests."""
     d = tmp_path / ".elmer"
     d.mkdir()
-    # Write a config with a short TTL for testing
+    (d / "logs").mkdir()
     config_path = d / "config.toml"
     config_path.write_text('[session]\npending_ttl_days = 1\n')
     return d
-
-
-@pytest.fixture
-def db(elmer_dir):
-    conn = state.get_db(elmer_dir)
-    yield conn
-    conn.close()
 
 
 def _create_pending(db, exp_id, created_at=None):

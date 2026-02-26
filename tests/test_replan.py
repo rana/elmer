@@ -19,35 +19,6 @@ from elmer.replan import (
 )
 
 
-@pytest.fixture
-def elmer_dir(tmp_path):
-    """Create a minimal .elmer directory with a fresh database."""
-    d = tmp_path / ".elmer"
-    d.mkdir()
-    (d / "logs").mkdir()
-    return d
-
-
-@pytest.fixture
-def project_dir(tmp_path):
-    """Create a minimal project directory with git init."""
-    p = tmp_path / "project"
-    p.mkdir()
-    # Minimal git init so worktree operations don't fail
-    import subprocess
-    subprocess.run(["git", "init"], cwd=str(p), capture_output=True)
-    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=str(p), capture_output=True)
-    return p
-
-
-@pytest.fixture
-def db(elmer_dir):
-    """Return a connection to a fresh elmer state database."""
-    conn = state.get_db(elmer_dir)
-    yield conn
-    conn.close()
-
-
 def _create_plan(db, elmer_dir, plan_id, steps, milestone="test"):
     """Helper: create a plan with the given steps JSON."""
     plan_json = json.dumps({"milestone": milestone, "steps": steps})

@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-57 ADRs recorded.
+58 ADRs recorded.
 
 ## Domain Index
 
@@ -65,6 +65,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-072 | Quality | Proposal quality — confidence, schema, review notes (H1/H2/H3) |
 | ADR-073 | Observability | Archetype effectiveness diagnosis (I1) |
 | ADR-074 | Intelligence | Document routing annotations and per-step prerequisites |
+| ADR-075 | Quality | Testing philosophy — AI immune system, three layers |
 
 ---
 
@@ -1497,3 +1498,32 @@ All are best-effort (exceptions caught silently) and called in `_resolve_agent_a
 **Default model routing:** When no `[implement.model_routing]` config exists, the engine applies `scaffold=opus, fallback=sonnet` — step 0 gets opus, subsequent steps get sonnet unless the decompose agent or config specifies otherwise. This extends ADR-069 without changing the priority chain.
 
 **Alternatives considered:** Plan-level-only prerequisites (existing, too coarse — blocks all steps for one step's dependency), tool-level Read restriction (not possible with `claude -p`), formal verification escalation chain (over-engineering given existing per-step `verify_cmd`).
+
+## ADR-075: Testing Philosophy — AI Immune System
+
+**Decision:** Establish a three-layer testing strategy designed for AI-maintained codebases, with explicit inclusions and exclusions.
+
+**Context:** Elmer had 64 tests across 9 files, all written reactively in response to specific bugs (ADR-049, 050, 056, 057, 058, 059, 060, 061, 067). Tests were effective but narrow — only covering functions that had already produced bugs. No proactive coverage of the state layer (the foundation), config parsing (cascades to all commands), or git worktree operations (can corrupt repos). Fixture duplication across files made adding new tests unnecessarily expensive.
+
+**Core principle: tests substitute for intuition.** Human developers build intuition over hundreds of sessions — they "feel" when something is off. AI sessions start fresh every time. Tests encode what a human developer would "just know" into mechanically verifiable assertions that survive context window boundaries. Design rule: test what the AI needs to feel but can't.
+
+**Layer 1 — State Contract** (`test_state.py`): Schema creation, CRUD round-trips, defaults, query contracts, state invariant checks. Guards the foundation — every module reads/writes through state.py. Schema drift here silently corrupts everything downstream. Includes `check_state_invariants()` for runtime health checks: orphaned dependencies, plan/step consistency, DAG cycles, completed-plan-with-non-approved-steps.
+
+**Layer 2 — Pure Logic** (`test_config.py`, `test_scoring.py`, existing 9 files): Config parsing and resolution, frontmatter extraction, proposal validation, verdict parsing, diff counting, plan dependencies, replan validation. Deterministic functions with subtle edge cases. This is where the existing ADR-driven tests already live; the new files extend the pattern to config.py, review.py, and autoapprove.py.
+
+**Layer 3 — Boundary Integrity** (`test_worktree.py`): Git worktree create/remove, branch operations, file reads from branches. Tests against real temp git repos. Guards the dangerous layer — worktree bugs can corrupt the user's project.
+
+**Explicitly excluded from testing:**
+- **CLI commands** — Click wrappers that parse args and call functions. Testing them tests Click, not Elmer.
+- **MCP tools** — Same argument, different wrapper framework.
+- **AI-dependent output** — `generate.py`, `digest.py`, `synthesize.py` call `claude -p`. Nondeterministic by nature.
+- **Daemon orchestration** — Requires a running system. Validated by operation, not by pytest.
+- **Coverage metrics** — Optimizes for the wrong target. The right 20% of coverage matters more than 80% of the wrong coverage.
+
+**Infrastructure changes:**
+- `tests/conftest.py` — Shared `elmer_dir`, `db`, `git_repo` fixtures. Eliminated ~80 lines of duplication across 9 existing files.
+- `[tool.pytest.ini_options]` in pyproject.toml — `testpaths = ["tests"]`.
+- `check_state_invariants()` in state.py — Deterministic runtime health checks. Integrated into `elmer validate` CLI and `elmer_validate` MCP tool. Runs before AI-powered document invariant checks.
+- Self-verification already in place: `.elmer/config.toml` has `on_done = "uv run python -m pytest tests/ -q"`.
+
+**Result:** 169 tests across 13 files, all passing in <1s. From 64 tests / 9 files to 169 tests / 13 files.

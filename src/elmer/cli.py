@@ -1542,6 +1542,20 @@ def validate(model, check):
     inv_model = model or inv_cfg.get("model", "sonnet")
     inv_max_turns = inv_cfg.get("max_turns", 5)
 
+    # State invariants: fast deterministic checks (no AI)
+    conn = state.get_db(elmer_dir)
+    state_violations = state.check_state_invariants(conn)
+    conn.close()
+
+    if state_violations:
+        click.echo("State invariants:")
+        for v in state_violations:
+            click.echo(f"  ! {v}")
+        click.echo()
+    else:
+        click.echo("State invariants: all passed.")
+        click.echo()
+
     click.echo(f"Validating document invariants (model: {inv_model})...")
     click.echo()
 
@@ -1570,10 +1584,13 @@ def validate(model, check):
         total = len(result.checks)
         click.echo(f"{passed}/{total} invariants passed.")
 
-        if result.all_passed:
-            click.echo("All documents consistent.")
+        if result.all_passed and not state_violations:
+            click.echo("All invariants passed.")
         else:
-            click.echo("Some invariants failed — check fixes above.")
+            if not result.all_passed:
+                click.echo("Some document invariants failed — check fixes above.")
+            if state_violations:
+                click.echo("State invariants failed — check output above.")
             sys.exit(1)
     except (RuntimeError, FileNotFoundError) as e:
         click.echo(f"Error: {e}", err=True)

@@ -13,20 +13,6 @@ from elmer import state
 from elmer.plan import get_plan_status
 
 
-@pytest.fixture
-def elmer_dir(tmp_path):
-    d = tmp_path / ".elmer"
-    d.mkdir()
-    return d
-
-
-@pytest.fixture
-def db(elmer_dir):
-    conn = state.get_db(elmer_dir)
-    yield conn
-    conn.close()
-
-
 class TestIncrementVerificationFailures:
     """Tests for state.increment_verification_failures()."""
 

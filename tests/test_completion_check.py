@@ -14,22 +14,6 @@ from elmer import state
 from elmer.plan import get_completion_verify_cmd, is_last_plan_step
 
 
-@pytest.fixture
-def elmer_dir(tmp_path):
-    """Create a minimal .elmer directory with a fresh database."""
-    d = tmp_path / ".elmer"
-    d.mkdir()
-    return d
-
-
-@pytest.fixture
-def db(elmer_dir):
-    """Return a connection to a fresh elmer state database."""
-    conn = state.get_db(elmer_dir)
-    yield conn
-    conn.close()
-
-
 def _create_plan(db, elmer_dir, plan_id, steps, completion_verify_cmd=None):
     """Helper: create a plan with optional completion_verify_cmd."""
     plan_data = {"milestone": "test", "steps": steps}

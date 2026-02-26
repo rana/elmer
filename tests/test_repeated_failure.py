@@ -11,15 +11,6 @@ import pytest
 from elmer.review import _is_repeated_failure
 
 
-@pytest.fixture
-def elmer_dir(tmp_path):
-    """Create a minimal .elmer directory with logs subdirectory."""
-    d = tmp_path / ".elmer"
-    d.mkdir()
-    (d / "logs").mkdir()
-    return d
-
-
 class TestIsRepeatedFailure:
     """Tests for _is_repeated_failure()."""
 

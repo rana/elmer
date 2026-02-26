@@ -13,20 +13,6 @@ from elmer import state
 from elmer.plan import get_plan_status
 
 
-@pytest.fixture
-def elmer_dir(tmp_path):
-    d = tmp_path / ".elmer"
-    d.mkdir()
-    return d
-
-
-@pytest.fixture
-def db(elmer_dir):
-    conn = state.get_db(elmer_dir)
-    yield conn
-    conn.close()
-
-
 def _create_plan(db, plan_id, steps):
     plan_json = json.dumps({"milestone": "test", "steps": steps})
     state.create_plan(db, id=plan_id, milestone_ref="test", plan_json=plan_json)

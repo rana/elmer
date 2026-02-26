@@ -1300,6 +1300,11 @@ def elmer_validate(model: Optional[str] = None, preview: bool = False) -> dict:
         inv_model = model or inv_cfg.get("model", "sonnet")
         inv_max_turns = inv_cfg.get("max_turns", 5)
 
+        # State invariants: fast deterministic checks (no AI)
+        conn = state.get_db(elmer_dir)
+        state_violations = state.check_state_invariants(conn)
+        conn.close()
+
         vr = inv_mod.validate_invariants(
             elmer_dir=elmer_dir,
             project_dir=project_dir,
@@ -1309,7 +1314,8 @@ def elmer_validate(model: Optional[str] = None, preview: bool = False) -> dict:
         )
 
         result = {
-            "all_passed": vr.all_passed,
+            "all_passed": vr.all_passed and not state_violations,
+            "state_violations": state_violations,
             "checks": [
                 {"invariant": c.invariant, "passed": c.passed, "detail": c.detail}
                 for c in vr.checks
