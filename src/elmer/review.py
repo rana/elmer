@@ -168,13 +168,15 @@ def parse_log_details(log_path: Path) -> Optional[dict]:
     }
 
 
-def _run_verification(verify_cmd: str, cwd: Path, project_dir: Path, timeout: int = 300) -> tuple[bool, int, str]:
-    """Run a verification command. Returns (passed, returncode, output).
+def _run_verification(verify_cmd: str, cwd: Path, project_dir: Path, timeout: int = 300) -> tuple[bool, int, str, float]:
+    """Run a verification command. Returns (passed, returncode, output, elapsed_seconds).
 
     Runs in the worktree directory (cwd) where the exploration's code lives,
     not project_dir (main branch). The worktree contains the full project
     with the exploration's changes on top.
     """
+    import time as _time
+    t0 = _time.monotonic()
     try:
         result = subprocess.run(
             verify_cmd,
@@ -184,15 +186,27 @@ def _run_verification(verify_cmd: str, cwd: Path, project_dir: Path, timeout: in
             text=True,
             timeout=timeout,
         )
+        elapsed = _time.monotonic() - t0
         output = (result.stdout + result.stderr).strip()
         # Truncate to avoid massive amend prompts
         if len(output) > 3000:
             output = output[:3000] + "\n... (truncated)"
-        return result.returncode == 0, result.returncode, output
+        return result.returncode == 0, result.returncode, output, elapsed
     except subprocess.TimeoutExpired:
-        return False, -1, f"(verification command timed out after {timeout}s)"
+        elapsed = _time.monotonic() - t0
+        return False, -1, f"(verification command timed out after {timeout}s)", elapsed
     except (FileNotFoundError, OSError) as e:
-        return False, -1, f"(verification command error: {e})"
+        elapsed = _time.monotonic() - t0
+        return False, -1, f"(verification command error: {e})", elapsed
+
+
+def _accumulate_verification_seconds(conn, exploration_id: str, elapsed: float) -> None:
+    """Add elapsed seconds to the exploration's verification_seconds total."""
+    conn.execute(
+        "UPDATE explorations SET verification_seconds = COALESCE(verification_seconds, 0) + ? WHERE id = ?",
+        (round(elapsed, 2), exploration_id),
+    )
+    conn.commit()
 
 
 def _is_repeated_failure(elmer_dir: Path, exploration_id: str, output: str) -> bool:
@@ -422,10 +436,12 @@ def _refresh_running(
                     verify_cmd = global_verify
 
                 if verify_cmd and project_dir:
-                    passed, returncode, output = _run_verification(
+                    passed, returncode, output, elapsed = _run_verification(
                         verify_cmd, worktree_path, project_dir, verify_timeout,
                     )
+                    _accumulate_verification_seconds(conn, exp["id"], elapsed)
                     if not passed:
+                        state.increment_verification_failures(conn, exp["id"])
                         # Attempt auto-amend with verification failure context
                         amended = _attempt_auto_amend(
                             elmer_dir, project_dir, exp,
@@ -439,9 +455,10 @@ def _refresh_running(
                         else:
                             # Exhausted retries — try fallback before failing
                             if verify_fallback:
-                                fb_passed, _, _ = _run_verification(
+                                fb_passed, _, _, fb_elapsed = _run_verification(
                                     verify_fallback, worktree_path, project_dir, verify_timeout,
                                 )
+                                _accumulate_verification_seconds(conn, exp["id"], fb_elapsed)
                                 if fb_passed:
                                     notify(f"  Fallback verification passed: {exp['id']} (primary failed)")
                                     # Continue to done transition below
@@ -543,10 +560,12 @@ def _refresh_running(
                     verify_cmd = global_verify
 
                 if verify_cmd and project_dir:
-                    passed, returncode, output = _run_verification(
+                    passed, returncode, output, elapsed = _run_verification(
                         verify_cmd, worktree_path, project_dir, verify_timeout,
                     )
+                    _accumulate_verification_seconds(conn, exp["id"], elapsed)
                     if not passed:
+                        state.increment_verification_failures(conn, exp["id"])
                         amended = _attempt_auto_amend(
                             elmer_dir, project_dir, exp,
                             verify_cmd, returncode, output, notify,
@@ -556,9 +575,10 @@ def _refresh_running(
                         else:
                             # Exhausted retries — try fallback before failing
                             if verify_fallback:
-                                fb_passed, _, _ = _run_verification(
+                                fb_passed, _, _, fb_elapsed = _run_verification(
                                     verify_fallback, worktree_path, project_dir, verify_timeout,
                                 )
+                                _accumulate_verification_seconds(conn, exp["id"], fb_elapsed)
                                 if fb_passed:
                                     notify(f"  Fallback verification passed after amend: {exp['id']}")
                                     # Fall through to done transition

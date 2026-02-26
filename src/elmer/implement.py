@@ -13,7 +13,7 @@ from typing import Optional
 import click
 
 from . import config, explore as explore_mod, state, worktree as wt_mod
-from .decompose import validate_prerequisites
+from .decompose import estimate_plan_duration, validate_prerequisites
 
 
 def _build_step_context(
@@ -189,6 +189,22 @@ def execute_plan(
             f"Plan has {len(failures)} unmet prerequisite(s). "
             "Fix these before executing, or remove 'prerequisites' from the plan."
         )
+
+    # Duration estimate check (ADR-061)
+    total_seconds, dur_warnings = estimate_plan_duration(plan)
+    if total_seconds is not None:
+        total_hours = total_seconds / 3600
+        click.echo(f"  Estimated runtime: {total_hours:.1f}h ({len(steps)} steps)")
+        cfg = config.load_config(elmer_dir)
+        max_hours = cfg.get("implement", {}).get("max_plan_hours")
+        if max_hours and total_hours > max_hours:
+            click.echo(
+                f"  Warning: estimated runtime ({total_hours:.1f}h) exceeds "
+                f"max_plan_hours ({max_hours}h)",
+                err=True,
+            )
+    for w in dur_warnings:
+        click.echo(f"  Duration warning: {w}", err=True)
 
     # Generate plan ID from milestone ref
     plan_id = explore_mod.slugify(milestone_ref) or "plan"

@@ -676,10 +676,27 @@ def schedule_ready(elmer_dir: Path, project_dir: Path) -> list[str]:
 
     Also detects and cascades failures: pending explorations whose dependencies
     have failed or been declined are marked as failed themselves (ADR-041).
+    Stale pending explorations past their TTL are auto-cancelled (ADR-058).
     """
     conn = state.get_db(elmer_dir)
 
-    # Cascade failures first — mark blocked explorations before scheduling
+    # Auto-cancel stale pending explorations (ADR-058)
+    cfg = config.load_config(elmer_dir)
+    pending_ttl_days = cfg.get("session", {}).get("pending_ttl_days", 7)
+    if pending_ttl_days > 0:
+        stale = state.get_stale_pending(conn, max_age_hours=pending_ttl_days * 24)
+        for exp in stale:
+            state.update_exploration(
+                conn, exp["id"],
+                status="failed",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                proposal_summary=f"(auto-cancelled: pending > {pending_ttl_days}d)",
+            )
+            plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+            if plan_id:
+                state.update_plan(conn, plan_id, status="paused")
+
+    # Cascade failures — mark blocked explorations before scheduling
     blocked = state.get_pending_blocked(conn)
     for exp in blocked:
         dep_ids = state.get_dependencies(conn, exp["id"])

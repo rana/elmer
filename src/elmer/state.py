@@ -56,7 +56,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                          ("plan_id", "TEXT"),
                          ("plan_step", "INTEGER"),
                          ("amend_count", "INTEGER DEFAULT 0"),
-                         ("setup_cmd", "TEXT")]:
+                         ("setup_cmd", "TEXT"),
+                         ("verification_failures", "INTEGER DEFAULT 0"),
+                         ("verification_seconds", "REAL DEFAULT 0")]:
         try:
             conn.execute(f"ALTER TABLE explorations ADD COLUMN {col} {coltype}")
         except sqlite3.OperationalError:
@@ -275,6 +277,23 @@ def get_pending_ready(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """).fetchall()
 
 
+def get_stale_pending(conn: sqlite3.Connection, max_age_hours: float) -> list[sqlite3.Row]:
+    """Get pending explorations older than max_age_hours.
+
+    These explorations have been waiting for dependencies that may never
+    resolve. The caller should auto-cancel them to free resources (ADR-058).
+    """
+    return conn.execute(
+        """
+        SELECT * FROM explorations
+        WHERE status = 'pending'
+        AND created_at < datetime('now', '-' || ? || ' hours')
+        ORDER BY created_at
+        """,
+        (max_age_hours,),
+    ).fetchall()
+
+
 def get_pending_blocked(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Get pending explorations that have at least one failed or declined dependency.
 
@@ -451,3 +470,16 @@ def increment_amend_count(conn: sqlite3.Connection, exploration_id: str) -> int:
         "SELECT amend_count FROM explorations WHERE id = ?", (exploration_id,),
     ).fetchone()
     return row["amend_count"] if row else 0
+
+
+def increment_verification_failures(conn: sqlite3.Connection, exploration_id: str) -> int:
+    """Increment and return the verification failure count for an exploration."""
+    conn.execute(
+        "UPDATE explorations SET verification_failures = COALESCE(verification_failures, 0) + 1 WHERE id = ?",
+        (exploration_id,),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT verification_failures FROM explorations WHERE id = ?", (exploration_id,),
+    ).fetchone()
+    return row["verification_failures"] if row else 0

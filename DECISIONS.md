@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-39 ADRs recorded.
+44 ADRs recorded.
 
 ## Domain Index
 
@@ -47,6 +47,11 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-054 | Safety | Daemon per-cycle approval limits |
 | ADR-055 | Operations | Tighten auto-approve criteria for doc-only projects |
 | ADR-056 | Verification | Document-coherence verification for doc-only projects |
+| ADR-057 | Correctness | NULL cost handling — distinguish $0.00 from missing data |
+| ADR-058 | Operations | Stale pending exploration TTL with auto-cancel |
+| ADR-059 | Observability | Verification failure counter per exploration |
+| ADR-060 | Observability | Verification execution time tracking |
+| ADR-061 | UX | Plan step duration estimation |
 
 ---
 
@@ -1180,3 +1185,85 @@ The auto-detection approach (rather than a config flag) follows Elmer's principl
 **Exit code semantics:** `elmer validate` now returns exit 1 when any invariant fails. This makes it usable as a `verify_cmd` or `on_done` command: `on_done = "elmer validate --check"`.
 
 **Files modified:** `cli.py` (exit codes, --check flag), `invariants.py` (is_doc_only_project, run_coherence_check), `plan.py` (auto-coherence fallback in run_completion_check).
+
+---
+
+## ADR-057: NULL Cost Handling — Distinguish $0.00 from Missing Data
+
+**Decision:** Fix Python truthiness conflation where `if cost:` treated `0.0` as falsy, silently dropping zero-cost entries from aggregations. Three code fixes, one SQL cleanup:
+
+1. `dashboard.py`: `if cost:` changed to `if cost is not None:` — zero-cost explorations now counted in project dashboard totals.
+2. `plan.py:get_plan_status()`: `if exp["cost_usd"]:` changed to `if exp["cost_usd"] is not None:` — zero-cost steps included in plan cost totals.
+3. `plan.py:show_plan_status()`: `if plan.get("total_cost"):` changed to `if plan.get("total_cost") is not None:` — plans with $0.00 total now display their cost instead of hiding it.
+4. `daemon.py:_get_cycle_cost()`: removed redundant `AND cost_usd IS NOT NULL` from SQL query that already uses `COALESCE(SUM(cost_usd), 0.0)`.
+
+**Why:** SQLite `SUM()` ignores NULL values (correct behavior). The defensive Python `or 0.0` pattern in `costs.py` and `mcp_server.py` was correct but inconsistent with the `if cost:` pattern in `dashboard.py` and `plan.py`. The `if cost:` idiom is a common Python gotcha — it conflates "no data" (None) with "zero cost" ($0.00). With growing usage, zero-cost explorations (e.g., cached responses, free-tier operations) would silently disappear from cost reports.
+
+**Files modified:** `dashboard.py`, `plan.py`, `daemon.py`.
+
+---
+
+## ADR-058: Stale Pending Exploration TTL with Auto-Cancel
+
+**Decision:** Pending explorations that exceed a configurable TTL are automatically cancelled (marked `failed`) during `schedule_ready()`. Three changes:
+
+1. `state.py`: new `get_stale_pending(conn, max_age_hours)` query — selects pending explorations older than the threshold using SQLite datetime arithmetic.
+2. `explore.py:schedule_ready()`: before cascade-failure detection and ready-launching, checks for stale pending explorations and auto-cancels them with a descriptive `proposal_summary`. Plans containing stale steps are paused.
+3. `config.py`: new `[session] pending_ttl_days = 7` config option (default: 7 days). Set to 0 to disable.
+
+**Why:** Pending explorations with unresolvable dependencies (e.g., the dependency was declined but the cascade detection didn't fire, or a dependency was manually deleted) can accumulate indefinitely. They appear in `elmer status`, consume visual space in the dashboard, and create confusion about what's actually active. The session watchdog (ADR-045) handles stuck *running* sessions but has no equivalent for *pending* ones.
+
+The 7-day default is conservative — most legitimate dependencies resolve within hours (daemon cycles). A pending exploration stuck for a week almost certainly has an unresolvable dependency chain.
+
+**Integration point:** `schedule_ready()` is the natural home because it already handles pending→running and pending→failed transitions (cascade failures). Adding stale-pending cleanup maintains the single-responsibility pattern: all pending-state transitions happen in one function, called every daemon cycle.
+
+**Files modified:** `state.py`, `explore.py`, `config.py`.
+
+---
+
+## ADR-059: Verification Failure Counter per Exploration
+
+**Decision:** Add a `verification_failures` counter to the explorations table, incremented each time `_run_verification()` returns `passed=False` in `_refresh_running()`. Three changes:
+
+1. `state.py`: new `verification_failures INTEGER DEFAULT 0` column (via schema migration) and `increment_verification_failures()` function following the same pattern as `increment_amend_count()`.
+2. `review.py`: call `increment_verification_failures()` at both verification failure points — initial verification (after exploration completes) and re-verification (after amend completes). This runs before `_attempt_auto_amend()` so the counter reflects the total number of verification attempts, not just amend attempts.
+3. `plan.py`: include `verification_failures` in step status data from `get_plan_status()`, display in `show_plan_status()` when non-zero, and include total verification failures in the plan summary line.
+
+**Why:** `amend_count` tracks how many times an exploration was amended, but not how many verification failures occurred. An exploration can fail verification, get amended, pass on re-verification, then fail again on a different issue — `amend_count` would be 2 but the user has no visibility into the verification failure pattern. The counter answers: "How flaky is verification for this exploration/plan?"
+
+**Semantic distinction:** `amend_count` = "how many times did we try to fix it?" `verification_failures` = "how many times did verification fail?" A high ratio of failures to amends suggests the verification command itself may be flaky, not the exploration code.
+
+**Files modified:** `state.py`, `review.py`, `plan.py`.
+
+---
+
+## ADR-060: Verification Execution Time Tracking
+
+**Decision:** Track cumulative verification execution time per exploration via a `verification_seconds REAL DEFAULT 0` column. Three changes:
+
+1. `state.py`: new `verification_seconds` column via schema migration.
+2. `review.py`: `_run_verification()` extended to return 4-tuple `(passed, returncode, output, elapsed_seconds)` using `time.monotonic()` timing. New `_accumulate_verification_seconds()` helper adds elapsed time to the exploration's running total via SQL `COALESCE(verification_seconds, 0) + ?`. Called at all 4 verification call sites (initial, fallback, post-amend, post-amend fallback).
+3. `plan.py`: `verification_seconds` included in step status data from `get_plan_status()`.
+
+**Why:** Expensive verification commands (full test suites, end-to-end tests) consume wall-clock time that doesn't appear in token costs. Without timing data, operators can't distinguish between "exploration took 2 hours because it was complex" and "exploration took 2 hours because verification ran 8 times at 15 minutes each." The data enables budget forecasting when verification is the bottleneck.
+
+**Accumulation pattern:** Unlike `verification_failures` (increment by 1), verification time accumulates fractional seconds. Each verification run adds its elapsed time to the total. This captures the full time cost including retries, fallbacks, and timeouts.
+
+**Files modified:** `state.py`, `review.py`, `plan.py`.
+
+---
+
+## ADR-061: Plan Step Duration Estimation
+
+**Decision:** Support optional `estimated_seconds` fields in plan step JSON for runtime forecasting. Three changes:
+
+1. `decompose.py`: new `estimate_plan_duration(plan)` function — sums `estimated_seconds` from all steps, validates types, warns on partial/invalid estimates. Returns `(total_seconds, warnings)`.
+2. `implement.py:execute_plan()`: after prerequisite validation, calls `estimate_plan_duration()` and displays estimated runtime. If `max_plan_hours` is configured and the estimate exceeds it, emits a warning.
+3. `plan.py:show_plan_status()`: parses `estimated_seconds` from plan JSON and includes total estimated runtime and actual verification time in the progress summary line.
+4. `config.py`: new `max_plan_hours` option under `[implement]` (commented out by default — advisory, not blocking).
+
+**Why:** Plan steps can take anywhere from minutes (simple doc edits) to hours (complex multi-file implementations with verification). Without duration estimates, operators can't predict whether a plan fits within their available time window (e.g., overnight batch, weekend run). The decompose agent already has context to make rough estimates based on step complexity.
+
+**Design choice:** `estimated_seconds` lives in the plan JSON (produced by the decompose agent), not as a DB column. This keeps the estimate with the plan definition rather than requiring schema changes per exploration. The `max_plan_hours` check is advisory (warning, not blocking) because estimates are inherently imprecise.
+
+**Files modified:** `decompose.py`, `implement.py`, `plan.py`, `config.py`.

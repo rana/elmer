@@ -83,7 +83,7 @@ def _get_cycle_cost(elmer_dir: Path, since: str) -> float:
 
     row2 = conn.execute(
         "SELECT COALESCE(SUM(cost_usd), 0.0) FROM explorations "
-        "WHERE completed_at >= ? AND cost_usd IS NOT NULL",
+        "WHERE completed_at >= ?",
         (since,),
     ).fetchone()
     exp_cost = row2[0] if row2 else 0.0

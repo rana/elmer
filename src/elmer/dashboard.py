@@ -50,7 +50,7 @@ def show_all_projects() -> None:
             if s in counts:
                 counts[s] += 1
             cost = exp["cost_usd"]
-            if cost:
+            if cost is not None:
                 total_cost += cost
 
         total = len(explorations)

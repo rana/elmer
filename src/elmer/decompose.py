@@ -298,6 +298,36 @@ def validate_plan(
     return errors
 
 
+def estimate_plan_duration(plan: dict) -> tuple[float | None, list[str]]:
+    """Estimate total plan duration from step estimated_seconds fields.
+
+    Returns (total_seconds, warnings) where total_seconds is the sum of all
+    estimated_seconds values, or None if no steps provide estimates.
+    Warnings include missing-estimate notices and max-hours violations.
+    """
+    steps = plan.get("steps", [])
+    warnings: list[str] = []
+
+    estimates = []
+    for i, step in enumerate(steps):
+        est = step.get("estimated_seconds")
+        if est is not None:
+            if isinstance(est, (int, float)) and est >= 0:
+                estimates.append(est)
+            else:
+                warnings.append(f"step {i}: invalid estimated_seconds ({est!r})")
+
+    if not estimates:
+        return None, warnings
+
+    total = sum(estimates)
+    if len(estimates) < len(steps):
+        missing = len(steps) - len(estimates)
+        warnings.append(f"{missing}/{len(steps)} steps have no duration estimate")
+
+    return total, warnings
+
+
 def detect_parallel_conflicts(plan: dict) -> list[str]:
     """Detect potential file conflicts between parallel plan steps.
 

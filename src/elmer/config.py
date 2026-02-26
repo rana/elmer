@@ -104,6 +104,11 @@ max_turns = 50
 #   "opportunity-scan:",
 # ]
 
+[session]
+# max_hours = 4                  # watchdog: kill running sessions after N hours
+# log_stale_minutes = 60         # watchdog: kill if log unchanged for N minutes
+pending_ttl_days = 7              # auto-cancel pending explorations after N days
+
 [verification]
 # on_done = "pnpm build && pnpm test"  # global verification for all explorations
 max_retries = 2                         # auto-amend attempts before marking failed
@@ -113,6 +118,7 @@ model = "opus"                    # model for implementation sessions
 decompose_model = "opus"          # model for milestone decomposition
 decompose_max_turns = 30          # max turns for decomposition
 max_turns = 50                    # per-step turn limit
+# max_plan_hours = 8              # warn if estimated plan duration exceeds N hours
 
 # Per-million-token rates (USD) for cost estimation.
 # Used only when claude CLI does not report actual cost.

@@ -42,8 +42,10 @@ def get_plan_status(elmer_dir: Path, plan_id: Optional[str] = None) -> list[dict
                 "cost_usd": exp["cost_usd"],
                 "verify_cmd": exp["verify_cmd"],
                 "amend_count": exp["amend_count"] or 0,
+                "verification_failures": exp["verification_failures"] or 0,
+                "verification_seconds": exp["verification_seconds"] or 0.0,
             }
-            if exp["cost_usd"]:
+            if exp["cost_usd"] is not None:
                 total_cost += exp["cost_usd"]
             steps_status.append(step_info)
 
@@ -98,7 +100,7 @@ def show_plan_status(elmer_dir: Path, plan_id: Optional[str] = None) -> None:
         click.echo(f"Plan: {plan['id']}")
         click.echo(f"  Milestone: {plan['milestone_ref']}")
         click.echo(f"  Status:    {plan['status']}")
-        if plan.get("total_cost"):
+        if plan.get("total_cost") is not None:
             click.echo(f"  Cost:      ${plan['total_cost']:.2f}")
         click.echo()
 
@@ -107,23 +109,40 @@ def show_plan_status(elmer_dir: Path, plan_id: Optional[str] = None) -> None:
             click.echo("  (no steps)")
             continue
 
-        # Parse original plan for titles
+        # Parse original plan for titles and duration estimates
         try:
             original = json.loads(plan["plan_json"])
             titles = {i: s.get("title", "") for i, s in enumerate(original.get("steps", []))}
+            step_estimates = {i: s.get("estimated_seconds") for i, s in enumerate(original.get("steps", []))}
         except (json.JSONDecodeError, KeyError):
             titles = {}
+            step_estimates = {}
 
         for step in steps:
             icon = status_icons.get(step["status"], " ")
             title = titles.get(step["step"], step["id"])
             amend_info = f" (amended {step['amend_count']}x)" if step["amend_count"] else ""
+            vfail_info = f" ({step['verification_failures']} verify fail)" if step.get("verification_failures") else ""
             cost_info = f" ${step['cost_usd']:.2f}" if step.get("cost_usd") else ""
-            click.echo(f"  {icon} Step {step['step']}: {title}  [{step['status']}{amend_info}{cost_info}]")
+            click.echo(f"  {icon} Step {step['step']}: {title}  [{step['status']}{amend_info}{vfail_info}{cost_info}]")
 
         # Summary
         approved = sum(1 for s in steps if s["status"] == "approved")
-        click.echo(f"\n  Progress: {approved}/{len(steps)} steps approved")
+        total_vfails = sum(s.get("verification_failures", 0) for s in steps)
+        vfail_note = f", {total_vfails} verification failure(s)" if total_vfails else ""
+
+        # Duration estimates from plan JSON
+        estimates = [v for v in step_estimates.values() if isinstance(v, (int, float)) and v >= 0]
+        est_note = ""
+        if estimates:
+            est_hours = sum(estimates) / 3600
+            est_note = f", est. {est_hours:.1f}h"
+
+        # Actual verification time
+        total_vsecs = sum(s.get("verification_seconds", 0) for s in steps)
+        vsecs_note = f", {total_vsecs:.0f}s verify time" if total_vsecs > 0 else ""
+
+        click.echo(f"\n  Progress: {approved}/{len(steps)} steps approved{vfail_note}{est_note}{vsecs_note}")
         click.echo()
 
 

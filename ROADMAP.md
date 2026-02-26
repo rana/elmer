@@ -70,14 +70,14 @@ ADR-045 added per-step `model` field in plans. Currently set by the decompose ag
 
 ### C. Observability & Cost
 
-**C1. Verification failure tracking** (Medium)
-Add `verification_failures` counter to explorations table. Track how many times verification failed across amend attempts. Surface in plan status. Currently only `amend_count` exists.
+**C1. Verification failure tracking** — RESOLVED (ADR-059)
+`verification_failures` counter on explorations table. Incremented at both verification failure points in `_refresh_running()`. Surfaced in `show_plan_status()` per-step and in summary line.
 
-**C2. Verification execution time tracking** (Small-Medium)
-Record `verification_seconds` in explorations table. Sum into plan/cycle cost metrics. Useful for budget forecasting when verification commands are expensive (e.g., full test suites).
+**C2. Verification execution time tracking** — RESOLVED (ADR-060)
+`verification_seconds` column on explorations table. `_run_verification()` returns elapsed time via `time.monotonic()`. Accumulated at all 4 call sites (initial, fallback, post-amend, post-amend fallback). Surfaced in plan status.
 
-**C3. NULL cost handling in SUM queries** (Small)
-`COALESCE(cost_usd, 0)` or explicit NULL-checking in `_get_cycle_cost()` and plan cost display. Currently NULLs silently drop from SUM. ADR-048 added logging for the gap; this would close it in the accounting.
+**C3. NULL cost handling in SUM queries** — RESOLVED (ADR-057)
+Fixed Python truthiness conflation (`if cost:` → `if cost is not None:`) in `dashboard.py`, `plan.py`. Removed redundant SQL `IS NOT NULL` filter in `daemon.py`. Zero-cost entries now correctly distinguished from missing data.
 
 **C4. Daemon observability dashboard** (Medium)
 Persistent status view (curses or web) showing real-time daemon cycle progress, plan status, cost tracking, and alerts. Currently all info requires running `elmer status` or reading daemon.log.
@@ -112,11 +112,11 @@ When synthesis fails (API outage), no mechanism to re-trigger. Add automatic re-
 
 ### F. Operational
 
-**F1. Stale pending exploration cleanup** (Small)
-TTL for pending explorations. If pending > N days with unmet dependencies, auto-cancel with warning. Prevents forgotten explorations blocking resource accounting.
+**F1. Stale pending exploration cleanup** — RESOLVED (ADR-058)
+`schedule_ready()` auto-cancels pending explorations older than `[session] pending_ttl_days` (default: 7). New `get_stale_pending()` SQL query. Plans containing stale steps are paused.
 
-**F2. Plan step duration estimation** (Small)
-Optional `estimated_seconds` field in plan steps. Validate total against config constraints. Warn if a plan's expected runtime exceeds operator time windows.
+**F2. Plan step duration estimation** — RESOLVED (ADR-061)
+`estimate_plan_duration()` sums `estimated_seconds` from plan JSON. Warns on partial/invalid estimates. `max_plan_hours` config option (advisory). Plan status shows estimated vs actual verification time.
 
 **F3. Custom skills as verification hooks** (Small-Medium)
 srf has 6 Claude Code skills (`.claude/skills/`). Elmer could invoke project-defined skills as post-exploration or pre-merge hooks — e.g., run `/dedup-proposals` after a batch of explorations complete, or `/mission-align` as part of auto-approve review.
@@ -127,4 +127,4 @@ srf has 6 Claude Code skills (`.claude/skills/`). Elmer could invoke project-def
 
 See Open Questions in CONTEXT.md. Features discussed but not committed are tracked there.
 
-*Last updated: 2026-02-25, D1+D2 (ADR-056) resolved, 15 remaining future directions*
+*Last updated: 2026-02-25, F2 (ADR-061) resolved, 10 remaining future directions*
