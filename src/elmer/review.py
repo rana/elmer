@@ -1,6 +1,7 @@
 """Proposal review — read proposals, display status and summaries."""
 
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -13,6 +14,53 @@ import click
 
 from . import autoapprove, config, explore as explore_mod, hooks, state, synthesize as synth_mod, worker, worktree as wt_mod
 from .explore import slugify
+
+
+def parse_proposal_frontmatter(content: str) -> tuple[dict, str]:
+    """Extract YAML frontmatter from a PROPOSAL.md (H2).
+
+    Returns (metadata, body) where metadata is a dict of parsed frontmatter
+    fields and body is the content after the frontmatter block.
+    Returns ({}, content) if no frontmatter is present.
+
+    Supported fields: type, confidence, key_files (list), decision_needed (bool).
+    """
+    if not content.startswith("---"):
+        return {}, content
+
+    try:
+        end = content.index("---", 3)
+    except ValueError:
+        return {}, content
+
+    frontmatter = content[3:end].strip()
+    body = content[end + 3:].strip()
+
+    metadata: dict = {}
+    for line in frontmatter.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        value = value.strip()
+
+        # Parse lists: [item1, item2]
+        if value.startswith("[") and value.endswith("]"):
+            inner = value[1:-1].strip()
+            if inner:
+                metadata[key] = [v.strip().strip("'\"") for v in inner.split(",")]
+            else:
+                metadata[key] = []
+        # Parse booleans
+        elif value.lower() in ("true", "false"):
+            metadata[key] = value.lower() == "true"
+        else:
+            metadata[key] = value
+
+    return metadata, body
 
 
 def _is_ensemble_replica(exp) -> bool:
@@ -891,6 +939,23 @@ def show_proposal(elmer_dir: Path, exploration_id: str) -> None:
     click.echo(f"Created:     {exp['created_at']}")
     if exp["completed_at"]:
         click.echo(f"Completed:   {exp['completed_at']}")
+
+    # Display frontmatter metadata if present (H2)
+    if proposal_path.exists():
+        meta, _ = parse_proposal_frontmatter(proposal_path.read_text())
+        if meta:
+            parts = []
+            if "type" in meta:
+                parts.append(f"type={meta['type']}")
+            if "confidence" in meta:
+                parts.append(f"confidence={meta['confidence']}")
+            if meta.get("decision_needed"):
+                parts.append("decision-needed")
+            if meta.get("key_files"):
+                parts.append(f"files={','.join(meta['key_files'])}")
+            if parts:
+                click.echo(f"Metadata:    {' | '.join(parts)}")
+
     click.echo("-" * 60)
 
     if proposal_path.exists():
@@ -900,6 +965,15 @@ def show_proposal(elmer_dir: Path, exploration_id: str) -> None:
         log_path = elmer_dir / "logs" / f"{exp['id']}.log"
         if log_path.exists():
             click.echo(f"\nLog available at: {log_path}")
+
+    # Display review notes if present (H3: AI-authored review notes)
+    review_notes_path = worktree_path / "REVIEW-NOTES.md"
+    if review_notes_path.exists():
+        click.echo()
+        click.echo("=" * 60)
+        click.echo("REVIEW NOTES (agent self-assessment)")
+        click.echo("=" * 60)
+        click.echo(review_notes_path.read_text())
 
 
 def show_log(elmer_dir: Path, exploration_id: str, *, raw: bool = False) -> None:

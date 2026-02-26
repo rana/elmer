@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-50 ADRs recorded.
+56 ADRs recorded.
 
 ## Domain Index
 
@@ -58,6 +58,12 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-065 | Operations | External dependency tracking with blockers (D4) |
 | ADR-066 | Resilience | Stale PID recovery and cascade failure alerting |
 | ADR-067 | Architecture | Plan revision / replanning (A3) |
+| ADR-068 | Intelligence | Exploration-to-plan pipeline (A4) |
+| ADR-069 | Operations | Per-step model routing from project context (B3) |
+| ADR-070 | Resilience | Ensemble synthesis failure recovery (E3) |
+| ADR-071 | Intelligence | Worker intelligence — digest, sibling, decline injection (G1/G2/G3) |
+| ADR-072 | Quality | Proposal quality — confidence, schema, review notes (H1/H2/H3) |
+| ADR-073 | Observability | Archetype effectiveness diagnosis (I1) |
 
 ---
 
@@ -1401,3 +1407,76 @@ Three new columns on `plans` table:
 **Alternatives considered:** Manual plan editing (too error-prone for complex plans with dependencies), complete plan restart (wastes approved work), interactive step editor (requires TUI, violates simplicity principle).
 
 **Files modified:** `state.py` (schema), `replan.py` (new module), `agents/replan.md` (new agent), `cli.py`, `daemon.py`, `implement.py`, `plan.py`, `mcp_server.py`.
+
+## ADR-068: Exploration-to-Plan Pipeline (A4)
+
+**Decision:** `elmer implement --from-exploration ID` feeds an exploration's PROPOSAL.md into the decompose agent.
+
+`_read_exploration_proposal()` in decompose.py checks the exploration worktree first, falls back to the proposal archive directory. The proposal text (truncated to 15K chars) is injected as a `## Source Exploration Proposal` section in the decompose prompt, providing the decompose agent with the exploration's detailed analysis, file targets, and ordering as a primary input.
+
+**Interface:** CLI `--from-exploration ID` option on `elmer implement`. MCP `elmer_implement` gains `from_exploration` parameter. Both optional — existing milestone-only decomposition unchanged.
+
+**Rationale:** Exploration proposals contain the exact action items, file targets, and ordering needed for an implementation plan. Direct injection eliminates lossy manual translation from analysis to milestone description.
+
+## ADR-069: Per-Step Model Routing from Project Context (B3)
+
+**Decision:** New `[implement.model_routing]` config section enables archetype-based and position-based model assignment.
+
+Priority chain: step.model (from decompose agent) > config routing > plan-level model. Routing applied in `implement.py:execute_plan()`.
+
+```toml
+[implement.model_routing]
+scaffold = "opus"      # step 0 (foundation)
+implement = "opus"     # implementation steps
+explore = "sonnet"     # analysis-only steps
+fallback = "opus"      # any step without a specific route
+```
+
+**Rationale:** ADR-045 added per-step model in plan JSON, set by the decompose agent. Config-driven routing provides project-level defaults without requiring the decompose agent to make model decisions for every step.
+
+## ADR-070: Ensemble Synthesis Failure Recovery (E3)
+
+**Decision:** Auto-recover failed ensemble syntheses with partial output preservation.
+
+- `resynthesize_ensemble()` in synthesize.py: cleans up failed synthesis exploration (deletes worktree, branch, DB record), reads partial PROPOSAL.md as `previous_synthesis` context, re-triggers `synthesize_ensemble()`.
+- `get_failed_syntheses()`: SQL query finds ensemble IDs with failed synthesis explorations.
+- `trigger_ready_ensembles()`: auto-recovers failed syntheses each daemon cycle, in addition to triggering new syntheses for ready ensembles.
+- Manual recovery: `elmer retry <synthesis-id>` already handled failed synthesis re-runs.
+
+**Rationale:** API outages and context overflows can fail synthesis without any mechanism to retry. Most synthesis failures are transient; auto-recovery prevents ensembles from getting stuck permanently.
+
+## ADR-071: Worker Intelligence — Digest, Sibling, and Decline Injection (G1/G2/G3)
+
+**Decision:** Three new prompt injection functions in `explore.py` enriching worker prompts with system-level intelligence.
+
+All are best-effort (exceptions caught silently) and called in `_resolve_agent_and_prompt()`:
+
+1. **`_inject_digest()`** (G1): Reads latest digest via `digest_mod.get_latest_digest()`, truncates to 4K chars, injects as `## Recent Project Digest`. Config: `[digest] inject_into_explorations = true`.
+
+2. **`_inject_siblings()`** (G2): Queries running/pending/amending explorations, excludes self via slug parameter, injects up to 15 siblings as `## Other In-Flight Explorations` (status, topic, archetype per line).
+
+3. **`_inject_decline_reasons()`** (G3): Tokenizes topic into keywords (4+ chars), matches against declined explorations in both state DB and archive metadata. Injects up to 3 entries (500 char cap) as `## Prior Declined Approaches`.
+
+**Rationale:** Workers started with near-zero knowledge of accumulated system intelligence. Digests prevent re-discovery of known insights. Sibling awareness prevents conflicting proposals. Decline reasons prevent repeating rejected approaches.
+
+## ADR-072: Proposal Quality — Confidence, Schema, Review Notes (H1/H2/H3)
+
+**Decision:** Three agent methodology enhancements standardizing proposal output across all 17 proposal-producing agents.
+
+1. **Confidence annotations (H1):** New `## Confidence Annotations` section teaches `[HIGH CONFIDENCE]`, `[UNCERTAIN — depends on X]`, `[SPECULATIVE]` tags per section.
+
+2. **Structured PROPOSAL.md schema (H2):** YAML frontmatter (`type`, `confidence`, `key_files`, `decision_needed`) before the markdown body. `parse_proposal_frontmatter()` in review.py extracts metadata. Prioritization scoring enhanced: `decision_needed` (+15), `confidence: low` (+10). Review display shows metadata line.
+
+3. **AI-authored review notes (H3):** New `## Review Notes` section teaches agents to write REVIEW-NOTES.md alongside PROPOSAL.md. `show_proposal()` in review.py displays review notes after proposal. MCP `elmer_review` includes `review_notes` field.
+
+**Files modified:** All 17 agent definitions in `src/elmer/agents/`, `review.py` (parser + display), `mcp_server.py` (scoring + response).
+
+## ADR-073: Archetype Effectiveness Diagnosis (I1)
+
+**Decision:** `elmer archetypes diagnose <name>` produces a structured effectiveness report.
+
+`diagnose_archetype()` in archstats.py reads both state DB and proposal archive, reports: total explorations, approval/decline/fail counts, approval rate, decline reasons, verification failure count, average turns, topic patterns (success/decline/fail). Diagnostic summary identifies low approval rates (<30%) and high verification failure rates.
+
+**Interface:** CLI `elmer archetypes diagnose <name>`. MCP `elmer_archetype_diagnose` tool. Returns structured dict for programmatic consumption.
+
+**Rationale:** Understanding why an archetype underperforms requires correlating outcomes, decline reasons, and failure patterns. This read-only diagnostic is the prerequisite for I2 (agent methodology self-improvement).

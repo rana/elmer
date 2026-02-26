@@ -571,7 +571,8 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
 @click.option("--resume", "resume_plan_id", default=None, help="Resume a paused plan")
 @click.option("--status", "show_status", is_flag=True, help="Show status of active plans")
 @click.option("--save", "save_plan", is_flag=True, help="Save decomposition to .elmer/plans/ without executing")
-def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, load_plan_file, step_indices, max_concurrent, resume_plan_id, show_status, save_plan):
+@click.option("--from-exploration", "from_exploration", default=None, help="Feed an exploration's PROPOSAL.md into decomposition (A4)")
+def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, load_plan_file, step_indices, max_concurrent, resume_plan_id, show_status, save_plan, from_exploration):
     """Decompose a milestone into implementation steps and execute autonomously.
 
     Reads project docs (ROADMAP.md, DESIGN.md, DECISIONS.md), decomposes the
@@ -585,6 +586,7 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
         elmer implement "Milestone 1a" --dry-run --save        # Save plan for later
         elmer implement "Milestone 1a" -y                      # Skip questions
         elmer implement "Milestone 1a" --answers-file a.json   # Pre-answered questions
+        elmer implement "Milestone 1a" --from-exploration slug # Use exploration's proposal (A4)
         elmer implement --load-plan .elmer/plans/m1a.json      # Load saved plan
         elmer implement --load-plan plan.json --steps 0-2      # Run first 3 steps only
         elmer implement --load-plan plan.json --steps 3,4      # Run specific steps
@@ -641,6 +643,8 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
             sys.exit(1)
 
         click.echo(f"Decomposing: {milestone}")
+        if from_exploration:
+            click.echo(f"  Using proposal from exploration '{from_exploration}' as context...")
         click.echo("  Reading project docs and scanning filesystem...")
         try:
             plan = decompose_mod.decompose_milestone(
@@ -648,6 +652,7 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
                 elmer_dir=elmer_dir,
                 project_dir=project_dir,
                 model=model,
+                from_exploration=from_exploration,
             )
         except (RuntimeError, ValueError) as e:
             click.echo(f"Error: decomposition failed — {e}", err=True)
@@ -1828,6 +1833,26 @@ def archetypes_list():
         click.echo(f"{name:<28} {source:<28}")
 
     click.echo(f"\n{len(archs)} archetype(s) available.")
+
+
+@archetypes.command("diagnose")
+@click.argument("archetype_name")
+def archetypes_diagnose(archetype_name):
+    """Diagnose an archetype's effectiveness with a detailed report.
+
+    Analyzes approval/decline rates, decline reasons, verification
+    failure counts, and topic patterns across all explorations using
+    this archetype. Useful for identifying systematic methodology
+    issues before adjusting agent definitions.
+
+    \b
+    Examples:
+        elmer archetypes diagnose explore-act
+        elmer archetypes diagnose implement
+    """
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+    archstats.diagnose_archetype(elmer_dir, archetype_name)
 
 
 # --- Daemon ---

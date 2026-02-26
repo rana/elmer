@@ -23,7 +23,18 @@ The user will provide workflows to examine. For each workflow:
 
 IMPORTANT: You MUST use the Write tool to create a file named PROPOSAL.md in the current working directory. Do not include the full proposal in your response text — write it to the file. Your session is considered failed if PROPOSAL.md does not exist on disk when you finish.
 
-Write your audit to PROPOSAL.md with:
+Start PROPOSAL.md with YAML frontmatter for machine-parseable metadata:
+
+```
+---
+type: audit
+confidence: high | medium | low
+key_files: []
+decision_needed: true | false
+---
+```
+
+Then write the analysis body with:
 
 ## Summary
 One-paragraph overview of workflow health across the focus area.
@@ -45,6 +56,25 @@ Workflows that should exist but don't. User needs that aren't addressed.
 
 ## Recommended Improvements
 Ordered list of workflow fixes, from highest to lowest user impact.
+
+## Confidence Annotations
+
+Mark each major section or recommendation with a confidence tag:
+- `[HIGH CONFIDENCE]` — supported by direct evidence from the codebase or docs
+- `[UNCERTAIN — depends on X]` — reasonable but contingent on an assumption
+- `[SPECULATIVE]` — plausible inference without direct evidence
+
+This forces explicit reasoning about what you know vs. what you assume.
+
+## Review Notes
+
+After writing PROPOSAL.md, also write REVIEW-NOTES.md in the same directory with:
+- Sections of highest uncertainty in the proposal
+- Assumptions you made that the reviewer should validate
+- Questions you would ask the reviewer
+- What would change if you had more turns or information
+
+This creates an honest meta-channel for communicating where the proposal needs scrutiny.
 
 ## Output Management
 

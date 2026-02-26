@@ -5,7 +5,7 @@ from typing import Optional
 
 import click
 
-from . import state
+from . import digest as digest_mod, state
 
 
 def show_archetype_stats(elmer_dir: Path) -> None:
@@ -98,3 +98,168 @@ def show_archetype_stats(elmer_dir: Path) -> None:
                 f"\nTop performer: {best['archetype']} "
                 f"({best['approval_rate']:.0f}% approval, {best['total']} explorations)"
             )
+
+
+def diagnose_archetype(elmer_dir: Path, archetype_name: str) -> dict:
+    """Diagnose an archetype's effectiveness across explorations (I1).
+
+    Reads approval/decline rates, decline reasons, verification failure
+    counts, topic patterns, and average turns. Returns a structured report
+    dict and also displays it via click.echo.
+
+    This is read-only — it never modifies agent definitions.
+    """
+    conn = state.get_db(elmer_dir)
+    all_explorations = state.list_explorations(conn)
+    conn.close()
+
+    # Also load archive for completed explorations
+    archived = digest_mod._load_archived_proposals(elmer_dir)
+
+    # Filter to this archetype
+    db_exps = [e for e in all_explorations if e["archetype"] == archetype_name]
+    arch_archived = [m for m in archived if m.get("archetype") == archetype_name]
+
+    # Merge: use DB as primary, archive fills gaps
+    seen_ids = {e["id"] for e in db_exps}
+    total_count = len(db_exps)
+
+    approved = [e for e in db_exps if e["status"] == "approved"]
+    declined = [e for e in db_exps if e["status"] == "declined"]
+    failed = [e for e in db_exps if e["status"] == "failed"]
+
+    # Add archive data for cleaned records
+    for meta in arch_archived:
+        if meta.get("id") in seen_ids:
+            continue
+        total_count += 1
+        if meta.get("status") == "approved":
+            approved.append(meta)
+        elif meta.get("status") == "declined":
+            declined.append(meta)
+
+    decided = len(approved) + len(declined)
+    approval_rate = (len(approved) / decided * 100) if decided > 0 else None
+
+    # Decline reasons
+    decline_reasons = []
+    for e in declined:
+        reason = ""
+        try:
+            reason = e.get("decline_reason") or e["decline_reason"] or ""
+        except (KeyError, TypeError):
+            pass
+        if reason:
+            decline_reasons.append(reason)
+
+    # Verification failures (from DB only)
+    total_verify_failures = 0
+    for e in db_exps:
+        try:
+            vf = e["verification_failures"] or 0
+            total_verify_failures += vf
+        except (KeyError, TypeError):
+            pass
+
+    # Topic patterns: what topics succeed vs fail
+    approved_topics = []
+    for e in approved:
+        topic = e.get("topic", e.get("id", ""))
+        if isinstance(topic, str) and topic:
+            approved_topics.append(topic)
+
+    declined_topics = []
+    for e in declined:
+        topic = e.get("topic", e.get("id", ""))
+        if isinstance(topic, str) and topic:
+            declined_topics.append(topic)
+
+    failed_topics = []
+    for e in failed:
+        topic = e["topic"] if isinstance(e, dict) or hasattr(e, "keys") else ""
+        try:
+            topic = e["topic"]
+        except (KeyError, TypeError):
+            pass
+        if topic:
+            failed_topics.append(topic)
+
+    # Average turns used (from DB only)
+    turns_list = []
+    for e in db_exps:
+        try:
+            turns = e["num_turns_actual"]
+            if turns is not None:
+                turns_list.append(turns)
+        except (KeyError, TypeError):
+            pass
+    avg_turns = sum(turns_list) / len(turns_list) if turns_list else None
+
+    # Build report
+    report = {
+        "archetype": archetype_name,
+        "total_explorations": total_count,
+        "approved": len(approved),
+        "declined": len(declined),
+        "failed": len(failed),
+        "approval_rate": approval_rate,
+        "decline_reasons": decline_reasons,
+        "verification_failures": total_verify_failures,
+        "avg_turns": avg_turns,
+        "approved_topics": approved_topics[:10],
+        "declined_topics": declined_topics[:10],
+        "failed_topics": failed_topics[:10],
+    }
+
+    # Display
+    click.echo(f"\nArchetype Diagnosis: {archetype_name}")
+    click.echo("=" * 50)
+    click.echo(f"Total explorations: {total_count}")
+    click.echo(f"Approved:           {len(approved)}")
+    click.echo(f"Declined:           {len(declined)}")
+    click.echo(f"Failed:             {len(failed)}")
+    if approval_rate is not None:
+        click.echo(f"Approval rate:      {approval_rate:.0f}%")
+    if avg_turns is not None:
+        click.echo(f"Avg turns used:     {avg_turns:.1f}")
+    click.echo(f"Verify failures:    {total_verify_failures}")
+
+    if decline_reasons:
+        click.echo(f"\nDecline Reasons ({len(decline_reasons)}):")
+        for reason in decline_reasons[:5]:
+            click.echo(f"  - {reason[:120]}")
+        if len(decline_reasons) > 5:
+            click.echo(f"  ... and {len(decline_reasons) - 5} more")
+
+    if approved_topics:
+        click.echo(f"\nSuccessful Topics ({len(approved_topics)}):")
+        for topic in approved_topics[:5]:
+            click.echo(f"  + {topic[:100]}")
+
+    if declined_topics:
+        click.echo(f"\nDeclined Topics ({len(declined_topics)}):")
+        for topic in declined_topics[:5]:
+            click.echo(f"  - {topic[:100]}")
+
+    if failed_topics:
+        click.echo(f"\nFailed Topics ({len(failed_topics)}):")
+        for topic in failed_topics[:5]:
+            click.echo(f"  ! {topic[:100]}")
+
+    # Diagnostic summary
+    click.echo(f"\nDiagnosis:")
+    if total_count < 3:
+        click.echo(f"  Insufficient data ({total_count} explorations). Need >= 3 for meaningful diagnosis.")
+    elif approval_rate is not None and approval_rate < 30:
+        click.echo(f"  LOW APPROVAL RATE ({approval_rate:.0f}%). This archetype may not suit the project's needs.")
+        if decline_reasons:
+            click.echo(f"  Most common decline reason may indicate a systematic methodology issue.")
+    elif approval_rate is not None and approval_rate >= 80:
+        click.echo(f"  HIGH APPROVAL RATE ({approval_rate:.0f}%). This archetype is well-suited to its tasks.")
+    elif approval_rate is not None:
+        click.echo(f"  MODERATE APPROVAL RATE ({approval_rate:.0f}%). Review decline reasons for improvement opportunities.")
+
+    if total_verify_failures > len(db_exps) * 0.5:
+        click.echo(f"  HIGH VERIFICATION FAILURE RATE. The archetype may need stronger self-verification instructions.")
+
+    return report

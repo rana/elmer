@@ -198,11 +198,18 @@ def elmer_review(
         dependents = state.get_dependents(conn, exploration_id)
         conn.close()
 
+        # Read review notes if present (H3)
+        review_notes_path = worktree_path / "REVIEW-NOTES.md"
+        review_notes = None
+        if review_notes_path.exists():
+            review_notes = review_notes_path.read_text()
+
         return {
             "id": exp["id"],
             "topic": exp["topic"],
             "status": exp["status"],
             "proposal": proposal,
+            "review_notes": review_notes,
             "archetype": exp["archetype"],
             "model": exp["model"],
             "branch": exp["branch"],
@@ -226,7 +233,11 @@ def _score_proposal(exp, conn, project_dir: Path) -> tuple[float, list[str]]:
     - Blockers: is anything waiting on this? (+30 per dependent)
     - Staleness: older proposals get priority (+1 per hour, max 24)
     - Failed status: failed explorations need attention (+5)
+    - Decision needed: proposals requiring decisions get priority (+15) (H2)
+    - Low confidence: uncertain proposals need more scrutiny (+10) (H2)
     """
+    from .review import parse_proposal_frontmatter
+
     score = 0.0
     reasons = []
 
@@ -252,6 +263,24 @@ def _score_proposal(exp, conn, project_dir: Path) -> tuple[float, list[str]]:
     if exp["status"] == "failed":
         score += 5
         reasons.append("failed")
+
+    # Factor 4+5: Frontmatter-based scoring (H2)
+    try:
+        worktree_path = Path(exp["worktree_path"])
+        proposal_path = worktree_path / "PROPOSAL.md"
+        if proposal_path.exists():
+            meta, _ = parse_proposal_frontmatter(proposal_path.read_text())
+            if meta.get("decision_needed") is True:
+                score += 15
+                reasons.append("decision needed")
+            confidence = meta.get("confidence", "")
+            if confidence == "low":
+                score += 10
+                reasons.append("low confidence")
+            elif confidence == "medium":
+                score += 5
+    except Exception:
+        pass  # Best-effort
 
     return score, reasons
 
@@ -460,6 +489,26 @@ def elmer_archetypes(include_stats: bool = False) -> dict:
             result.append(entry)
 
         return {"archetypes": result}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def elmer_archetype_diagnose(archetype_name: str) -> dict:
+    """Diagnose an archetype's effectiveness (I1).
+
+    Analyzes approval/decline rates, decline reasons, verification failure
+    counts, and topic patterns. Produces a structured diagnostic report
+    useful for identifying systematic methodology issues.
+
+    Parameters:
+        archetype_name: The archetype to diagnose (e.g., "explore-act").
+    """
+    try:
+        from . import archstats
+        _, elmer_dir = _find_project()
+        report = archstats.diagnose_archetype(elmer_dir, archetype_name)
+        return report
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -1589,6 +1638,7 @@ def elmer_implement(
     skip_clarify: bool = False,
     model: Optional[str] = None,
     max_concurrent: int = 1,
+    from_exploration: Optional[str] = None,
 ) -> dict:
     """Decompose a milestone into implementation steps and execute autonomously.
 
@@ -1602,6 +1652,7 @@ def elmer_implement(
         skip_clarify: Skip clarification questions (use defaults).
         model: Model for implementation sessions (default: from config).
         max_concurrent: Max parallel steps (default: 1 for chain safety).
+        from_exploration: Feed an exploration's PROPOSAL.md into decomposition (A4).
     """
     try:
         project_dir, elmer_dir = _find_project()
@@ -1612,6 +1663,7 @@ def elmer_implement(
             elmer_dir=elmer_dir,
             project_dir=project_dir,
             model=model,
+            from_exploration=from_exploration,
         )
 
         if dry_run:

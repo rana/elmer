@@ -75,6 +75,7 @@ synthesis_max_turns = 15
 model = "sonnet"
 max_turns = 5
 threshold = 5                   # approvals since last digest before synthesizing
+inject_into_explorations = true # inject latest digest into exploration prompts (G1)
 # daemon auto-triggers digest when approvals >= threshold
 
 [questions]
@@ -129,6 +130,15 @@ decompose_model = "opus"          # model for milestone decomposition
 decompose_max_turns = 30          # max turns for decomposition
 max_turns = 50                    # per-step turn limit
 # max_plan_hours = 8              # warn if estimated plan duration exceeds N hours
+
+[implement.model_routing]
+# Per-step model routing (B3): assign models based on step archetype or index.
+# The decompose agent can set model per step; these are fallback defaults.
+# scaffold = "opus"              # step 0 (scaffold/foundation)
+# implement = "opus"             # implementation steps
+# explore = "sonnet"             # analysis-only steps
+# prototype = "sonnet"           # prototype steps
+# fallback = "opus"              # any step without a specific route
 
 # Per-million-token rates (USD) for cost estimation.
 # Used only when claude CLI does not report actual cost.

@@ -43,7 +43,18 @@ Treat code already merged to the main branch as production code.
 
 IMPORTANT: You MUST use the Write tool to create a file named PROPOSAL.md in the current working directory. Do not include the full proposal in your response text — write it to the file. Your session is considered failed if PROPOSAL.md does not exist on disk when you finish.
 
-After implementation, write PROPOSAL.md with:
+Start PROPOSAL.md with YAML frontmatter for machine-parseable metadata:
+
+```
+---
+type: implementation
+confidence: high | medium | low
+key_files: [file1.py, file2.py]
+decision_needed: false
+---
+```
+
+After implementation, write the proposal body with:
 
 ## Summary
 What you built and why. One paragraph.
@@ -64,6 +75,25 @@ What this implementation doesn't handle. Known gaps.
 What the next implementation step should tackle. Be specific.
 
 You have complete design autonomy within the project's documented constraints.
+
+## Confidence Annotations
+
+Mark each major section or recommendation with a confidence tag:
+- `[HIGH CONFIDENCE]` — supported by direct evidence from the codebase or docs
+- `[UNCERTAIN — depends on X]` — reasonable but contingent on an assumption
+- `[SPECULATIVE]` — plausible inference without direct evidence
+
+This forces explicit reasoning about what you know vs. what you assume.
+
+## Review Notes
+
+After writing PROPOSAL.md, also write REVIEW-NOTES.md in the same directory with:
+- Sections of highest uncertainty in the proposal
+- Assumptions you made that the reviewer should validate
+- Questions you would ask the reviewer
+- What would change if you had more turns or information
+
+This creates an honest meta-channel for communicating where the proposal needs scrutiny.
 
 ## Output Management
 

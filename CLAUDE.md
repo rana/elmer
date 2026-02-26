@@ -6,7 +6,7 @@ Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, rules, conventions
 2. **CONTEXT.md** — project methodology, collaboration model, current state
 3. **DESIGN.md** — architecture, data model, module responsibilities
-4. **DECISIONS.md** — ADRs with full rationale (50 recorded)
+4. **DECISIONS.md** — ADRs with full rationale (56 recorded)
 5. **ROADMAP.md** — phase history, **Future Directions** (remaining improvements), deferred features
 6. **README.md** — user-facing docs, install, full command reference
 7. **GUIDE.md** — practical usage playbook, workflows, patterns
@@ -15,7 +15,7 @@ Elmer is an autonomous research tool that uses git branches as isolation boundar
 
 ### Active Backlog
 
-All 10 original Future Directions items from the pipeline audit are complete. 22 new future directions added across 4 new themes: G (worker intelligence — digest/sibling/decline injection, mid-exploration questions), H (proposal quality — confidence annotations, structured schema, review notes), I (agent evolution — archetype diagnosis, methodology self-improvement), J (Agent Teams integration — ensemble via teams, collaborative decomposition, headless feasibility, inter-exploration messaging), plus A4 (exploration-to-plan pipeline). 8 prior items remain (B2–B3, C4, D3, D5, E1–E3). See ROADMAP.md Future Directions for full details.
+10 of 22 new future directions resolved: G1–G3 (worker intelligence — digest/sibling/decline injection), H1–H3 (proposal quality — confidence annotations, structured schema, review notes), E3 (ensemble synthesis failure recovery), A4 (exploration-to-plan pipeline), I1 (archetype effectiveness diagnosis), B3 (per-step model routing). 12 remain: G4, I2, J1–J4, B2, C4, D3, D5, E1–E2. See ROADMAP.md Future Directions for full details.
 
 ## Tech Stack
 
@@ -49,7 +49,7 @@ Full options and examples in README.md. Core subcommands:
 | `elmer retry [ID]` | Retry failed exploration(s) (`--failed`, `--max-concurrent`) |
 | `elmer costs` | Cost summary (`--exploration ID` for detail) |
 | `elmer validate` | Check document invariants (`--check` for read-only; exits 1 on failure) |
-| `elmer archetypes` | `list` or `stats` |
+| `elmer archetypes` | `list`, `stats`, or `diagnose NAME` |
 | `elmer mine-questions` | Extract open questions from docs (`--spawn`, `--cluster`) |
 | `elmer insights` | List cross-project insights |
 | `elmer daemon` | Continuous operation (`--auto-approve --generate` for full autonomy) |
@@ -59,9 +59,9 @@ Full options and examples in README.md. Core subcommands:
 | `elmer block ID DESC` | Register external blocker (stakeholder decision, prerequisite) |
 | `elmer unblock ID` | Resolve external blocker, unblocking dependent explorations |
 | `elmer blockers` | List all external blockers with status |
-| `elmer implement "milestone"` | Decompose milestone into steps, execute autonomously (`--dry-run`, `--save`, `--answers-file`, `--load-plan`, `--steps`, `--status`, `--resume`) |
+| `elmer implement "milestone"` | Decompose milestone into steps, execute autonomously (`--dry-run`, `--save`, `--answers-file`, `--load-plan`, `--steps`, `--status`, `--resume`, `--from-exploration`) |
 | `elmer replan ID [CONTEXT]` | Revise a paused plan when step failure is structural (`--dry-run`, `--save`, `-m`) |
-| `elmer mcp` | Start MCP server — 24 tools for Claude Code integration |
+| `elmer mcp` | Start MCP server — 25 tools for Claude Code integration |
 
 ## Rules
 
@@ -131,4 +131,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-25, 22 new future directions (G/H/I/J + A4), updated backlog and open questions (50 ADRs)*
+*Last updated: 2026-02-25, resolved 10 future directions (G1–G3, H1–H3, E3, A4, I1, B3), 56 ADRs*

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from . import archselect, config, insights, promptgen, state, worker, worktree
+from . import archselect, config, digest as digest_mod, insights, promptgen, state, worker, worktree
 
 
 def slugify(text: str, max_length: int = 40) -> str:
@@ -70,12 +70,184 @@ def _inject_insights(
     return prompt
 
 
+def _inject_digest(
+    prompt: str,
+    elmer_dir: Path,
+) -> str:
+    """Append the latest convergence digest to a prompt if enabled (G1).
+
+    Injects truncated digest (~4K chars) so workers benefit from accumulated
+    cross-exploration understanding rather than re-discovering known insights.
+    """
+    try:
+        cfg = config.load_config(elmer_dir)
+        digest_cfg = cfg.get("digest", {})
+        if not digest_cfg.get("inject_into_explorations", True):
+            return prompt
+        content = digest_mod.get_latest_digest(elmer_dir)
+        if not content:
+            return prompt
+        # Strip metadata header if present
+        if content.startswith("<!--"):
+            try:
+                end = content.index("-->")
+                content = content[end + 3:].strip()
+            except ValueError:
+                pass
+        if len(content) > 4000:
+            content = content[:4000] + "\n\n[...truncated...]"
+        prompt = (
+            f"{prompt}\n\n"
+            f"## Recent Project Digest\n\n"
+            f"The following is a synthesis of recent exploration work across this project. "
+            f"Use it to avoid duplicating known findings and to build on accumulated understanding:\n\n"
+            f"{content}"
+        )
+    except Exception:
+        pass  # Best-effort — never block exploration for digest injection
+    return prompt
+
+
+def _inject_siblings(
+    prompt: str,
+    elmer_dir: Path,
+    current_slug: str,
+) -> str:
+    """Append a brief summary of in-flight sibling explorations (G2).
+
+    Prevents parallel explorations from duplicating analysis or proposing
+    conflicting changes by making each worker aware of what others are doing.
+    """
+    try:
+        conn = state.get_db(elmer_dir)
+        explorations = state.list_explorations(conn)
+        conn.close()
+
+        siblings = []
+        for exp in explorations:
+            if exp["id"] == current_slug:
+                continue
+            if exp["status"] in ("running", "pending", "amending"):
+                topic = exp["topic"]
+                if len(topic) > 120:
+                    topic = topic[:117] + "..."
+                siblings.append(
+                    f"- [{exp['status']}] {topic} (archetype: {exp['archetype']})"
+                )
+
+        if not siblings:
+            return prompt
+
+        sibling_text = "\n".join(siblings[:15])  # Cap at 15 siblings
+        prompt = (
+            f"{prompt}\n\n"
+            f"## Other In-Flight Explorations\n\n"
+            f"These explorations are currently running in parallel. "
+            f"Avoid duplicating their analysis or proposing conflicting changes:\n\n"
+            f"{sibling_text}"
+        )
+    except Exception:
+        pass  # Best-effort
+    return prompt
+
+
+def _inject_decline_reasons(
+    prompt: str,
+    topic: str,
+    elmer_dir: Path,
+) -> str:
+    """Inject decline reasons from similar past topics (G3).
+
+    When an exploration's topic keywords match previously declined topics,
+    their decline reasons are injected so the worker can avoid repeating
+    approaches that were already rejected.
+    """
+    try:
+        # Tokenize the current topic into keywords
+        keywords = set(
+            w.lower() for w in re.split(r"[^a-zA-Z0-9]+", topic)
+            if len(w) >= 4
+        )
+        if not keywords:
+            return prompt
+
+        conn = state.get_db(elmer_dir)
+        explorations = state.list_explorations(conn)
+        conn.close()
+
+        # Also check archive for cleaned records
+        archived = digest_mod._load_archived_proposals(elmer_dir)
+
+        matches: list[tuple[str, str]] = []  # (topic, reason)
+
+        # Check DB records
+        for exp in explorations:
+            if exp["status"] != "declined":
+                continue
+            reason = ""
+            try:
+                reason = exp["decline_reason"] or ""
+            except (KeyError, IndexError):
+                pass
+            if not reason:
+                continue
+            exp_keywords = set(
+                w.lower() for w in re.split(r"[^a-zA-Z0-9]+", exp["topic"])
+                if len(w) >= 4
+            )
+            if keywords & exp_keywords:
+                matches.append((exp["topic"], reason))
+
+        # Check archive
+        for meta in archived:
+            if meta.get("status") != "declined":
+                continue
+            reason = meta.get("decline_reason", "")
+            if not reason:
+                continue
+            atopic = meta.get("topic", "")
+            exp_keywords = set(
+                w.lower() for w in re.split(r"[^a-zA-Z0-9]+", atopic)
+                if len(w) >= 4
+            )
+            if keywords & exp_keywords:
+                # Deduplicate with DB matches
+                if not any(m[0] == atopic for m in matches):
+                    matches.append((atopic, reason))
+
+        if not matches:
+            return prompt
+
+        # Cap at 3 entries, 500 chars total
+        entries = []
+        total_chars = 0
+        for mtopic, mreason in matches[:3]:
+            entry = f"- **{mtopic}**: {mreason}"
+            if total_chars + len(entry) > 500:
+                break
+            entries.append(entry)
+            total_chars += len(entry)
+
+        if entries:
+            prompt = (
+                f"{prompt}\n\n"
+                f"## Prior Declined Approaches\n\n"
+                f"These related explorations were previously declined. "
+                f"Avoid repeating the same approaches:\n\n"
+                + "\n".join(entries)
+            )
+    except Exception:
+        pass  # Best-effort
+    return prompt
+
+
 def _resolve_agent_and_prompt(
     archetype: str,
     topic: str,
     elmer_dir: Path,
     project_dir: Path,
     worktree_path: Optional[Path] = None,
+    slug: Optional[str] = None,
 ) -> tuple[dict, str]:
     """Resolve agent config and build the prompt for an exploration.
 
@@ -97,9 +269,12 @@ def _resolve_agent_and_prompt(
         )
 
     # Agent provides the methodology via system prompt.
-    # The -p prompt is just the topic, with optional insights.
+    # The -p prompt is just the topic, with optional enrichments.
     prompt = topic
     prompt = _inject_insights(prompt, topic, elmer_dir, project_dir)
+    prompt = _inject_digest(prompt, elmer_dir)                         # G1
+    prompt = _inject_siblings(prompt, elmer_dir, slug or "")           # G2
+    prompt = _inject_decline_reasons(prompt, topic, elmer_dir)         # G3
     if worktree_path is not None:
         prompt = _append_proposal_path(prompt, worktree_path)
     return agent_config, prompt
@@ -343,6 +518,7 @@ def start_exploration(
         agent_config, prompt = _resolve_agent_and_prompt(
             archetype, topic, elmer_dir, project_dir,
             worktree_path=worktree_path,
+            slug=slug,
         )
     worktree.create_worktree(project_dir, branch, worktree_path)
 
@@ -514,11 +690,13 @@ def launch_pending(
             agent_config, prompt = _resolve_agent_and_prompt(
                 archetype, topic, elmer_dir, project_dir,
                 worktree_path=worktree_path,
+                slug=exploration_id,
             )
     else:
         agent_config, prompt = _resolve_agent_and_prompt(
             archetype, topic, elmer_dir, project_dir,
             worktree_path=worktree_path,
+            slug=exploration_id,
         )
 
     if worktree.branch_exists(project_dir, branch):

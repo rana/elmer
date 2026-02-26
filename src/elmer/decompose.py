@@ -105,6 +105,44 @@ def _parse_plan_json(raw_output: str) -> dict:
     raise ValueError("Malformed JSON in decomposition output")
 
 
+def _read_exploration_proposal(
+    elmer_dir: Path,
+    exploration_id: str,
+) -> str:
+    """Read an exploration's PROPOSAL.md for feeding into decomposition (A4).
+
+    Checks the worktree first, falls back to archive. Returns the content
+    or raises RuntimeError if neither exists.
+    """
+    conn = state.get_db(elmer_dir)
+    exp = state.get_exploration(conn, exploration_id)
+    conn.close()
+
+    # Try worktree (active exploration)
+    if exp is not None:
+        wt_path = Path(exp["worktree_path"])
+        proposal_path = wt_path / "PROPOSAL.md"
+        if proposal_path.exists():
+            return proposal_path.read_text()
+
+    # Try archive (approved/declined exploration)
+    proposals_dir = elmer_dir / "proposals"
+    if proposals_dir.exists():
+        # Try direct ID match
+        archive_path = proposals_dir / f"{exploration_id}.md"
+        if archive_path.exists():
+            return archive_path.read_text()
+        # Scan for topic-derived filename
+        for p in proposals_dir.glob("*.md"):
+            if exploration_id in p.stem:
+                return p.read_text()
+
+    raise RuntimeError(
+        f"No PROPOSAL.md found for exploration '{exploration_id}'. "
+        f"Checked worktree and archive."
+    )
+
+
 def decompose_milestone(
     *,
     milestone_ref: str,
@@ -112,11 +150,16 @@ def decompose_milestone(
     project_dir: Path,
     model: Optional[str] = None,
     max_turns: int = 30,
+    from_exploration: Optional[str] = None,
 ) -> dict:
     """Decompose a milestone into implementation steps.
 
     Calls the decompose meta-agent with project context.
     Returns a plan dict with 'steps', 'questions', and 'milestone' keys.
+
+    If from_exploration is provided (A4), the exploration's PROPOSAL.md is
+    fed directly to the decompose agent as structured context, producing
+    higher-fidelity plans that inherit the exploration's analysis.
     """
     cfg = config.load_config(elmer_dir)
     impl_cfg = cfg.get("implement", {})
@@ -132,6 +175,25 @@ def decompose_milestone(
         f"## Current Filesystem\n\n```\n{filesystem}\n```\n\n"
         f"## Project Documentation\n\n{context}"
     )
+
+    # Inject exploration proposal as additional context (A4)
+    if from_exploration:
+        try:
+            proposal_text = _read_exploration_proposal(elmer_dir, from_exploration)
+            # Truncate very large proposals
+            if len(proposal_text) > 15000:
+                proposal_text = proposal_text[:15000] + "\n\n[...truncated...]"
+            prompt = (
+                f"{prompt}\n\n"
+                f"## Source Exploration Proposal\n\n"
+                f"The following proposal from exploration '{from_exploration}' "
+                f"contains the detailed analysis and action items that should inform "
+                f"your decomposition. Use its findings, file targets, and ordering "
+                f"as a primary input — don't re-derive what it already analyzed:\n\n"
+                f"{proposal_text}"
+            )
+        except RuntimeError as e:
+            click.echo(f"Warning: could not read exploration proposal: {e}", err=True)
 
     # Resolve the decompose meta-agent
     agent_config = config.resolve_meta_agent(project_dir, "decompose")

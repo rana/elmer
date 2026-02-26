@@ -179,6 +179,87 @@ def synthesize_ensemble(
     return synthesis_slug
 
 
+def resynthesize_ensemble(
+    *,
+    ensemble_id: str,
+    elmer_dir: Path,
+    project_dir: Path,
+    model: Optional[str] = None,
+    max_turns: Optional[int] = None,
+) -> str:
+    """Re-trigger synthesis for an ensemble whose synthesis failed (E3).
+
+    Deletes the failed synthesis exploration and re-runs synthesis.
+    If the failed synthesis produced a partial PROPOSAL.md, it is passed
+    as previous_synthesis context so the new attempt can build on it.
+    """
+    conn = state.get_db(elmer_dir)
+
+    existing = state.get_ensemble_synthesis(conn, ensemble_id)
+    if existing is None:
+        conn.close()
+        raise RuntimeError(
+            f"No synthesis found for ensemble '{ensemble_id}'. "
+            f"Use synthesize_ensemble() for first synthesis."
+        )
+
+    if existing["status"] not in ("failed", "done"):
+        conn.close()
+        raise RuntimeError(
+            f"Synthesis for ensemble '{ensemble_id}' has status '{existing['status']}'. "
+            f"Can only re-synthesize failed or done syntheses."
+        )
+
+    # Read partial output from failed synthesis if available
+    previous_synthesis = None
+    try:
+        wt_path = Path(existing["worktree_path"])
+        proposal_path = wt_path / "PROPOSAL.md"
+        if proposal_path.exists():
+            previous_synthesis = proposal_path.read_text()
+    except Exception:
+        pass
+
+    # Clean up the failed synthesis
+    synthesis_id = existing["id"]
+    try:
+        wt_path = Path(existing["worktree_path"])
+        branch = existing["branch"]
+        if wt_path.exists():
+            worktree.remove_worktree(project_dir, wt_path)
+        if worktree.branch_exists(project_dir, branch):
+            worktree.delete_branch(project_dir, branch)
+    except Exception:
+        pass
+    state.delete_exploration(conn, synthesis_id)
+    conn.close()
+
+    # Re-run synthesis with previous output as context
+    return synthesize_ensemble(
+        ensemble_id=ensemble_id,
+        elmer_dir=elmer_dir,
+        project_dir=project_dir,
+        model=model,
+        max_turns=max_turns,
+        previous_synthesis=previous_synthesis,
+    )
+
+
+def get_failed_syntheses(elmer_dir: Path) -> list[str]:
+    """Get ensemble IDs with failed synthesis explorations (E3).
+
+    Used by the daemon to auto-detect and re-queue failed syntheses.
+    """
+    conn = state.get_db(elmer_dir)
+    rows = conn.execute("""
+        SELECT DISTINCT ensemble_id FROM explorations
+        WHERE ensemble_role = 'synthesis' AND status = 'failed'
+        AND ensemble_id IS NOT NULL
+    """).fetchall()
+    conn.close()
+    return [r["ensemble_id"] for r in rows]
+
+
 def trigger_ready_ensembles(
     elmer_dir: Path,
     project_dir: Path,
@@ -213,5 +294,21 @@ def trigger_ready_ensembles(
             notify(f"Ensemble synthesis started: {slug}")
         except RuntimeError as e:
             notify(f"Ensemble synthesis failed for {ensemble_id}: {e}")
+
+    # Re-trigger failed syntheses (E3)
+    failed_ids = get_failed_syntheses(elmer_dir)
+    for ensemble_id in failed_ids:
+        try:
+            slug = resynthesize_ensemble(
+                ensemble_id=ensemble_id,
+                elmer_dir=elmer_dir,
+                project_dir=project_dir,
+                model=model,
+                max_turns=max_turns,
+            )
+            synthesized.append(slug)
+            notify(f"Ensemble re-synthesis started: {slug}")
+        except RuntimeError as e:
+            notify(f"Ensemble re-synthesis failed for {ensemble_id}: {e}")
 
     return synthesized

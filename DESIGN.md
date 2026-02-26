@@ -36,8 +36,8 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | Module | Responsibility |
 |--------|---------------|
 | `cli.py` | Click CLI entry point, argument parsing |
-| `explore.py` | Orchestration: create worktree, assemble prompt, spawn worker |
-| `review.py` | Read proposals, display status, attention routing |
+| `explore.py` | Orchestration: create worktree, assemble prompt (with digest/sibling/decline injection), spawn worker |
+| `review.py` | Read proposals, display status, attention routing, frontmatter extraction |
 | `gate.py` | Approve (merge) or decline (discard) explorations |
 | `worktree.py` | Git worktree and branch operations |
 | `worker.py` | Claude CLI invocation, process management, agent flag building |
@@ -53,16 +53,16 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `questions.py` | Question mining from project documentation |
 | `scaffold.py` | Project scaffolding (five-document pattern) |
 | `skill_scaffold.py` | Claude Code skill scaffolding |
-| `archstats.py` | Archetype effectiveness statistics |
+| `archstats.py` | Archetype effectiveness statistics and diagnosis |
 | `invariants.py` | Document invariant enforcement, doc-only project detection, coherence checks |
 | `dashboard.py` | Multi-project status aggregation |
 | `batch.py` | Topic list file parsing for batch command |
 | `pr.py` | PR creation via gh CLI |
 | `digest.py` | Convergence digest synthesis from exploration history |
-| `synthesize.py` | Ensemble synthesis — consolidate multiple proposals on the same topic |
-| `decompose.py` | Milestone decomposition, plan parsing, validation, prerequisites, conflict detection |
+| `synthesize.py` | Ensemble synthesis — consolidate multiple proposals, auto-recover failed syntheses |
+| `decompose.py` | Milestone decomposition, plan parsing, validation, prerequisites, conflict detection, exploration-to-plan pipeline |
 | `plan.py` | Plan lifecycle — status tracking, display, resume, completion verification |
-| `implement.py` | Execution orchestration — convert plans to chained explorations, cross-step context |
+| `implement.py` | Execution orchestration — convert plans to chained explorations, cross-step context, config-driven model routing |
 | `replan.py` | Mid-execution plan revision — invoke replan agent, validate revision, apply step remapping |
 | `mcp_server.py` | MCP server — structured tool access over stdio |
 
@@ -376,6 +376,7 @@ The overlap is tolerated. No shared template layer — they diverge independentl
 | `elmer_costs` | `state.list_explorations()` + `state.get_all_costs()` | Cost data per exploration + meta-ops + totals |
 | `elmer_tree` | `state.list_explorations()` + `state.get_dependencies()` | Recursive dependency tree |
 | `elmer_archetypes` | `config.ARCHETYPES_DIR` glob + optional stats | Archetype list with optional approval rates |
+| `elmer_archetype_diagnose` | `archstats.diagnose_archetype()` | Detailed effectiveness report for a specific archetype |
 | `elmer_insights` | `insights.list_all_insights()` / `get_relevant_insights()` | Cross-project insights |
 | `elmer_config_get` | `config.load_config()` | Full config or specific key via dot notation |
 | `elmer_recover_partial` | Worktree glob for `*.md` | Partial artifacts from failed/active explorations. Content previews for salvaging work. |

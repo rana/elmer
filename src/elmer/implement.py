@@ -266,8 +266,19 @@ def execute_plan(
         verify_cmd = step.get("verify_cmd")
         setup_cmd = step.get("setup_cmd")
 
-        # Per-step model routing (ADR-045)
-        step_model = step.get("model", model)
+        # Per-step model routing (ADR-045, B3)
+        # Priority: step.model (from decompose agent) > config routing > plan model
+        step_model = step.get("model")
+        if not step_model:
+            routing = cfg.get("implement", {}).get("model_routing", {})
+            if i == 0 and "scaffold" in routing:
+                step_model = routing["scaffold"]
+            elif archetype in routing:
+                step_model = routing[archetype]
+            elif "fallback" in routing:
+                step_model = routing["fallback"]
+            else:
+                step_model = model
 
         # Cross-step context injection (ADR-040)
         step_context = _build_step_context(

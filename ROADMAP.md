@@ -57,8 +57,8 @@ Daemon pre-approval completion check runs in the last step's worktree before app
 **A3. Plan revision / replanning** — RESOLVED (ADR-067)
 `elmer replan <plan-id>` invokes a `replan` meta-agent that produces a revised plan preserving approved steps. `apply_revision()` remaps explorations, cancels dropped steps, creates new steps, rebuilds dependencies. Schema tracks `prior_plan_json`, `revision_count`, `replan_trigger_step`. Daemon auto-replan via `implement.auto_replan` config. MCP tool `elmer_replan` for Claude Code integration. Context injection includes revision note.
 
-**A4. Exploration-to-plan pipeline** (Medium)
-An approved exploration's PROPOSAL.md often contains the exact action items, file targets, and ordering needed for an implementation plan. `elmer implement --from-exploration ID` feeds the proposal directly to the decompose agent as structured context, eliminating the lossy manual translation from analysis to milestone description. The decompose agent receives both the milestone text and the full proposal, producing higher-fidelity plans that inherit the exploration's analysis.
+**A4. Exploration-to-plan pipeline** — RESOLVED (ADR-068)
+`elmer implement --from-exploration ID` feeds the proposal directly to the decompose agent. `_read_exploration_proposal()` checks worktree first, falls back to archive. Proposal text injected as `## Source Exploration Proposal` context (~15K char cap). MCP tool `elmer_implement` gains `from_exploration` parameter.
 
 ### B. Execution Intelligence
 
@@ -68,8 +68,8 @@ An approved exploration's PROPOSAL.md often contains the exact action items, fil
 **B2. Graceful session checkpoint** (Large)
 Instead of hard-killing sessions that exceed TTL via `worker.terminate()`, implement a checkpoint mechanism. Save partial work before termination so it can be resumed rather than restarted from scratch.
 
-**B3. Per-step model routing from project context** (Medium)
-ADR-045 added per-step `model` field in plans. Currently set by the decompose agent based on step complexity. Could be informed by project-level model tiering policies (e.g., srf project defines Tier 1/2/3 model classifications in its CLAUDE.md).
+**B3. Per-step model routing from project context** — RESOLVED (ADR-069)
+New `[implement.model_routing]` config section maps archetypes and special positions (scaffold=step 0) to model names. Priority: step.model (from decompose agent) > config routing > plan model. Routing applied in `implement.py:execute_plan()` during exploration creation.
 
 ### C. Observability & Cost
 
@@ -110,8 +110,8 @@ Current explorations assume code output on a branch. Data pipeline orchestration
 **E2. Parameter tuning explorations** (Medium)
 srf needs systematic A/B testing of chunk sizes, RRF weights, cache TTLs. A specialized archetype or exploration mode that varies parameters, measures against a golden set, and produces a recommendation report. The ensemble mechanism (ADR-031 replicas with archetype rotation) is a natural fit — each replica uses a different parameter configuration.
 
-**E3. Ensemble synthesis failure recovery** (Medium)
-When synthesis fails (API outage), no mechanism to re-trigger. Add automatic re-queue or explicit "re-synthesize ensemble" command in daemon.
+**E3. Ensemble synthesis failure recovery** — RESOLVED (ADR-070)
+`resynthesize_ensemble()` in synthesize.py cleans up failed synthesis, reads partial output, and re-triggers with `previous_synthesis` context. `get_failed_syntheses()` finds failed synthesis ensemble IDs. `trigger_ready_ensembles()` auto-recovers failed syntheses each daemon cycle. Manual retry via existing `elmer retry` command.
 
 ### F. Operational
 
@@ -128,14 +128,14 @@ New `hooks.py` module invokes project-defined Claude Code skills at lifecycle po
 
 Context enrichment for AI workers running inside explorations. Workers currently start with near-zero knowledge of the broader system's accumulated intelligence — digests, decline history, sibling explorations. These items feed system knowledge into worker prompts.
 
-**G1. Digest injection into exploration prompts** (Small)
-Inject the latest convergence digest (truncated, ~4K chars) into individual exploration worker prompts, not just topic generation. Workers currently re-discover insights that the digest already synthesizes. Add a `## Recent Project Digest` section in `explore.py`'s prompt assembly, parallel to the existing cross-project insights injection. Config: `[digest] inject_into_explorations = true`. Resolves the open question about injecting digest context into exploration prompts (CONTEXT.md).
+**G1. Digest injection into exploration prompts** — RESOLVED (ADR-071)
+`_inject_digest()` in explore.py reads latest digest via `digest_mod.get_latest_digest()`, truncates to 4K chars, injects as `## Recent Project Digest` section. Called in `_resolve_agent_and_prompt()`. Config: `[digest] inject_into_explorations = true` (default: true).
 
-**G2. Sibling-aware exploration prompts** (Small)
-Inject a brief summary of other in-flight explorations (one line per sibling: topic + archetype) into the worker prompt. Prevents parallel explorations from duplicating analysis or proposing conflicting changes. Query `state.list_explorations()` for running/pending status, append as a note section. ~20 lines in `explore.py`. Partially addresses the sibling-awareness open question in CONTEXT.md.
+**G2. Sibling-aware exploration prompts** — RESOLVED (ADR-071)
+`_inject_siblings()` in explore.py queries running/pending/amending explorations, excludes self (via slug parameter), injects up to 15 siblings as `## Other In-Flight Explorations`. Each line: status, topic (120 char cap), archetype. Called in `_resolve_agent_and_prompt()`.
 
-**G3. Decline-reason injection for related topics** (Medium)
-When an exploration's topic keywords match previously declined topics, inject those decline reasons into the worker prompt: `## Prior Declined Approaches` with topic and reason per entry. Capped at 3 entries, 500 chars total. Uses existing archive metadata reading from `digest.py`. The decline reason is the most concentrated learning signal in Elmer — currently it feeds only digests and generation, but the worker who most needs it never sees it.
+**G3. Decline-reason injection for related topics** — RESOLVED (ADR-071)
+`_inject_decline_reasons()` in explore.py tokenizes topic into keywords (4+ chars), matches against declined explorations and archive metadata. Injects up to 3 entries (500 char cap) as `## Prior Declined Approaches`. Checks both state DB and archived proposals.
 
 **G4. Mid-exploration questions protocol** (Large)
 A protocol for the worker to signal "I need input" during exploration. Worker writes `QUESTIONS.md` (structured: numbered questions with context) to the worktree, then finishes its session. New state: `waiting`. `elmer status` surfaces waiting explorations prominently. New command: `elmer answer ID` provides responses. System resumes with a new session in the same worktree, injecting questions + answers. MCP tool: `elmer_answer`. Agent methodology teaches the protocol. Distinct from B2 (crash checkpointing): B2 saves involuntary partial work before TTL-kill; G4 is intentional interactive pause for human input. ~300 lines across state.py, cli.py, explore.py, mcp_server.py.
@@ -144,21 +144,21 @@ A protocol for the worker to signal "I need input" during exploration. Worker wr
 
 Standardize proposal output and review signals to make proposals machine-parseable and reviewer-friendly.
 
-**H1. Confidence annotations in proposals** (Small)
-Teach agents to mark uncertainty levels per section: `[HIGH CONFIDENCE]`, `[UNCERTAIN — depends on X]`, `[SPECULATIVE]`. Forces explicit reasoning about knowledge vs. assumptions during exploration. The coordinator and auto-approve gate can prioritize review attention on uncertain sections. Agent methodology change in `src/elmer/agents/*.md` — no engine work required.
+**H1. Confidence annotations in proposals** — RESOLVED (ADR-072)
+All 17 proposal-producing agent definitions updated with `## Confidence Annotations` section teaching `[HIGH CONFIDENCE]`, `[UNCERTAIN — depends on X]`, `[SPECULATIVE]` tags. Agent methodology change only — no engine work required.
 
-**H2. Structured PROPOSAL.md schema** (Medium)
-Standardize PROPOSAL.md with YAML frontmatter (`type`, `confidence`, `key_files`, `decision_needed`) and conventional sections (Summary, Analysis, Recommendations, Open Questions). Makes proposals machine-parseable. Enables: smarter `--prioritize` ranking, automated conflict detection between proposals, richer MCP tool responses. Requires agent definition updates and optional frontmatter extraction in `review.py`.
+**H2. Structured PROPOSAL.md schema** — RESOLVED (ADR-072)
+All 17 proposal-producing agents teach YAML frontmatter (`type`, `confidence`, `key_files`, `decision_needed`). `parse_proposal_frontmatter()` in review.py extracts metadata. Review display shows metadata line. Prioritization scoring uses `decision_needed` (+15) and `confidence: low` (+10) signals. MCP `_score_proposal()` enhanced.
 
-**H3. AI-authored review notes** (Small)
-Workers write a companion `REVIEW-NOTES.md` alongside PROPOSAL.md containing: sections of highest uncertainty, assumptions made, questions for the reviewer, what would change with more turns. Creates an honest meta-channel — the worker often "knows" where its proposal is weak but currently has no way to communicate this. Agent methodology change plus optional display in `elmer review ID`.
+**H3. AI-authored review notes** — RESOLVED (ADR-072)
+All 17 proposal-producing agents teach `## Review Notes` section instructing agents to write REVIEW-NOTES.md alongside PROPOSAL.md. `show_proposal()` in review.py displays review notes after proposal. MCP `elmer_review` includes `review_notes` field in detail response.
 
 ### I. Agent Evolution
 
 Close the feedback loop between exploration outcomes and agent methodology.
 
-**I1. Archetype effectiveness diagnosis** (Medium)
-`elmer archetypes diagnose <name>` reads approval/decline rates, decline reasons, and verification failure counts for a given archetype. Produces a structured report: what topics succeed, what topics fail, common decline reasons, average turns used. Read-only — no automatic modifications. Uses existing `archstats.py` data plus archive metadata. Prerequisite for I2.
+**I1. Archetype effectiveness diagnosis** — RESOLVED (ADR-073)
+`elmer archetypes diagnose <name>` implemented in archstats.py. `diagnose_archetype()` reads DB + archive, reports approval/decline rates, decline reasons, verification failure counts, avg turns, topic patterns. CLI subcommand added. MCP tool `elmer_archetype_diagnose`. Diagnostic summary identifies low approval rates and high verification failure rates. Prerequisite for I2.
 
 **I2. Agent methodology self-improvement** (Large)
 After I1 provides diagnosis, a meta-agent generates revised agent prompt text based on observed failure patterns. `elmer archetypes refine <name>` produces a diff of the proposed changes for human review. Never automatic — human approves prompt changes. Requires I1 as prerequisite and a new meta-agent definition.
@@ -185,4 +185,4 @@ The most ambitious Agent Teams integration: concurrent Elmer explorations on the
 
 See Open Questions in CONTEXT.md. Features discussed but not committed are tracked there.
 
-*Last updated: 2026-02-25, added G (worker intelligence), H (proposal quality), I (agent evolution), J (Agent Teams), A4 (exploration-to-plan); 22 remaining future directions*
+*Last updated: 2026-02-25, resolved G1–G3, H1–H3, E3, A4, I1, B3 (ADR-068–073); 12 remaining future directions*

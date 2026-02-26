@@ -88,6 +88,7 @@ elmer clean
 | `elmer validate --check` | Check-only mode — report violations without fixing |
 | `elmer archetypes list` | List available archetypes |
 | `elmer archetypes stats` | Show archetype effectiveness statistics |
+| `elmer archetypes diagnose NAME` | Detailed effectiveness report for an archetype |
 | `elmer mine-questions` | Extract open questions from project docs |
 | `elmer mine-questions --spawn` | Mine questions and explore them |
 | `elmer insights` | List cross-project insights |
@@ -95,6 +96,7 @@ elmer clean
 | `elmer implement --dry-run` | Preview the plan without executing |
 | `elmer implement --dry-run --save` | Save plan to `.elmer/plans/` for later review |
 | `elmer implement --answers-file F` | Pre-answer decompose questions from JSON/TOML file |
+| `elmer implement --from-exploration ID` | Feed exploration's proposal into decomposition |
 | `elmer implement --load-plan F` | Load a saved plan JSON (skip decomposition) |
 | `elmer implement --steps 0-3` | Run only specific steps (supports `0`, `0,2,5`, `0-3`) |
 | `elmer implement --status` | Show active plan progress |
