@@ -13,7 +13,7 @@ from typing import Optional
 import click
 
 from . import config, explore as explore_mod, state, worktree as wt_mod
-from .decompose import estimate_plan_duration, validate_prerequisites
+from .decompose import estimate_plan_duration, validate_prerequisites, validate_step_metadata
 
 
 def _build_step_context(
@@ -198,6 +198,11 @@ def execute_plan(
             "Fix these before executing, or remove 'prerequisites' from the plan."
         )
 
+    # Step metadata completeness warnings
+    meta_warnings = validate_step_metadata(plan)
+    for w in meta_warnings:
+        click.echo(f"  Metadata warning: {w}", err=True)
+
     # Duration estimate check (ADR-061)
     total_seconds, dur_warnings = estimate_plan_duration(plan)
     if total_seconds is not None:
@@ -266,11 +271,15 @@ def execute_plan(
         verify_cmd = step.get("verify_cmd")
         setup_cmd = step.get("setup_cmd")
 
-        # Per-step model routing (ADR-045, B3)
-        # Priority: step.model (from decompose agent) > config routing > plan model
+        # Per-step model routing (ADR-045, B3, ADR-074)
+        # Priority: step.model (from decompose agent) > config routing > defaults > plan model
         step_model = step.get("model")
         if not step_model:
             routing = cfg.get("implement", {}).get("model_routing", {})
+            # Apply sensible defaults when no config routing exists:
+            # scaffold (step 0) uses opus, everything else uses sonnet
+            if not routing:
+                routing = {"scaffold": "opus", "fallback": "sonnet"}
             if i == 0 and "scaffold" in routing:
                 step_model = routing["scaffold"]
             elif archetype in routing:
@@ -285,6 +294,18 @@ def execute_plan(
             elmer_dir, project_dir, plan_id, plan, i,
         )
 
+        # Inject relevant_docs so the worker reads targeted documentation
+        docs_block = ""
+        relevant_docs = step.get("relevant_docs", [])
+        if relevant_docs:
+            doc_list = "\n".join(f"- {d}" for d in relevant_docs)
+            docs_block = (
+                "\n\n## Relevant Documentation\n\n"
+                f"Read these documents/sections first — they contain the context "
+                f"most relevant to this step. Prioritize these over reading the "
+                f"full documentation set:\n\n{doc_list}"
+            )
+
         # Inject verify_cmd so the agent knows its success criterion (ADR-043)
         verify_block = ""
         if verify_cmd:
@@ -297,7 +318,7 @@ def execute_plan(
                 f"Include the command output in your PROPOSAL.md."
             )
 
-        enriched_topic = step["topic"] + verify_block + "\n\n" + step_context
+        enriched_topic = step["topic"] + docs_block + verify_block + "\n\n" + step_context
 
         try:
             slug, _ = explore_mod.start_exploration(

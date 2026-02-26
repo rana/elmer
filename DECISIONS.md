@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-56 ADRs recorded.
+57 ADRs recorded.
 
 ## Domain Index
 
@@ -64,6 +64,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-071 | Intelligence | Worker intelligence — digest, sibling, decline injection (G1/G2/G3) |
 | ADR-072 | Quality | Proposal quality — confidence, schema, review notes (H1/H2/H3) |
 | ADR-073 | Observability | Archetype effectiveness diagnosis (I1) |
+| ADR-074 | Intelligence | Document routing annotations and per-step prerequisites |
 
 ---
 
@@ -1480,3 +1481,19 @@ All are best-effort (exceptions caught silently) and called in `_resolve_agent_a
 **Interface:** CLI `elmer archetypes diagnose <name>`. MCP `elmer_archetype_diagnose` tool. Returns structured dict for programmatic consumption.
 
 **Rationale:** Understanding why an archetype underperforms requires correlating outcomes, decline reasons, and failure patterns. This read-only diagnostic is the prerequisite for I2 (agent methodology self-improvement).
+
+## ADR-074: Document Routing Annotations and Per-Step Prerequisites
+
+**Decision:** Two new per-step metadata fields in plan JSON, emitted by the decompose agent and consumed by the engine.
+
+**`relevant_docs`** (array of strings, optional): Documents and section references the worker should prioritize reading. Format: `"DESIGN.md"` for a whole file, `"DESIGN.md#Section-Name"` for a section. Injected into the step topic as a `## Relevant Documentation` block by `execute_plan()` in implement.py. This is a prompt directive, not an enforcement mechanism — the worker can still read anything, but is guided to start with the most relevant material. Reduces context waste on large doc sets (e.g., srf-yogananda-teachings with 13 docs / 1.5 MB).
+
+**`requires_env`** (array of strings, optional): Environment variable names this step needs at runtime. Checked in `launch_pending()` in explore.py before spawning the worker. If any env var is missing, the step stays pending (not failed) with a logged message — the env var may be set later. `show_plan_status()` in plan.py surfaces the specific missing vars for pending steps. This prevents the "start → fail to connect → auto-amend → fail again → exhaust retries" cycle that wastes expensive Opus sessions on steps with unmet external dependencies.
+
+**`validate_step_metadata()`** in decompose.py combines three warnings: missing `verify_cmd`, empty `relevant_docs`, and `requires_env` vars not declared in plan-level `prerequisites.env_vars`. Warnings are displayed at plan execution time in `execute_plan()`.
+
+**Decompose agent changes:** JSON schema updated with both fields. Rule 4 strengthened: every step MUST have a `verify_cmd`. New rule 5a: include `relevant_docs` per step. Model selection heuristic expanded with explicit complexity guidance.
+
+**Default model routing:** When no `[implement.model_routing]` config exists, the engine applies `scaffold=opus, fallback=sonnet` — step 0 gets opus, subsequent steps get sonnet unless the decompose agent or config specifies otherwise. This extends ADR-069 without changing the priority chain.
+
+**Alternatives considered:** Plan-level-only prerequisites (existing, too coarse — blocks all steps for one step's dependency), tool-level Read restriction (not possible with `claude -p`), formal verification escalation chain (over-engineering given existing per-step `verify_cmd`).

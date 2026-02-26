@@ -360,6 +360,38 @@ def validate_plan(
     return errors
 
 
+def validate_step_metadata(plan: dict) -> list[str]:
+    """Validate step metadata completeness. Returns list of warnings.
+
+    Checks for missing verify_cmd, empty relevant_docs, and requires_env
+    referencing vars that aren't in plan-level prerequisites. These are
+    warnings (not errors) — plans execute without them, but quality improves
+    with complete metadata.
+    """
+    warnings: list[str] = []
+    steps = plan.get("steps", [])
+    plan_env_vars = set(plan.get("prerequisites", {}).get("env_vars", []))
+
+    for i, step in enumerate(steps):
+        # Missing verify_cmd
+        if not step.get("verify_cmd"):
+            warnings.append(f"step {i}: no verify_cmd — verification will be skipped")
+
+        # Missing relevant_docs
+        if not step.get("relevant_docs"):
+            warnings.append(f"step {i}: no relevant_docs — worker will read docs unguided")
+
+        # requires_env vars not in plan-level prerequisites
+        requires_env = step.get("requires_env", [])
+        for var in requires_env:
+            if var not in plan_env_vars:
+                warnings.append(
+                    f"step {i}: requires_env '{var}' not in plan prerequisites.env_vars"
+                )
+
+    return warnings
+
+
 def estimate_plan_duration(plan: dict) -> tuple[float | None, list[str]]:
     """Estimate total plan duration from step estimated_seconds fields.
 

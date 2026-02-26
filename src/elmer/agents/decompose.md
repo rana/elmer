@@ -42,7 +42,9 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
       "depends_on": [],
       "archetype": "implement",
       "model": "opus",
-      "key_files": ["package.json", "lib/config.ts"]
+      "key_files": ["package.json", "lib/config.ts"],
+      "relevant_docs": ["DESIGN.md#Database-Schema", "DECISIONS-core.md"],
+      "requires_env": ["DATABASE_URL"]
     },
     {
       "title": "Second step",
@@ -51,7 +53,9 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
       "setup_cmd": "pnpm install",
       "depends_on": [0],
       "archetype": "implement",
-      "key_files": []
+      "key_files": [],
+      "relevant_docs": ["DESIGN.md#Search-Architecture"],
+      "requires_env": []
     }
   ],
   "completion_verify_cmd": "pnpm install && pnpm build && pnpm test && pnpm lint",
@@ -67,7 +71,9 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
 - **`key_files`** — Files this step creates that subsequent steps need to see. Their content is injected into the next step's context after this step is approved. Use for: config files, `.env.example`, service interfaces, schema files.
 - **`setup_cmd`** — Shell command run in the worktree before the implementation session starts. Used for dependency installation (e.g., `pnpm install`). Each step's worktree is created fresh from the main branch — gitignored artifacts like `node_modules/` don't exist. Without `setup_cmd`, the implementation agent must install dependencies itself, wasting time and risking errors.
 - **`completion_verify_cmd`** — (Plan-level, not per-step.) Shell command run after ALL steps are approved to verify the assembled project works as a whole. Falls back to the last step's `verify_cmd` if not specified.
-- **`model`** — (Optional, per-step.) Override the plan-level model for this step. Use `"opus"` for high-stakes steps (step 0 scaffold, complex architecture) and omit for routine steps that use the plan default. Step 0 should almost always use opus — it establishes patterns that every subsequent step follows.
+- **`relevant_docs`** — (Optional, per-step.) Array of document paths and section references that the implementation worker should read. Include the specific documents and sections you consulted when writing this step's topic. Format: `"DESIGN.md"` for a whole file, `"DESIGN.md#Section-Name"` for a specific section. Workers are directed to read these first, reducing context waste on irrelevant material.
+- **`requires_env`** — (Optional, per-step.) Array of environment variable names this step needs at runtime. Steps with unmet env vars stay pending with a clear "missing: VAR_NAME" message instead of starting, failing to connect, and exhausting retries. Use for external service credentials (database URLs, API keys). Don't include vars that are only needed at build time if setup_cmd handles them.
+- **`model`** — (Optional, per-step.) Override the plan-level model for this step. Use `"opus"` for steps that establish new patterns, make architectural decisions, or require deep reasoning about complex interactions. Use `"sonnet"` for steps that follow established patterns, create configuration files, write tests against existing interfaces, or make straightforward additions. Step 0 should almost always use opus — it establishes patterns that every subsequent step follows. When in doubt, omit and let project config decide.
 
 ## Rules
 
@@ -77,9 +83,11 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
 
 3. **Linear chains are safest.** For implementation, prefer sequential dependencies (each step depends on the previous) to avoid merge conflicts. Parallel steps are only safe when they touch completely different files.
 
-4. **Verification commands must be specific.** Not just "pnpm test" — use "pnpm test -- --run specific-test-file" when possible. The verification runs in the exploration's worktree directory (which contains the full project with the step's changes).
+4. **Every step MUST have a verify_cmd.** Verification commands must be specific — not just "pnpm test" but "pnpm test -- --run specific-test-file" when possible. For pre-scaffold steps: `test -f <key_output_file>`. For documentation-only steps: `elmer validate --check`. For steps with no test infrastructure yet: `test -f <primary_file_created>`. The verification runs in the exploration's worktree directory (which contains the full project with the step's changes).
 
 5. **Topics must be self-contained.** The implementation session only reads CLAUDE.md and project docs. Your topic must specify exactly what to build, which files to create, which patterns to follow, and which ADRs govern the work. Include concrete examples of the patterns the step should follow (e.g., "create a service at /lib/services/search.ts following the pattern in /lib/services/embeddings.ts").
+
+5a. **Include relevant_docs per step.** For each step, list the specific documents and sections you read when formulating the topic. Workers are directed to read these first, avoiding context waste on unrelated material. Use section-level targeting when possible: `"DESIGN.md#Search-Architecture"` is better than `"DESIGN.md"`.
 
 6. **First step scaffolds infrastructure.** If the project has no code yet, step 0 creates the build toolchain (package.json, tsconfig, eslint, etc.) so subsequent steps have working build/test commands.
 

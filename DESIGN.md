@@ -60,7 +60,7 @@ Elmer changes what a "session" means. Claude Code is the interactive layer for s
 | `pr.py` | PR creation via gh CLI |
 | `digest.py` | Convergence digest synthesis from exploration history |
 | `synthesize.py` | Ensemble synthesis — consolidate multiple proposals, auto-recover failed syntheses |
-| `decompose.py` | Milestone decomposition, plan parsing, validation, prerequisites, conflict detection, exploration-to-plan pipeline |
+| `decompose.py` | Milestone decomposition, plan parsing, validation, prerequisites, conflict detection, exploration-to-plan pipeline, step metadata validation |
 | `plan.py` | Plan lifecycle — status tracking, display, resume, completion verification |
 | `implement.py` | Execution orchestration — convert plans to chained explorations, cross-step context, config-driven model routing |
 | `replan.py` | Mid-execution plan revision — invoke replan agent, validate revision, apply step remapping |
@@ -426,6 +426,6 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 ## Design Decisions
 
-33 ADRs recorded. Full rationale and domain index in DECISIONS.md.
+57 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-25, ADR-049/050 (23 tools)*
+*Last updated: 2026-02-25, ADR-074 — document routing, per-step prerequisites, step metadata validation (23 tools)*

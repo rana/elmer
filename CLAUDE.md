@@ -6,7 +6,7 @@ Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, rules, conventions
 2. **CONTEXT.md** — project methodology, collaboration model, current state
 3. **DESIGN.md** — architecture, data model, module responsibilities
-4. **DECISIONS.md** — ADRs with full rationale (56 recorded)
+4. **DECISIONS.md** — ADRs with full rationale (57 recorded)
 5. **ROADMAP.md** — phase history, **Future Directions** (remaining improvements), deferred features
 6. **README.md** — user-facing docs, install, full command reference
 7. **GUIDE.md** — practical usage playbook, workflows, patterns
@@ -131,4 +131,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-25, resolved 10 future directions (G1–G3, H1–H3, E3, A4, I1, B3), 56 ADRs*
+*Last updated: 2026-02-25, document routing + per-step prerequisites + model routing defaults (ADR-074), 57 ADRs*

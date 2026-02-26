@@ -1,5 +1,7 @@
 """Exploration orchestration — create worktree, assemble prompt, spawn worker."""
 
+import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -642,6 +644,31 @@ def start_ensemble(
     return results
 
 
+def _check_step_env_vars(
+    elmer_dir: Path,
+    plan_id: str,
+    plan_step: int,
+) -> list[str]:
+    """Check per-step requires_env vars from the plan JSON.
+
+    Returns list of missing env var names. Empty list = all met.
+    """
+    conn = state.get_db(elmer_dir)
+    plan = state.get_plan(conn, plan_id)
+    conn.close()
+    if plan is None:
+        return []
+    try:
+        plan_json = json.loads(plan["plan_json"])
+    except (json.JSONDecodeError, KeyError):
+        return []
+    steps = plan_json.get("steps", [])
+    if plan_step < 0 or plan_step >= len(steps):
+        return []
+    requires_env = steps[plan_step].get("requires_env", [])
+    return [var for var in requires_env if not os.environ.get(var)]
+
+
 def launch_pending(
     *,
     exploration_id: str,
@@ -655,6 +682,20 @@ def launch_pending(
     if exp is None or exp["status"] != "pending":
         conn.close()
         return
+
+    # Per-step env var prerequisites — skip launch if unmet
+    plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+    plan_step = exp["plan_step"] if "plan_step" in exp.keys() else None
+    if plan_id and plan_step is not None:
+        missing_env = _check_step_env_vars(elmer_dir, plan_id, plan_step)
+        if missing_env:
+            import logging
+            logging.getLogger("elmer").info(
+                "Step %d (%s) blocked: missing env vars: %s",
+                plan_step, exploration_id, ", ".join(missing_env),
+            )
+            conn.close()
+            return  # Stay pending — don't mark failed, env may be set later
 
     archetype = exp["archetype"]
     model = exp["model"]

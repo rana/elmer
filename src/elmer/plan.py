@@ -6,6 +6,7 @@ integration verification checks.
 """
 
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -123,13 +124,24 @@ def show_plan_status(elmer_dir: Path, plan_id: Optional[str] = None) -> None:
             titles = {}
             step_estimates = {}
 
+        # Check per-step requires_env for pending steps
+        step_missing_env: dict[int, list[str]] = {}
+        for i, step_def in enumerate(original.get("steps", [])):
+            requires_env = step_def.get("requires_env", [])
+            missing = [v for v in requires_env if not os.environ.get(v)]
+            if missing:
+                step_missing_env[i] = missing
+
         for step in steps:
             icon = status_icons.get(step["status"], " ")
             title = titles.get(step["step"], step["id"])
             amend_info = f" (amended {step['amend_count']}x)" if step["amend_count"] else ""
             vfail_info = f" ({step['verification_failures']} verify fail)" if step.get("verification_failures") else ""
             cost_info = f" ${step['cost_usd']:.2f}" if step.get("cost_usd") else ""
-            click.echo(f"  {icon} Step {step['step']}: {title}  [{step['status']}{amend_info}{vfail_info}{cost_info}]")
+            env_info = ""
+            if step["status"] == "pending" and step["step"] in step_missing_env:
+                env_info = f" (missing: {', '.join(step_missing_env[step['step']])})"
+            click.echo(f"  {icon} Step {step['step']}: {title}  [{step['status']}{amend_info}{vfail_info}{cost_info}{env_info}]")
 
         # Summary
         approved = sum(1 for s in steps if s["status"] == "approved")
