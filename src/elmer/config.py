@@ -25,13 +25,11 @@ archetype = "explore-act"
 model = "opus"
 max_turns = 50
 generate_prompt = false
-# budget_usd = 2.00           # optional per-exploration budget cap
 
 [generate]
 count = 5
 model = "sonnet"
 max_turns = 5
-# budget_usd = 10.00          # optional total budget for generate command
 
 [auto_approve]
 model = "sonnet"
@@ -55,7 +53,6 @@ interval = 600                  # seconds between cycles
 auto_approve = false
 auto_generate = false
 auto_archetype = false            # AI selects archetype for generated topics
-# budget_per_cycle = 5.00       # optional cost cap per cycle (USD)
 max_concurrent = 5
 generate_threshold = 2          # generate new topics when active < threshold
 generate_count = 5
@@ -115,7 +112,6 @@ model = "opus"                    # model for implementation sessions
 decompose_model = "opus"          # model for milestone decomposition
 decompose_max_turns = 30          # max turns for decomposition
 max_turns = 50                    # per-step turn limit
-# budget_usd = 100.00             # total budget for entire milestone
 
 # Per-million-token rates (USD) for cost estimation.
 # Used only when claude CLI does not report actual cost.

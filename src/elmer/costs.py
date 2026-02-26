@@ -48,9 +48,6 @@ def _show_single(conn, exploration_id: str) -> None:
     click.echo(f"  Output tokens:{_fmt_tokens(exp['output_tokens'])}")
     click.echo(f"  Cost:         {_fmt_cost(exp['cost_usd'])}")
     click.echo(f"  Turns used:   {exp['num_turns_actual'] or '-'}")
-    if exp["budget_usd"] is not None:
-        click.echo(f"  Budget:       ${exp['budget_usd']:.2f}")
-
     # Show linked meta-operation costs
     meta_costs = conn.execute(
         "SELECT * FROM costs WHERE exploration_id = ? ORDER BY created_at",

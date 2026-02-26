@@ -24,7 +24,7 @@ Elmer embodies a clear division of responsibility:
 
 **Human decides:**
 - What questions to explore (topics)
-- How to explore them (archetype selection, model choice, budget)
+- How to explore them (archetype selection, model choice)
 - Whether to accept the result (approve/decline)
 - When to grant autonomy (opt-in `--auto-approve`, `--auto-followup`, daemon mode)
 
@@ -35,7 +35,7 @@ Elmer embodies a clear division of responsibility:
 - Insight extraction from approved work
 - Question mining from documentation gaps
 
-**The boundary:** AI proposes, human disposes. Every autonomy feature is opt-in. `--auto-approve` is conservative by default — it rejects when uncertain. The daemon respects budget caps. Chain actions are user-specified, never AI-generated. This is deliberate: the tool should extend human judgment, not replace it.
+**The boundary:** AI proposes, human disposes. Every autonomy feature is opt-in. `--auto-approve` is conservative by default — it rejects when uncertain. Chain actions are user-specified, never AI-generated. This is deliberate: the tool should extend human judgment, not replace it.
 
 ### Why Five Documents (Not One)
 
@@ -68,7 +68,7 @@ The tool is functional and in active use on multiple projects. 33 ADRs recorded.
 ## What's Working
 
 - Core exploration loop is reliable — worktree isolation, background workers, state tracking
-- Daemon mode runs overnight with budget caps
+- Daemon mode runs overnight autonomously
 - Cross-project insights accumulate across approved explorations
 - MCP server provides structured access for Claude Code integration (21 tools)
 - Batch topics with `--chain` handle sequential refactoring without merge conflicts

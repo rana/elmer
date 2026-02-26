@@ -771,7 +771,6 @@ def retry_exploration(
     max_turns = exp["max_turns"] or 50
     auto_approve = bool(exp["auto_approve"])
     generate_prompt = bool(exp["generate_prompt"])
-    budget_usd = exp["budget_usd"]
     setup_cmd = exp["setup_cmd"] if "setup_cmd" in exp.keys() else None
     verify_cmd_orig = exp["verify_cmd"] if "verify_cmd" in exp.keys() else None
     plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
@@ -843,7 +842,6 @@ def retry_exploration(
             project_dir=project_dir,
             auto_approve=auto_approve,
             generate_prompt=generate_prompt,
-            budget_usd=budget_usd,
             setup_cmd=setup_cmd,
             verify_cmd=verify_cmd_orig,
             plan_id=plan_id,
@@ -912,7 +910,6 @@ def retry_all_failed(
             max_turns = exp["max_turns"] or 50
             auto_approve = bool(exp["auto_approve"])
             generate_prompt = bool(exp["generate_prompt"])
-            budget_usd = exp["budget_usd"]
 
             # Preserve ensemble metadata for retry
             ensemble_id = exp["ensemble_id"] if "ensemble_id" in exp.keys() else None
@@ -949,7 +946,6 @@ def retry_all_failed(
                     depends_on=dep_list,
                     auto_approve=auto_approve,
                     generate_prompt=generate_prompt,
-                    budget_usd=budget_usd,
                 )
 
                 # Restore ensemble membership on the retried exploration

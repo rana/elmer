@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-33 ADRs recorded.
+34 ADRs recorded.
 
 ## Domain Index
 
@@ -33,14 +33,15 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-040 | Intelligence | Cross-step context, plan loading, fallback verification |
 | ADR-041 | Safety | Dependency cascade, proposal validation, verification guard |
 | ADR-042 | Intelligence | Prerequisites, artifact flow, greenfield decomposition |
-| ADR-043 | Safety | Verify-cmd visibility, plan budget enforcement, amend cost attribution |
+| ADR-043 | Safety | Verify-cmd visibility and amend cost attribution |
 | ADR-044 | Resilience | Context budget, plan completion verification, worktree setup commands |
 | ADR-045 | Operations | Session watchdog, failure-aware retry, per-step model routing |
 | ADR-046 | Quality | Plan validation, merge conflict recovery, daemon plan auto-approve |
 | ADR-047 | Resilience | Parallel conflict detection, daemon auto-retry for plan steps |
-| ADR-048 | Observability | Budget validation, dependency visibility, cost observability |
+| ADR-048 | Observability | Dependency visibility and cost observability |
 | ADR-049 | Safety | Retry dependency repair, pre-approval plan completion check |
 | ADR-050 | Execution | Amend failure pattern detection — fail fast on systemic issues |
+| ADR-051 | Simplification | Remove budget enforcement — delegate to Claude CLI |
 
 ---
 
@@ -59,7 +60,7 @@ Worktrees share `.git`, are instant to create, and space-efficient. Directory co
 - **Background** (`spawn_claude`): Explorations. Long-running, PID-tracked, output to log files. Agent Teams were rejected — they're session-scoped and don't persist. Elmer explorations should outlive any single session.
 - **Synchronous** (`run_claude`): Meta-operations (topic generation, auto-approve review, prompt generation, archetype selection, insight extraction, question mining, invariant validation). Short-lived (3-5 turns), output parsed immediately by the caller.
 
-**Cost extraction:** All invocations use `--output-format json`. Synchronous operations parse JSON from captured stdout. Background workers write JSON to log files, parsed after completion by `parse_log_costs()`. Cost data is stored in SQLite. JSON parsing is best-effort: if it fails, cost fields are left NULL. Cost tracking never blocks exploration flow. Budget enforcement uses `--max-budget-usd`, delegating to the claude CLI for real-time caps.
+**Cost extraction:** All invocations use `--output-format json`. Synchronous operations parse JSON from captured stdout. Background workers write JSON to log files, parsed after completion by `parse_log_costs()`. Cost data is stored in SQLite. JSON parsing is best-effort: if it fails, cost fields are left NULL. Cost tracking never blocks exploration flow.
 
 **Alternatives considered:** Agent Teams (session-scoped, don't persist), Claude Code plugin hooks (wrong lifecycle), background all invocations and poll (adds complexity for short operations), queue/callback pattern (overkill for sequential meta-operations), parsing text logs with regex (fragile), estimating costs from model + max_turns (inaccurate).
 
@@ -246,7 +247,6 @@ The amend agent is editorial, not exploratory: it applies directed changes and r
 **Key design choices:**
 
 - Default is same-archetype for all replicas (simple). `--archetypes` overrides for diversity. No magic rotation.
-- Budget is divided by N+1 (replicas + synthesis share).
 - Replicas are never individually approved — only the synthesis.
 - Each replica runs independently with no knowledge of others. Independence is the whole point.
 
@@ -446,7 +446,7 @@ Archiving 5 replica proposals alongside the synthesis also created noise. The sy
 
 3. **Clarify.** If the decompose agent produced questions, `elmer implement` presents them interactively. User answers are injected into all step topics as a `## Context from user` section. Three non-interactive paths: `--yes/-y` skips clarification entirely, `--answers-file answers.json` loads pre-answered questions from a JSON or TOML file (key: question index, value: answer string), `--dry-run` shows the plan without executing. `--dry-run --save` persists the plan to `.elmer/plans/` for later execution without re-running decomposition.
 
-4. **Execute.** Each step becomes a chained exploration (`elmer explore` with `--verify-cmd`, `depends_on`, `plan_id`, `plan_step`). Steps execute in dependency order — each waits for its dependencies to be approved and merged before starting. Chain mode (sequential by default, `--max-concurrent` for parallelism within dependency constraints). Auto-approve is on by default for implementation plans. Budget is divided evenly across steps when `--budget` is set.
+4. **Execute.** Each step becomes a chained exploration (`elmer explore` with `--verify-cmd`, `depends_on`, `plan_id`, `plan_step`). Steps execute in dependency order — each waits for its dependencies to be approved and merged before starting. Chain mode (sequential by default, `--max-concurrent` for parallelism within dependency constraints). Auto-approve is on by default for implementation plans.
 
 5. **Report.** `elmer implement --status` shows plan progress with per-step status icons (`.` pending, `~` running, `*` done, `+` approved, `!` failed). `--resume PLAN_ID` retries failed steps. The daemon checks plan completion in its cycle (step 6c in `_run_cycle`).
 
@@ -668,9 +668,9 @@ After a step is approved and merged, `_build_step_context()` reads the declared 
 
 **Files modified:** `implement.py` (validate_prerequisites, artifact injection in _build_step_context), `cli.py` (dry-run prerequisite display), `agents/decompose.md` (prerequisite field, key_files field, greenfield rules 11-15).
 
-## ADR-043: Verification Visibility, Plan Budget Enforcement, and Amend Cost Attribution
+## ADR-043: Verification Visibility and Amend Cost Attribution
 
-**Decision:** Three improvements that close the loop between the AI agent's awareness of its success criteria, the system's ability to cap costs, and the accuracy of plan-level cost reporting.
+**Decision:** Two improvements that close the loop between the AI agent's awareness of its success criteria and the accuracy of plan-level cost reporting.
 
 ### Verification Command Visibility
 
@@ -692,23 +692,9 @@ This gives the agent explicit knowledge of its success criterion. The agent can 
 
 **Why inject, not just document:** The implement archetype says "run project's build/test/lint commands." But the verify_cmd may be step-specific (e.g., a targeted test file) or include commands the agent wouldn't guess. Explicit injection eliminates guesswork.
 
-### Plan-Level Budget Enforcement
-
-**Problem:** Budget is divided evenly across steps at plan creation time. If Step 0 costs $25 on a $50 plan budget (each step gets $16.67), Steps 1-2 still launch at $16.67 each, bringing total to $58. Per-step budgets are enforced by the Claude CLI, but there's no plan-level circuit breaker.
-
-**Solution:** Two changes:
-
-1. **Store plan budget:** `plans` table gains a `budget_usd` column. `create_plan()` stores the original budget.
-
-2. **Enforce in scheduler:** `schedule_ready()` checks cumulative plan spend (via `get_plan_spend()`) before launching pending plan explorations. If spend >= budget, the exploration is marked as failed with `"(plan budget exceeded)"` and the plan is paused.
-
-`get_plan_spend()` in `state.py` computes the true cumulative cost: exploration session costs + meta-operation costs (amends, auto-approve reviews) via a JOIN across `explorations` and `costs` tables.
-
-**Why enforce at scheduling, not execution:** By the time a step starts executing, it's already consuming resources. Checking before launch prevents the spend entirely. The scheduler runs every daemon cycle, so the check is frequent.
-
 ### Amend Cost Attribution
 
-**Problem:** When auto-amend fires, the amend session's cost is recorded in the `costs` table as a meta-operation (`operation="amend"`) but NOT added to the exploration's `cost_usd` field. Plan total cost uses `SUM(exp.cost_usd)`, so amend costs are invisible in plan status output and budget enforcement.
+**Problem:** When auto-amend fires, the amend session's cost is recorded in the `costs` table as a meta-operation (`operation="amend"`) but NOT added to the exploration's `cost_usd` field. Plan total cost uses `SUM(exp.cost_usd)`, so amend costs are invisible in plan status output.
 
 **Solution:** After an amend session completes and its cost is parsed from the log, the cost is also accumulated into the exploration's `cost_usd`:
 
@@ -717,11 +703,11 @@ current_cost = exp["cost_usd"] or 0.0
 state.update_exploration(conn, exp["id"], cost_usd=current_cost + cost_result.cost_usd)
 ```
 
-This means `exp["cost_usd"]` now represents the true total cost of the exploration (initial + all amends). Plan budget enforcement sees accurate numbers. Plan status display shows accurate per-step and total costs.
+This means `exp["cost_usd"]` now represents the true total cost of the exploration (initial + all amends). Plan status display shows accurate per-step and total costs.
 
-**Plan status display** now shows budget: `Cost: $23.50 / $50.00` when a budget is set.
+**Files modified:** `implement.py` (verify_cmd injection in execute_plan), `review.py` (amend cost roll-up).
 
-**Files modified:** `implement.py` (verify_cmd injection in execute_plan, budget storage in create_plan, budget display in show_plan_status), `state.py` (budget_usd column migration, create_plan budget param, get_plan_spend query), `explore.py` (budget enforcement in schedule_ready), `review.py` (amend cost roll-up).
+*Revised: 2026-02-25, ADR-051 removed plan budget enforcement subsection*
 
 ## ADR-044: Context Budget, Plan Completion Verification, and Worktree Setup Commands
 
@@ -831,7 +817,7 @@ The retry also preserves `setup_cmd`, `verify_cmd`, `plan_id`, and `plan_step` f
 
 **Why append to topic, not use a separate parameter:** The topic is the only persistent context the Claude session receives. Adding a separate "retry context" parameter would require changes to `spawn_claude()`, the worker protocol, and every archetype. Appending to the topic is zero-infrastructure.
 
-**Why preserve plan_id/plan_step on retry:** Without this, retried plan steps lose their plan membership. The scheduler won't recognize them as plan steps, budget enforcement doesn't apply, and cross-step context injection doesn't fire.
+**Why preserve plan_id/plan_step on retry:** Without this, retried plan steps lose their plan membership. The scheduler won't recognize them as plan steps and cross-step context injection doesn't fire.
 
 ### Per-Step Model Routing
 
@@ -950,25 +936,9 @@ The failure-aware retry mechanism (ADR-045) already injects previous failure con
 
 **Files modified:** `implement.py` (detect_parallel_conflicts function), `cli.py` (parallel conflict warnings in dry-run), `daemon.py` (auto-retry for paused plans in daemon cycle step 1.75).
 
-## ADR-048: Budget Validation, Dependency Visibility, and Cost Observability
+## ADR-048: Dependency Visibility and Cost Observability
 
-**Decision:** Three observability improvements addressing operational blind spots in autonomous plan execution: upfront budget validation, pending exploration dependency display, and cost parsing failure warnings.
-
-### Upfront Plan Budget Validation
-
-**Problem:** When `execute_plan()` receives a `--budget` flag, it divides the budget evenly across steps. But there's no check that the per-step allocation is viable. A $5.00 budget for 20 steps gives $0.25/step — not enough for any meaningful Claude session. The plan creates all explorations, burns through the budget on the first few steps, and the remaining steps get marked "budget exceeded" by `schedule_ready()`.
-
-The failure happens late (at scheduling time) after money has already been spent. The operator should know upfront that the budget is too thin.
-
-**Solution:** `execute_plan()` in `implement.py` now warns when per-step budget falls below $0.50 (the minimum for any useful work):
-
-```
-Warning: per-step budget is only $0.25 ($5.00 / 20 steps). Steps may fail due to insufficient budget.
-```
-
-Also displayed in `--dry-run` output with the full budget breakdown. The warning doesn't block execution — the operator may know that some steps are trivial and will use less than allocated.
-
-**Why $0.50 threshold:** Based on observed session costs. A simple "add one file" step with sonnet costs ~$0.30. Any step requiring multiple tool uses or file reads exceeds $0.50. The threshold is deliberately conservative — it catches obvious underfunding without blocking legitimate slim-budget runs.
+**Decision:** Two observability improvements addressing operational blind spots in autonomous plan execution: pending exploration dependency display and cost parsing failure warnings.
 
 ### Pending Exploration Dependency Visibility
 
@@ -994,9 +964,11 @@ The cost data is genuinely lost (the API was called, money was spent), but the s
 - `parse_log_costs()` returns None: `Warning: could not parse log for <id> (cost data missing)`
 - `parse_log_costs()` returns a result but `cost_usd` is None: `Warning: no cost data in log for <id> (log may be truncated)`
 
-In daemon mode, these warnings appear in `daemon.log`, giving operators a signal to investigate. The fix doesn't invent cost data — it makes the gap visible so it can be accounted for manually or in budget slack calculations.
+In daemon mode, these warnings appear in `daemon.log`, giving operators a signal to investigate. The fix doesn't invent cost data — it makes the gap visible.
 
-**Files modified:** `implement.py` (budget validation in execute_plan), `cli.py` (budget display in dry-run), `review.py` (dependency visibility in show_status, cost parsing warnings in _refresh_running).
+**Files modified:** `review.py` (dependency visibility in show_status, cost parsing warnings in _refresh_running).
+
+*Revised: 2026-02-25, ADR-051 removed budget validation subsection*
 
 ---
 
@@ -1040,7 +1012,9 @@ The post-merge completion check in daemon Step 6c is retained as a fallback for 
 
 ### Schema Fix
 
-The `plans` table CREATE TABLE statement was missing `budget_usd` and `completion_note` columns — they were only added via ALTER TABLE migrations that ran before the CREATE TABLE for fresh databases. Fixed by including both columns in the table definition. Existing databases are unaffected (ALTER TABLE migrations still run for backwards compatibility).
+The `plans` table CREATE TABLE statement was missing `completion_note` column — it was only added via ALTER TABLE migration that ran before the CREATE TABLE for fresh databases. Fixed by including it in the table definition. Existing databases are unaffected (ALTER TABLE migration still runs for backwards compatibility).
+
+*Revised: 2026-02-25, ADR-051 removed budget_usd from plans schema*
 
 **Files modified:** `gate.py` (`_rebuild_plan_dependencies`, wired into `retry_exploration`), `implement.py` (`get_completion_verify_cmd`, `is_last_plan_step`, `run_completion_check` cwd parameter, `resume_plan` root/cascade separation), `daemon.py` (pre-approval completion check in Step 2), `state.py` (plans table schema fix).
 
@@ -1066,3 +1040,40 @@ The 500-character comparison window is a deliberate trade-off. Too short (< 100 
 The check only fires when `amend_count > 1` — the first amend always proceeds because the initial failure might be a flaky test or timing issue. Repeated identical output is the signal that the problem is structural.
 
 **Files modified:** `review.py` (`_is_repeated_failure`, called from `_attempt_auto_amend`, `.verify` file cleanup on success).
+
+---
+
+## ADR-051: Remove Budget Enforcement — Delegate to Claude CLI
+
+**Decision:** Remove all dollar-budget enforcement from Elmer. Passive cost tracking (parsing `cost_usd` from session logs, recording in `costs` table, `elmer costs` command) is retained. Budget enforcement — `--budget` flags, plan-level budget caps, per-cycle daemon budget, budget validation warnings — is removed entirely.
+
+**Problem:** Budget enforcement accumulated significant complexity across 4+ ADRs (043, 044, 047, 048) and threaded `budget_usd` parameters through every major code path: `explore.py`, `implement.py`, `daemon.py`, `worker.py`, `gate.py`, `state.py`, `cli.py`, `mcp_server.py`. This created cognitive overhead for both human readers and AI agents implementing new features. Every function that touched exploration creation or scheduling had to understand budget parameters, and budget edge cases (NULL coalescing, per-step allocation, plan-level circuit breakers) generated defensive code disproportionate to the value delivered.
+
+Meanwhile, Claude CLI already enforces per-session budgets via `--max-budget-usd`. Elmer's budget enforcement was a second layer on top, with the only unique value being plan-level budget caps. In practice, plan-level budget rarely prevented real problems — it either wasn't set, or when set, the per-step allocation was too imprecise (even division across heterogeneous steps) to be useful.
+
+**What was removed:**
+- `--budget` CLI options from `explore`, `batch`, `implement`, `generate`, `amend`, `daemon`
+- `budget_usd` parameter from `start_exploration()`, `start_ensemble()`, `launch_pending()`, `amend_exploration()`, `execute_plan()`, `run_daemon()`, `_run_cycle()`
+- `--max-budget-usd` passthrough to `spawn_claude()` and `run_claude()`
+- Plan-level budget enforcement in `schedule_ready()` (ADR-043)
+- Daemon cycle budget check in `_run_cycle()` (Step 7)
+- `budget_usd` column from `explorations` migration list and `plans` CREATE TABLE
+- `get_plan_spend()` from `state.py` (dead code after enforcement removal)
+- Budget validation warnings in `execute_plan()` (ADR-048)
+- Budget display in `costs.py`, `show_plan_status()`, MCP tools
+- Budget config comments from `config.toml` defaults
+
+**What was retained:**
+- `cost_usd` field in explorations (passive tracking)
+- `costs` table for meta-operation cost tracking
+- `elmer costs` command and `elmer_costs` MCP tool
+- Cost parsing from session logs (`parse_log_costs`)
+- Cost display in status, plan status, and logs
+- Token count tracking (`input_tokens`, `output_tokens`)
+- Cost rate configuration in `[costs.rates]`
+
+**Why not keep budget as optional:** Optional budget that nobody uses is still code every contributor must understand. The parameter threading alone touched 20+ function signatures. Removing it entirely eliminates the cognitive tax. If budget enforcement is needed in the future, Claude CLI's `--max-budget-usd` can be set globally via environment or wrapper script — no Elmer code required.
+
+**ADRs revised:** ADR-043 (removed plan budget enforcement subsection), ADR-048 (removed budget validation subsection).
+
+**Files modified:** `cli.py`, `explore.py`, `implement.py`, `daemon.py`, `worker.py`, `gate.py`, `state.py`, `mcp_server.py`, `config.py`, `costs.py`.

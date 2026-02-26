@@ -280,7 +280,7 @@ Both use `claude [--agents JSON --agent name] -p <prompt> --output-format json -
 └──────────────────────────────────────────────────┘
 ```
 
-The daemon calls existing functions in a loop — no new execution model (ADR-010). Each cycle: harvest completed → gate (auto/human) → merge approved → schedule unblocked → digest (if threshold met) → generate new topics. The digest step creates a two-timescale system: fast loop (explore → approve) and slow loop (digest → generate → explore). Interval-driven with cost budget per cycle. PID file at `.elmer/daemon.pid` for single-instance enforcement.
+The daemon calls existing functions in a loop — no new execution model (ADR-010). Each cycle: harvest completed → gate (auto/human) → merge approved → schedule unblocked → digest (if threshold met) → generate new topics. The digest step creates a two-timescale system: fast loop (explore → approve) and slow loop (digest → generate → explore). Interval-driven. PID file at `.elmer/daemon.pid` for single-instance enforcement.
 
 ### Exploration DAG
 

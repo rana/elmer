@@ -119,7 +119,6 @@ elmer explore "topic" --max-turns 100  # Increase turn limit (default: 50)
 elmer explore "topic" --auto-archetype # AI picks the best archetype for the topic
 elmer explore "topic" --auto-approve   # AI reviews proposal when done
 elmer explore "topic" --generate-prompt # AI generates the exploration prompt
-elmer explore "topic" --budget 2.00    # Cap cost at $2
 elmer explore "topic" --on-approve "elmer generate --follow-up \$ID"  # Chain on approval
 elmer explore "topic" --on-decline "elmer explore 'alternative to \$TOPIC'"  # Chain on declining
 elmer explore "topic" --verify-cmd "pytest"    # Run verification before marking done (ADR-038)
@@ -146,7 +145,6 @@ elmer digest -m opus                   # Use opus for deeper synthesis
 # Amend proposals before approving
 elmer amend ID "Remove the Read-Aloud section"       # Revise proposal
 elmer amend ID "Narrow scope to API layer" -m opus   # Use a specific model
-elmer amend ID "Split into two proposals" --budget 1  # Cost-capped
 
 # Archetype analysis
 elmer archetypes list                  # Show all archetypes
@@ -162,7 +160,6 @@ elmer mine-questions --spawn --cluster "Design"  # Explore one cluster
 elmer batch .elmer/explore-act.md              # Spawn all topics with explore-act
 elmer batch .elmer/prototype.md --chain        # Sequential — no merge conflicts
 elmer batch .elmer/explore-act.md --item 3     # Run only item 3
-elmer batch .elmer/explore-act.md --budget 10  # $10 divided across topics
 elmer batch .elmer/explore-act.md --auto-approve --chain  # Fully autonomous pipeline
 elmer batch .elmer/explore-act.md --max-concurrent 3  # Only 3 run at once, rest queued
 elmer batch .elmer/explore-act.md --stagger 5         # 5s delay between spawns
@@ -188,7 +185,6 @@ elmer implement "Milestone 1a" --answers-file answers.json  # Pre-answered quest
 elmer implement --load-plan .elmer/plans/milestone-1a.json  # Load saved plan
 elmer implement --load-plan plan.json --steps 0-2  # Run first 3 steps only
 elmer implement --load-plan plan.json --steps 3,4  # Run specific steps
-elmer implement "Milestone 1a" --budget 50  # $50 total across all steps
 elmer implement "Milestone 1a" --max-concurrent 3  # Allow parallel steps
 elmer implement --status                    # Show active plan progress
 elmer implement --resume milestone-1a       # Resume after a paused step
@@ -196,7 +192,6 @@ elmer implement --resume milestone-1a       # Resume after a paused step
 # Daemon options
 elmer daemon --interval 300            # 5-minute cycle interval
 elmer daemon --auto-approve --generate # Full autonomy mode
-elmer daemon --budget 5.00             # Cost cap per cycle
 elmer daemon --max-concurrent 3        # Limit parallel explorations
 elmer daemon --auto-followup           # Generate follow-ups after approvals
 ```

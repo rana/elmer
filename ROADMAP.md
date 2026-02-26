@@ -12,7 +12,7 @@ AI topic generation, DAG dependencies, auto-approve gate, two-stage prompt gener
 
 ## Phase 3: Autonomy — COMPLETE
 
-Daemon loop, conditional chain actions, follow-up generation, cross-project insight log, question mining. Overnight autonomous operation with budget caps.
+Daemon loop, conditional chain actions, follow-up generation, cross-project insight log, question mining. Overnight autonomous operation.
 
 ## Phase 4: Meta — COMPLETE
 
@@ -36,9 +36,9 @@ Milestone decomposition and autonomous multi-step implementation (`elmer impleme
 
 **Wave 2 — Intelligence (ADR-040, 041, 042):** Cross-step context injection (approved predecessors' summaries feed into dependent step prompts). Plan loading from files. Fallback verification (build/test/lint auto-detection). Dependency cascade failures. Proposal structural validation. Prerequisites and artifact flow between steps. Greenfield decomposition for projects with no existing code.
 
-**Wave 3 — Safety & Operations (ADR-043, 044, 045, 046):** Verify-cmd visibility in proposals. Plan budget enforcement and amend cost attribution. Context budget management. Plan completion verification. Worktree setup commands. Session watchdog with TTL-based termination. Failure-aware retry (injecting failure context into retry prompts). Per-step model routing. Plan validation (structural + semantic checks). Merge conflict recovery with strategy escalation. Daemon auto-approve for completed plan steps.
+**Wave 3 — Safety & Operations (ADR-043, 044, 045, 046):** Verify-cmd visibility in proposals. Amend cost attribution. Context budget management. Plan completion verification. Worktree setup commands. Session watchdog with TTL-based termination. Failure-aware retry (injecting failure context into retry prompts). Per-step model routing. Plan validation (structural + semantic checks). Merge conflict recovery with strategy escalation. Daemon auto-approve for completed plan steps.
 
-**Wave 4 — Resilience & Observability (ADR-047, 048):** Parallel conflict detection (key_files overlap analysis for concurrent steps). Daemon auto-retry for failed plan steps with retry-limit detection. Upfront budget validation. Pending dependency visibility in status display. Cost parsing failure logging.
+**Wave 4 — Resilience & Observability (ADR-047, 048):** Parallel conflict detection (key_files overlap analysis for concurrent steps). Daemon auto-retry for failed plan steps with retry-limit detection. Pending dependency visibility in status display. Cost parsing failure logging.
 
 ---
 
@@ -77,7 +77,7 @@ Add `verification_failures` counter to explorations table. Track how many times 
 Record `verification_seconds` in explorations table. Sum into plan/cycle cost metrics. Useful for budget forecasting when verification commands are expensive (e.g., full test suites).
 
 **C3. NULL cost handling in SUM queries** (Small)
-`COALESCE(cost_usd, 0)` or explicit NULL-checking in `get_plan_spend()` and `_get_cycle_cost()`. Currently NULLs silently drop from SUM. ADR-048 added logging for the gap; this would close it in the accounting.
+`COALESCE(cost_usd, 0)` or explicit NULL-checking in `_get_cycle_cost()` and plan cost display. Currently NULLs silently drop from SUM. ADR-048 added logging for the gap; this would close it in the accounting.
 
 **C4. Daemon observability dashboard** (Medium)
 Persistent status view (curses or web) showing real-time daemon cycle progress, plan status, cost tracking, and alerts. Currently all info requires running `elmer status` or reading daemon.log.

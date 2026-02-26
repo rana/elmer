@@ -194,7 +194,7 @@ Use `elmer tree` to visualize:
 Let Elmer run continuously. It generates topics, spawns explorations, auto-reviews, and queues results for you.
 
 ```bash
-elmer daemon --auto-approve --generate --budget 5.00
+elmer daemon --auto-approve --generate
 ```
 
 Come back in the morning:
@@ -205,7 +205,7 @@ elmer review --prioritize    # review the queue
 elmer costs                  # check spending
 ```
 
-Conservative start: set a budget, use `--max-concurrent 2` to limit parallelism, and review everything manually the first few times before enabling `--auto-approve`.
+Conservative start: use `--max-concurrent 2` to limit parallelism, and review everything manually the first few times before enabling `--auto-approve`.
 
 ### Workflow 6: Autonomous Pipeline
 
@@ -315,13 +315,6 @@ Third topic.
 ## Cost Management
 
 Elmer spawns `claude -p` sessions. Each session costs money. Here's how to control it.
-
-**Per-exploration budget:**
-
-```bash
-elmer explore "topic" --budget 2.00              # cap at $2
-elmer batch .elmer/explore-act.md --budget 10    # $10 total, divided across topics
-```
 
 **Model selection is the biggest cost lever:**
 
@@ -560,7 +553,7 @@ elmer explore "Phase 1 capabilities" -a stakeholder-brief
 
 **Vague topics with prototype archetype.** If you tell Claude to "improve the code" with the prototype archetype, it will change code. Be specific about what should change and what should not.
 
-**Ignoring costs.** Run `elmer costs` regularly. Set `--budget` on daemon runs. Opus is powerful but expensive — don't run it on 10 topics unless you mean to.
+**Ignoring costs.** Run `elmer costs` regularly. Opus is powerful but expensive — don't run it on 10 topics unless you mean to.
 
 **Not using --chain for related changes.** If topics A, B, and C all modify `config.py`, run them with `--chain`. Otherwise you'll get merge conflicts on approve.
 
@@ -595,5 +588,5 @@ elmer approve --all
 elmer costs
 
 # "Run it overnight"
-elmer daemon --auto-approve --generate --budget 5.00
+elmer daemon --auto-approve --generate
 ```

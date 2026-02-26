@@ -38,7 +38,6 @@ class _DaemonState:
     def __init__(self):
         self.should_stop = False
         self.cycle_count = 0
-        self.total_cost = 0.0
 
 
 # --- PID file management ---
@@ -144,7 +143,6 @@ def run_daemon(
     auto_approve: bool = False,
     auto_generate: bool = False,
     auto_archetype: bool = False,
-    budget_per_cycle: Optional[float] = None,
     max_concurrent: int = 5,
     generate_threshold: int = 2,
     generate_count: int = 5,
@@ -204,8 +202,6 @@ def run_daemon(
     click.echo(f"  Auto-archetype: {auto_archetype}")
     if audit_schedule:
         click.echo(f"  Audit schedule: {len(audit_schedule)} task(s)")
-    if budget_per_cycle is not None:
-        click.echo(f"  Budget/cycle: ${budget_per_cycle:.2f}")
     click.echo(f"  Max concurrent: {max_concurrent}")
     click.echo(f"  Log: {log_path}")
     click.echo()
@@ -224,7 +220,6 @@ def run_daemon(
                     auto_approve=auto_approve,
                     auto_generate=auto_generate,
                     auto_archetype=auto_archetype,
-                    budget_per_cycle=budget_per_cycle,
                     max_concurrent=max_concurrent,
                     generate_threshold=generate_threshold,
                     generate_count=generate_count,
@@ -273,7 +268,6 @@ def _run_cycle(
     auto_approve: bool,
     auto_generate: bool,
     auto_archetype: bool = False,
-    budget_per_cycle: Optional[float],
     max_concurrent: int,
     generate_threshold: int,
     generate_count: int,
@@ -594,15 +588,5 @@ def _run_cycle(
                     logger.warning("Plan %s: completion check error: %s", plan["id"], e)
     except Exception as e:
         logger.warning("Plan status check failed: %s", e)
-
-    # Step 7: Budget check
-    if budget_per_cycle is not None:
-        cycle_cost = _get_cycle_cost(elmer_dir, cycle_start)
-        if cycle_cost >= budget_per_cycle:
-            logger.info(
-                "Cycle budget exceeded ($%.2f >= $%.2f), stopping",
-                cycle_cost, budget_per_cycle,
-            )
-            ds.should_stop = True
 
     return stats

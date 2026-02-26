@@ -197,14 +197,13 @@ def init(docs, skills, agents):
 @click.option("--auto-archetype", is_flag=True, default=False, help="AI selects the best archetype for each topic")
 @click.option("--generate-prompt", is_flag=True, default=False, help="Use AI to generate the exploration prompt (two-stage)")
 @click.option("--no-generate", is_flag=True, default=False, help="Use static template (skip two-stage prompt generation)")
-@click.option("--budget", "budget_usd", default=None, type=float, help="Max cost in USD for this exploration")
 @click.option("--on-approve", default=None, help="Shell command to run on approval ($ID, $TOPIC substituted)")
 @click.option("--on-decline", default=None, help="Shell command to run on decline ($ID, $TOPIC substituted)")
 @click.option("--replicas", default=None, type=int, help="Ensemble: spawn N replicas and auto-synthesize (min 2)")
 @click.option("--archetypes", default=None, help="Ensemble: comma-separated archetype rotation (e.g., explore,devil-advocate,dead-end-analysis)")
 @click.option("--models", default=None, help="Ensemble: comma-separated model rotation (e.g., opus,sonnet,haiku)")
 @click.option("--verify-cmd", default=None, help="Shell command run after session completes (exit 0 = pass, else auto-amend)")
-def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_approve, auto_archetype, generate_prompt, no_generate, budget_usd, on_approve, on_decline, replicas, archetypes, models, verify_cmd):
+def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_approve, auto_archetype, generate_prompt, no_generate, on_approve, on_decline, replicas, archetypes, models, verify_cmd):
     """Start an exploration on a new branch.
 
     Each exploration gets its own git worktree and a background Claude
@@ -223,7 +222,6 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
         elmer explore -f topics.txt
         elmer explore "follow-up analysis" --depends-on my-first-topic
         elmer explore "deep analysis" --auto-archetype --generate-prompt
-        elmer explore "topic" --budget 2.00
         elmer explore "topic" --on-approve "elmer generate --follow-up \\$ID"
         elmer explore "topic" --replicas 3
         elmer explore "topic" --replicas 3 --archetypes explore,devil-advocate,dead-end-analysis
@@ -253,10 +251,6 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
         use_generate = True
     else:
         use_generate = defaults.get("generate_prompt", False)
-
-    # Budget: CLI flag overrides config default
-    if budget_usd is None:
-        budget_usd = defaults.get("budget_usd")
 
     dep_list = list(depends_on) if depends_on else None
 
@@ -289,15 +283,11 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
                     auto_approve=auto_approve,
                     generate_prompt=use_generate,
                     auto_archetype=use_auto_archetype,
-                    budget_usd=budget_usd,
                 )
                 click.echo(f"Ensemble started: {replicas} replicas")
                 click.echo(f"  Topic:     {t}")
                 for slug, arch_used in results:
                     click.echo(f"  Replica:   {slug} (archetype: {arch_used})")
-                if budget_usd is not None:
-                    per_replica = budget_usd / (replicas + 1)
-                    click.echo(f"  Budget:    ${budget_usd:.2f} total (${per_replica:.2f}/replica + synthesis)")
                 click.echo(f"  Synthesis triggers automatically when all replicas complete.")
                 click.echo()
             else:
@@ -313,7 +303,6 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
                     auto_approve=auto_approve,
                     auto_archetype=use_auto_archetype,
                     generate_prompt=use_generate,
-                    budget_usd=budget_usd,
                     on_approve=on_approve,
                     on_decline=on_decline,
                     verify_cmd=verify_cmd,
@@ -328,8 +317,6 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
                     click.echo(f"  Auto-approve: enabled")
                 if use_generate:
                     click.echo(f"  Prompt:    AI-generated (two-stage)")
-                if budget_usd is not None:
-                    click.echo(f"  Budget:    ${budget_usd:.2f}")
                 if verify_cmd:
                     click.echo(f"  Verify:    {verify_cmd}")
                 if on_approve:
@@ -353,13 +340,12 @@ def explore(topic, archetype, model, topics_file, max_turns, depends_on, auto_ap
 @click.option("--auto-approve", is_flag=True, help="Auto-approve via AI review when done")
 @click.option("--auto-archetype", is_flag=True, default=False, help="AI selects the best archetype per topic (overrides filename inference)")
 @click.option("--generate-prompt", is_flag=True, default=False, help="Use AI to generate exploration prompts (two-stage)")
-@click.option("--budget", "budget_usd", default=None, type=float, help="Total budget in USD (divided across topics)")
 @click.option("--max-concurrent", default=None, type=int, help="Max parallel explorations (excess queued as pending)")
 @click.option("--stagger", default=None, type=float, help="Seconds to wait between spawning each exploration")
 @click.option("--replicas", default=None, type=int, help="Ensemble: spawn N replicas per topic and auto-synthesize")
 @click.option("--archetypes", default=None, help="Ensemble: comma-separated archetype rotation per replica")
 @click.option("--models", default=None, help="Ensemble: comma-separated model rotation per replica")
-def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve, auto_archetype, generate_prompt, budget_usd, max_concurrent, stagger, replicas, archetypes, models):
+def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve, auto_archetype, generate_prompt, max_concurrent, stagger, replicas, archetypes, models):
     """Run explorations from a topic list file.
 
     Topic list files are markdown documents with --- separators.
@@ -394,7 +380,6 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
         elmer batch .elmer/explore-act.md --chain      # sequential execution
         elmer batch .elmer/explore-act.md --item 2     # run only item 2
         elmer batch .elmer/prototype.md -m opus        # override model
-        elmer batch .elmer/explore-act.md --budget 10  # $10 divided across topics
         elmer batch .elmer/explore-act.md --max-concurrent 3  # throttle parallelism
         elmer batch .elmer/explore-act.md --stagger 5  # 5s delay between spawns
     """
@@ -484,13 +469,6 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
     # Resolve two-stage prompt generation
     use_generate = generate_prompt or defaults.get("generate_prompt", False)
 
-    # Divide budget across topics
-    per_topic_budget = None
-    if budget_usd is not None:
-        per_topic_budget = budget_usd / len(topics)
-        click.echo(f"Budget per topic: ${per_topic_budget:.2f}")
-        click.echo()
-
     # Spawn explorations
     # Track all slugs for sliding-window dependency injection
     spawned_slugs: list[str] = []
@@ -521,14 +499,11 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
                     auto_approve=auto_approve,
                     generate_prompt=use_generate,
                     auto_archetype=use_auto_archetype,
-                    budget_usd=per_topic_budget,
                 )
                 click.echo(f"Ensemble started: {replicas} replicas")
                 for slug, arch_used in results:
                     click.echo(f"  Replica: {slug} ({arch_used})")
                     spawned_slugs.append(slug)
-                if per_topic_budget is not None:
-                    click.echo(f"  Budget: ${per_topic_budget:.2f}")
                 click.echo()
 
                 previous_slug = results[-1][0] if results else previous_slug
@@ -544,7 +519,6 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
                     auto_approve=auto_approve,
                     auto_archetype=use_auto_archetype,
                     generate_prompt=use_generate,
-                    budget_usd=per_topic_budget,
                 )
                 spawned_slugs.append(slug)
                 is_deferred = max_concurrent is not None and i >= max_concurrent
@@ -562,8 +536,6 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
                         click.echo(f"  Depends on: {previous_slug}")
                 if auto_approve:
                     click.echo(f"  Auto-approve: enabled")
-                if per_topic_budget is not None:
-                    click.echo(f"  Budget:    ${per_topic_budget:.2f}")
                 click.echo()
 
                 previous_slug = slug
@@ -597,12 +569,11 @@ def batch(file, archetype, model, max_turns, chain, dry_run, item, auto_approve,
 @click.option("--answers-file", default=None, type=click.Path(exists=True), help="JSON/TOML file with pre-answered questions (key: question index)")
 @click.option("--load-plan", "load_plan_file", default=None, type=click.Path(exists=True), help="Load a saved plan JSON (skip decomposition)")
 @click.option("--steps", "step_indices", default=None, help="Run only specific steps (e.g., '0', '0,1,2', '0-3')")
-@click.option("--budget", "budget_usd", default=None, type=float, help="Total budget in USD for all steps")
 @click.option("--max-concurrent", default=1, type=int, help="Max parallel steps (default: 1 for chain safety)")
 @click.option("--resume", "resume_plan_id", default=None, help="Resume a paused plan")
 @click.option("--status", "show_status", is_flag=True, help="Show status of active plans")
 @click.option("--save", "save_plan", is_flag=True, help="Save decomposition to .elmer/plans/ without executing")
-def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, load_plan_file, step_indices, budget_usd, max_concurrent, resume_plan_id, show_status, save_plan):
+def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, load_plan_file, step_indices, max_concurrent, resume_plan_id, show_status, save_plan):
     """Decompose a milestone into implementation steps and execute autonomously.
 
     Reads project docs (ROADMAP.md, DESIGN.md, DECISIONS.md), decomposes the
@@ -621,7 +592,6 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
         elmer implement --load-plan plan.json --steps 3,4      # Run specific steps
         elmer implement --resume milestone-1a                  # Resume paused plan
         elmer implement --status                               # Plan progress
-        elmer implement "Milestone 1a" --budget 50             # $50 total budget
     """
     project_dir = _require_project()
     elmer_dir = _require_elmer(project_dir)
@@ -751,14 +721,6 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
                          + len(prereqs.get("files", [])))
                 click.echo(f"\nPrerequisites: {total} checked, all passed")
 
-        # Budget analysis (ADR-048)
-        if budget_usd is not None:
-            num_steps = len(plan.get("steps", []))
-            per_step = budget_usd / num_steps if num_steps > 0 else budget_usd
-            click.echo(f"\nBudget: ${budget_usd:.2f} total, ${per_step:.2f}/step ({num_steps} steps)")
-            if per_step < 0.50:
-                click.echo("  ! Warning: per-step budget below $0.50 — steps may fail")
-
         if questions:
             click.echo(f"\nQuestions ({len(questions)}):")
             for i, q in enumerate(questions):
@@ -809,7 +771,6 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
             model=model,
             max_turns=max_turns or 50,
             auto_approve=True,
-            budget_usd=budget_usd,
             max_concurrent=max_concurrent,
             step_filter=step_filter,
         )
@@ -833,8 +794,7 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
 @click.option("--auto-archetype", is_flag=True, default=False, help="AI selects the best archetype per topic")
 @click.option("--generate-prompt", is_flag=True, default=False, help="Use AI to generate exploration prompts (two-stage)")
 @click.option("--no-generate", is_flag=True, default=False, help="Use static templates (skip two-stage prompt generation)")
-@click.option("--budget", "budget_usd", default=None, type=float, help="Total budget in USD (divided across spawned explorations)")
-def generate(count, follow_up_id, model, archetype, max_turns, dry_run, auto_approve, auto_archetype, generate_prompt, no_generate, budget_usd):
+def generate(count, follow_up_id, model, archetype, max_turns, dry_run, auto_approve, auto_archetype, generate_prompt, no_generate):
     """Generate research topics using AI.
 
     Reads project documentation and exploration history to propose
@@ -842,7 +802,6 @@ def generate(count, follow_up_id, model, archetype, max_turns, dry_run, auto_app
     exploration unless --dry-run is used.
 
     With --auto-archetype, AI picks the best archetype for each topic.
-    With --budget, the total is divided evenly across spawned explorations.
 
     \b
     Examples:
@@ -850,7 +809,6 @@ def generate(count, follow_up_id, model, archetype, max_turns, dry_run, auto_app
         elmer generate --count 3 --dry-run      # Preview 3 topics
         elmer generate --follow-up my-topic     # Follow-ups to a done exploration
         elmer generate -m haiku --count 10      # Cheap broad generation
-        elmer generate --budget 5.00            # $1 per exploration (5 topics)
         elmer generate --auto-archetype         # AI picks archetype per topic
     """
     project_dir = _require_project()
@@ -878,15 +836,9 @@ def generate(count, follow_up_id, model, archetype, max_turns, dry_run, auto_app
     else:
         use_generate = defaults.get("generate_prompt", False)
 
-    # Budget: CLI flag overrides config default, divide across explorations
-    if budget_usd is None:
-        budget_usd = gen_cfg.get("budget_usd")
-
     click.echo(f"Generating {gen_count} topics (model: {gen_model})...")
     if follow_up_id:
         click.echo(f"  Follow-up to: {follow_up_id}")
-    if budget_usd is not None:
-        click.echo(f"  Total budget: ${budget_usd:.2f}")
     click.echo()
 
     try:
@@ -911,12 +863,6 @@ def generate(count, follow_up_id, model, archetype, max_turns, dry_run, auto_app
         click.echo("Dry run — no explorations spawned.")
         return
 
-    # Divide budget evenly across explorations
-    per_exploration_budget = None
-    if budget_usd is not None:
-        per_exploration_budget = budget_usd / len(topics)
-        click.echo(f"Budget per exploration: ${per_exploration_budget:.2f}")
-
     click.echo(f"Spawning {len(topics)} exploration(s)...")
     click.echo()
 
@@ -933,7 +879,6 @@ def generate(count, follow_up_id, model, archetype, max_turns, dry_run, auto_app
                 auto_approve=auto_approve,
                 auto_archetype=use_auto_archetype,
                 generate_prompt=use_generate,
-                budget_usd=per_exploration_budget,
             )
             click.echo(f"Started: {slug}")
             click.echo(f"  Branch:    elmer/{slug}")
@@ -945,8 +890,6 @@ def generate(count, follow_up_id, model, archetype, max_turns, dry_run, auto_app
                 click.echo(f"  Auto-approve: enabled")
             if use_generate:
                 click.echo(f"  Prompt:    AI-generated (two-stage)")
-            if per_exploration_budget is not None:
-                click.echo(f"  Budget:    ${per_exploration_budget:.2f}")
             click.echo()
         except (RuntimeError, FileNotFoundError) as e:
             click.echo(f"Error spawning '{topic}': {e}", err=True)
@@ -1142,8 +1085,7 @@ def decline(exploration_id, reason):
 @click.argument("feedback")
 @click.option("-m", "--model", default=None, help="Model for the amend session (default: same as exploration)")
 @click.option("--max-turns", default=10, type=int, help="Max turns for the amend session (default: 10)")
-@click.option("--budget", "budget_usd", default=None, type=float, help="Max cost in USD for the amend session")
-def amend(exploration_id, feedback, model, max_turns, budget_usd):
+def amend(exploration_id, feedback, model, max_turns):
     """Amend a completed exploration's proposal.
 
     Spawns a Claude session in the existing worktree to revise PROPOSAL.md
@@ -1170,7 +1112,6 @@ def amend(exploration_id, feedback, model, max_turns, budget_usd):
             project_dir=project_dir,
             model=model,
             max_turns=max_turns,
-            budget_usd=budget_usd,
         )
         click.echo(f"Amending: {exploration_id}")
         click.echo(f"  PID:       {pid}")
@@ -1209,9 +1150,8 @@ def cancel(exploration_id):
 def retry(exploration_id, failed, max_concurrent):
     """Retry failed explorations or re-run a completed synthesis.
 
-    Re-spawns a failed exploration with the same topic, archetype, model,
-    and budget. The old failed entry is cleaned up and a new exploration
-    is created.
+    Re-spawns a failed exploration with the same topic, archetype, and model.
+    The old failed entry is cleaned up and a new exploration is created.
 
     For completed synthesis explorations: archives the previous synthesis
     and re-runs with the current archetype. The previous synthesis is passed
@@ -1703,7 +1643,6 @@ def archetypes_list():
 @click.option("--generate", "auto_generate", is_flag=True, help="Auto-generate topics when running low")
 @click.option("--auto-archetype", is_flag=True, help="AI selects archetype for generated topics")
 @click.option("--audit", "audit_enabled", is_flag=True, help="Run scheduled audits (configure in [audit] section)")
-@click.option("--budget", "budget_per_cycle", default=None, type=float, help="Max cost per cycle in USD")
 @click.option("--max-concurrent", default=None, type=int, help="Max simultaneous explorations (default: 5)")
 @click.option("--generate-threshold", default=None, type=int, help="Generate when active < threshold (default: 2)")
 @click.option("--generate-count", default=None, type=int, help="Topics to generate per cycle (default: 5)")
@@ -1711,7 +1650,7 @@ def archetypes_list():
 @click.option("--followup-count", default=None, type=int, help="Follow-up topics per approval (default: 3)")
 @click.pass_context
 def daemon(ctx, interval, auto_approve, auto_generate, auto_archetype,
-           audit_enabled, budget_per_cycle,
+           audit_enabled,
            max_concurrent, generate_threshold, generate_count,
            auto_followup, followup_count):
     """Manage the Elmer daemon for continuous operation.
@@ -1731,7 +1670,6 @@ def daemon(ctx, interval, auto_approve, auto_generate, auto_archetype,
         elmer daemon --auto-approve --generate          # Full autonomy
         elmer daemon --audit --auto-approve             # Audit mode
         elmer daemon --auto-archetype --generate        # AI picks archetypes
-        elmer daemon --budget 5.00                      # Cost cap per cycle
         elmer daemon --max-concurrent 3                 # Limit parallelism
         elmer daemon status                             # Check daemon
         elmer daemon stop                               # Graceful shutdown
@@ -1756,7 +1694,6 @@ def daemon(ctx, interval, auto_approve, auto_generate, auto_archetype,
             auto_approve=auto_approve or d_cfg.get("auto_approve", False),
             auto_generate=auto_generate or d_cfg.get("auto_generate", False),
             auto_archetype=auto_archetype or d_cfg.get("auto_archetype", False),
-            budget_per_cycle=budget_per_cycle or d_cfg.get("budget_per_cycle"),
             max_concurrent=max_concurrent or d_cfg.get("max_concurrent", 5),
             generate_threshold=generate_threshold or d_cfg.get("generate_threshold", 2),
             generate_count=generate_count or d_cfg.get("generate_count", 5),

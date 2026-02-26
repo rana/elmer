@@ -504,7 +504,6 @@ def execute_plan(
     model: Optional[str] = None,
     max_turns: int = 50,
     auto_approve: bool = True,
-    budget_usd: Optional[float] = None,
     max_concurrent: int = 1,
     step_filter: Optional[list[int]] = None,
 ) -> str:
@@ -535,19 +534,6 @@ def execute_plan(
             "Fix these before executing, or remove 'prerequisites' from the plan."
         )
 
-    # Upfront budget validation (ADR-048): warn if budget is too thin.
-    # A per-step budget under $0.50 is unlikely to complete any meaningful work.
-    if budget_usd is not None:
-        num_steps_to_run = len(step_filter) if step_filter else len(steps)
-        per_step = budget_usd / num_steps_to_run if num_steps_to_run > 0 else budget_usd
-        if per_step < 0.50:
-            click.echo(
-                f"\nWarning: per-step budget is only ${per_step:.2f} "
-                f"(${budget_usd:.2f} / {num_steps_to_run} steps). "
-                f"Steps may fail due to insufficient budget.",
-                err=True,
-            )
-
     # Generate plan ID from milestone ref
     plan_id = explore_mod.slugify(milestone_ref) or "plan"
     conn = state.get_db(elmer_dir)
@@ -566,17 +552,11 @@ def execute_plan(
         id=plan_id,
         milestone_ref=milestone_ref,
         plan_json=json.dumps(plan),
-        budget_usd=budget_usd,
     )
     conn.close()
 
     # Determine which steps to execute
     indices_to_run = step_filter if step_filter else list(range(len(steps)))
-
-    # Budget: divide across steps being run
-    per_step_budget = None
-    if budget_usd is not None:
-        per_step_budget = budget_usd / len(indices_to_run)
 
     # Create explorations for each step
     exploration_ids: dict[int, str] = {}  # step index -> exploration ID
@@ -639,7 +619,6 @@ def execute_plan(
                 project_dir=project_dir,
                 depends_on=depends_on if depends_on else None,
                 auto_approve=auto_approve,
-                budget_usd=per_step_budget,
                 verify_cmd=verify_cmd,
                 plan_id=plan_id,
                 plan_step=i,
@@ -749,9 +728,7 @@ def show_plan_status(elmer_dir: Path, plan_id: Optional[str] = None) -> None:
         click.echo(f"  Milestone: {plan['milestone_ref']}")
         click.echo(f"  Status:    {plan['status']}")
         if plan.get("total_cost"):
-            budget = plan.get("budget_usd")
-            budget_str = f" / ${budget:.2f}" if budget else ""
-            click.echo(f"  Cost:      ${plan['total_cost']:.2f}{budget_str}")
+            click.echo(f"  Cost:      ${plan['total_cost']:.2f}")
         click.echo()
 
         steps = plan.get("steps", [])

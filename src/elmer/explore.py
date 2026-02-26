@@ -177,7 +177,6 @@ def start_exploration(
     auto_approve: bool = False,
     generate_prompt: bool = False,
     auto_archetype: bool = False,
-    budget_usd: Optional[float] = None,
     on_approve: Optional[str] = None,
     on_decline: Optional[str] = None,
     slug_override: Optional[str] = None,
@@ -197,8 +196,6 @@ def start_exploration(
 
     If generate_prompt is True, uses two-stage prompt generation: AI generates
     the exploration prompt (Stage 1) before spawning the worker (Stage 2).
-
-    If budget_usd is set, passes --max-budget-usd to the claude session.
 
     on_approve/on_decline are shell commands executed after approval/declining.
     $ID and $TOPIC are substituted with the exploration ID and topic.
@@ -301,7 +298,6 @@ def start_exploration(
             max_turns=max_turns,
             auto_approve=auto_approve,
             generate_prompt=generate_prompt,
-            budget_usd=budget_usd,
             on_approve=on_approve,
             on_decline=on_decline,
             verify_cmd=verify_cmd,
@@ -359,7 +355,6 @@ def start_exploration(
         model=model,
         log_path=log_path,
         max_turns=max_turns,
-        budget_usd=budget_usd,
         agent_config=agent_config,
     )
 
@@ -376,7 +371,6 @@ def start_exploration(
         max_turns=max_turns,
         auto_approve=auto_approve,
         generate_prompt=generate_prompt,
-        budget_usd=budget_usd,
         on_approve=on_approve,
         on_decline=on_decline,
         verify_cmd=verify_cmd,
@@ -408,7 +402,6 @@ def start_ensemble(
     auto_approve: bool = False,
     generate_prompt: bool = False,
     auto_archetype: bool = False,
-    budget_usd: Optional[float] = None,
 ) -> list[tuple[str, str]]:
     """Start an ensemble of N explorations on the same topic.
 
@@ -418,7 +411,6 @@ def start_ensemble(
         If None, all replicas use the same archetype.
     models: rotate through these models for replicas.
         If None, all replicas use the same model.
-    budget_usd: total budget for the ensemble (divided by replicas + 1 for synthesis).
     """
     if replicas < 2:
         raise RuntimeError("Ensemble requires at least 2 replicas.")
@@ -428,11 +420,6 @@ def start_ensemble(
     conn = state.get_db(elmer_dir)
     ensemble_id = _make_unique_slug(conn, ensemble_id, elmer_dir)
     conn.close()
-
-    # Budget: divide across replicas + 1 (reserve one share for synthesis)
-    per_replica_budget = None
-    if budget_usd is not None:
-        per_replica_budget = budget_usd / (replicas + 1)
 
     results = []
     for i in range(replicas):
@@ -461,7 +448,6 @@ def start_ensemble(
             auto_approve=False,  # replicas are never individually approved
             generate_prompt=generate_prompt,
             auto_archetype=use_auto_archetype,
-            budget_usd=per_replica_budget,
             slug_override=replica_slug,
         )
 
@@ -500,7 +486,6 @@ def launch_pending(
     branch = exp["branch"]
     worktree_path = Path(exp["worktree_path"])
     log_path = elmer_dir / "logs" / f"{exploration_id}.log"
-    budget_usd = exp["budget_usd"]
 
     use_generate = bool(exp["generate_prompt"])
     agent_config = None
@@ -556,7 +541,6 @@ def launch_pending(
         model=model,
         log_path=log_path,
         max_turns=max_turns,
-        budget_usd=budget_usd,
         agent_config=agent_config,
     )
 
@@ -641,7 +625,6 @@ def amend_exploration(
     project_dir: Path,
     model: Optional[str] = None,
     max_turns: int = 10,
-    budget_usd: Optional[float] = None,
 ) -> int:
     """Amend a completed exploration's proposal based on editorial feedback.
 
@@ -693,7 +676,6 @@ def amend_exploration(
         model=use_model,
         log_path=log_path,
         max_turns=max_turns,
-        budget_usd=budget_usd,
         agent_config=agent_config,
     )
 
@@ -733,44 +715,10 @@ def schedule_ready(elmer_dir: Path, project_dir: Path) -> list[str]:
             state.update_plan(conn, plan_id, status="paused")
 
     ready = state.get_pending_ready(conn)
-
-    # Plan-level budget enforcement (ADR-043): skip scheduling if plan
-    # budget is exceeded. Cache per-plan spend to avoid repeated queries.
-    plan_spend_cache: dict[str, float] = {}
-    plan_budget_cache: dict[str, float | None] = {}
+    conn.close()
 
     launched = []
     for exp in ready:
-        plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
-        if plan_id:
-            if plan_id not in plan_spend_cache:
-                plan_row = state.get_plan(conn, plan_id)
-                plan_budget_cache[plan_id] = plan_row["budget_usd"] if plan_row else None
-                plan_spend_cache[plan_id] = state.get_plan_spend(conn, plan_id)
-
-            budget = plan_budget_cache.get(plan_id)
-            spent = plan_spend_cache.get(plan_id, 0.0)
-            if budget is not None and spent >= budget:
-                state.update_exploration(
-                    conn, exp["id"],
-                    status="failed",
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                    proposal_summary=f"(plan budget exceeded: ${spent:.2f} >= ${budget:.2f})",
-                )
-                state.update_plan(conn, plan_id, status="paused")
-                continue
-
-    conn.close()
-
-    for exp in ready:
-        # Re-check: skip if we just marked it failed above
-        plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
-        if plan_id:
-            budget = plan_budget_cache.get(plan_id)
-            spent = plan_spend_cache.get(plan_id, 0.0)
-            if budget is not None and spent >= budget:
-                continue
-
         launch_pending(
             exploration_id=exp["id"],
             elmer_dir=elmer_dir,

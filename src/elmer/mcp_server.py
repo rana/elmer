@@ -297,7 +297,6 @@ def elmer_costs(exploration_id: Optional[str] = None) -> dict:
                     "output_tokens": exp["output_tokens"],
                     "cost_usd": exp["cost_usd"],
                     "num_turns_actual": exp["num_turns_actual"],
-                    "budget_usd": exp["budget_usd"],
                 },
                 "meta_operations": meta_ops,
             }
@@ -626,7 +625,6 @@ def elmer_explore(
     auto_approve: bool = False,
     auto_archetype: bool = False,
     generate_prompt: bool = False,
-    budget_usd: Optional[float] = None,
     depends_on: Optional[str] = None,
     parent_id: Optional[str] = None,
     on_approve: Optional[str] = None,
@@ -655,7 +653,6 @@ def elmer_explore(
         auto_approve: If true, AI reviews the proposal on completion.
         auto_archetype: If true, AI selects the best archetype for the topic.
         generate_prompt: If true, uses two-stage AI prompt generation.
-        budget_usd: Cost cap in USD for the claude session.
         depends_on: Comma-separated exploration IDs this depends on.
         parent_id: Parent exploration ID (for follow-ups).
         on_approve: Shell command to run on approval ($ID, $TOPIC substituted).
@@ -696,7 +693,6 @@ def elmer_explore(
                 auto_approve=auto_approve,
                 generate_prompt=use_generate,
                 auto_archetype=use_auto_archetype,
-                budget_usd=budget_usd,
             )
 
             return {
@@ -704,7 +700,6 @@ def elmer_explore(
                 "replicas": [{"id": slug, "archetype": arch} for slug, arch in results],
                 "replica_count": len(results),
                 "topic": topic,
-                "budget_usd": budget_usd,
                 "message": f"Ensemble started with {len(results)} replicas. Synthesis triggers automatically when all complete.",
             }
 
@@ -722,7 +717,6 @@ def elmer_explore(
             auto_approve=auto_approve,
             auto_archetype=use_auto_archetype,
             generate_prompt=use_generate,
-            budget_usd=budget_usd,
             depends_on=dep_list,
             parent_id=parent_id,
             on_approve=on_approve,
@@ -742,7 +736,6 @@ def elmer_explore(
             "archetype": archetype_used,
             "model": use_model,
             "status": actual_status,
-            "budget_usd": budget_usd,
             "auto_archetype": use_auto_archetype,
             "generate_prompt": use_generate,
         }
@@ -912,7 +905,6 @@ def elmer_amend(
     feedback: str,
     model: Optional[str] = None,
     max_turns: int = 10,
-    budget_usd: Optional[float] = None,
     dry_run: bool = False,
 ) -> dict:
     """Amend a completed exploration's proposal.
@@ -930,7 +922,6 @@ def elmer_amend(
         feedback: Editorial direction — what to change, remove, or adjust.
         model: Model for the amend session (default: same as original exploration).
         max_turns: Turn limit for the amend session (default: 10).
-        budget_usd: Cost cap in USD for the amend session.
         dry_run: If true, returns the assembled prompt without spawning
             a session. Use this to review what the amend agent would receive.
     """
@@ -959,7 +950,6 @@ def elmer_amend(
             project_dir=project_dir,
             model=model,
             max_turns=max_turns,
-            budget_usd=budget_usd,
         )
 
         return {
@@ -1016,9 +1006,8 @@ def elmer_retry(
 ) -> dict:
     """Retry failed explorations or re-run a completed synthesis.
 
-    Re-spawns a failed exploration with the same topic, archetype, model,
-    and budget. The old failed entry is cleaned up and a new exploration
-    is created.
+    Re-spawns a failed exploration with the same topic, archetype, and model.
+    The old failed entry is cleaned up and a new exploration is created.
 
     For completed synthesis explorations: archives the previous synthesis
     and re-runs with the current archetype. The previous synthesis is passed
@@ -1132,7 +1121,6 @@ def elmer_generate(
     archetype: Optional[str] = None,
     auto_approve: bool = False,
     auto_archetype: bool = False,
-    budget_usd: Optional[float] = None,
 ) -> dict:
     """Generate research topics using AI and optionally spawn explorations.
 
@@ -1151,7 +1139,6 @@ def elmer_generate(
         archetype: Archetype for spawned explorations (default: from config).
         auto_approve: Auto-approve spawned explorations via AI review.
         auto_archetype: AI selects the best archetype per spawned topic.
-        budget_usd: Total budget in USD (divided across spawned explorations).
     """
     try:
         project_dir, elmer_dir = _find_project()
@@ -1208,10 +1195,6 @@ def elmer_generate(
         explore_model = defaults.get("model", "sonnet")
         explore_max_turns = defaults.get("max_turns", 50)
 
-        per_topic_budget = None
-        if budget_usd is not None and topics:
-            per_topic_budget = budget_usd / len(topics)
-
         spawned = []
         errors = []
         for topic in topics:
@@ -1226,7 +1209,6 @@ def elmer_generate(
                     parent_id=follow_up_id,
                     auto_approve=auto_approve,
                     auto_archetype=use_auto_archetype,
-                    budget_usd=per_topic_budget,
                 )
                 spawned.append({"id": slug, "archetype": archetype_used})
             except (RuntimeError, FileNotFoundError) as e:
@@ -1454,7 +1436,6 @@ def elmer_batch(
     chain: bool = False,
     auto_approve: bool = False,
     auto_archetype: bool = False,
-    budget_usd: Optional[float] = None,
     max_concurrent: Optional[int] = None,
     stagger_seconds: Optional[int] = None,
     replicas: Optional[int] = None,
@@ -1483,7 +1464,6 @@ def elmer_batch(
         chain: Run topics sequentially, each depending on the previous.
         auto_approve: Auto-approve via AI review when done.
         auto_archetype: AI selects the best archetype per topic.
-        budget_usd: Total budget in USD (divided across topics).
         max_concurrent: Max parallel explorations.
         stagger_seconds: Delay in seconds between spawning each exploration.
             Spreads out concurrent starts to avoid API rate limits.
@@ -1504,10 +1484,6 @@ def elmer_batch(
         use_archetype = archetype or defaults.get("archetype", "explore-act")
         use_model = model or defaults.get("model", "sonnet")
         use_max_turns = max_turns or defaults.get("max_turns", 50)
-
-        per_topic_budget = None
-        if budget_usd is not None:
-            per_topic_budget = budget_usd / len(topic_list)
 
         spawned_slugs: list[str] = []
         spawned: list[dict] = []
@@ -1540,7 +1516,6 @@ def elmer_batch(
                         auto_approve=auto_approve,
                         generate_prompt=False,
                         auto_archetype=use_auto_archetype,
-                        budget_usd=per_topic_budget,
                     )
                     for slug, arch_used in results:
                         spawned_slugs.append(slug)
@@ -1561,7 +1536,6 @@ def elmer_batch(
                         depends_on=dep_list,
                         auto_approve=auto_approve,
                         auto_archetype=use_auto_archetype,
-                        budget_usd=per_topic_budget,
                     )
                     spawned_slugs.append(slug)
                     spawned.append({
@@ -1611,7 +1585,6 @@ def elmer_implement(
     dry_run: bool = False,
     skip_clarify: bool = False,
     model: Optional[str] = None,
-    budget_usd: Optional[float] = None,
     max_concurrent: int = 1,
 ) -> dict:
     """Decompose a milestone into implementation steps and execute autonomously.
@@ -1625,7 +1598,6 @@ def elmer_implement(
         dry_run: Decompose and return plan without executing.
         skip_clarify: Skip clarification questions (use defaults).
         model: Model for implementation sessions (default: from config).
-        budget_usd: Total budget in USD for all steps.
         max_concurrent: Max parallel steps (default: 1 for chain safety).
     """
     try:
@@ -1662,7 +1634,6 @@ def elmer_implement(
             project_dir=project_dir,
             model=model,
             auto_approve=True,
-            budget_usd=budget_usd,
             max_concurrent=max_concurrent,
         )
 

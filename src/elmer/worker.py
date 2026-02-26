@@ -102,7 +102,6 @@ def spawn_claude(
     model: str,
     log_path: Path,
     max_turns: int = 50,
-    budget_usd: Optional[float] = None,
     agent_config: Optional[dict] = None,
 ) -> int:
     """Spawn a claude -p session in the background. Returns PID.
@@ -122,8 +121,6 @@ def spawn_claude(
         "--model", model,
     ])
     cmd.extend(["--max-turns", str(max_turns)])
-    if budget_usd is not None:
-        cmd.extend(["--max-budget-usd", str(budget_usd)])
 
     proc = subprocess.Popen(
         cmd,
@@ -142,7 +139,6 @@ def run_claude(
     cwd: Path,
     model: str,
     max_turns: int = 5,
-    budget_usd: Optional[float] = None,
     agent_config: Optional[dict] = None,
 ) -> ClaudeResult:
     """Run a claude -p session synchronously. Returns ClaudeResult.
@@ -158,8 +154,6 @@ def run_claude(
         "--model", model,
     ])
     cmd.extend(["--max-turns", str(max_turns)])
-    if budget_usd is not None:
-        cmd.extend(["--max-budget-usd", str(budget_usd)])
 
     result = subprocess.run(
         cmd,

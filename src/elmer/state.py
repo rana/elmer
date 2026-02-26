@@ -47,7 +47,6 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                          ("output_tokens", "INTEGER"),
                          ("cost_usd", "REAL"),
                          ("num_turns_actual", "INTEGER"),
-                         ("budget_usd", "REAL"),
                          ("on_approve", "TEXT"),
                          ("on_decline", "TEXT"),
                          ("decline_reason", "TEXT"),
@@ -72,11 +71,6 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     # Migrate legacy status value: rejected -> declined (ADR-027)
     conn.execute("UPDATE explorations SET status = 'declined' WHERE status = 'rejected'")
 
-    # Migrate plans table: add budget_usd column (ADR-043)
-    try:
-        conn.execute("ALTER TABLE plans ADD COLUMN budget_usd REAL")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
 
     # Migrate plans table: add completion_note column (ADR-044)
     try:
@@ -114,7 +108,6 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             completed_at TEXT,
             total_cost_usd REAL DEFAULT 0,
-            budget_usd REAL,
             completion_note TEXT
         )
     """)
@@ -157,7 +150,6 @@ def create_exploration(
     max_turns: Optional[int] = None,
     auto_approve: bool = False,
     generate_prompt: bool = False,
-    budget_usd: Optional[float] = None,
     on_approve: Optional[str] = None,
     on_decline: Optional[str] = None,
     ensemble_id: Optional[str] = None,
@@ -172,13 +164,13 @@ def create_exploration(
         INSERT INTO explorations
             (id, topic, archetype, branch, worktree_path, status, model, pid,
              created_at, parent_id, max_turns, auto_approve, generate_prompt,
-             budget_usd, on_approve, on_decline, ensemble_id, ensemble_role,
+             on_approve, on_decline, ensemble_id, ensemble_role,
              verify_cmd, plan_id, plan_step, setup_cmd)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (id, topic, archetype, branch, worktree_path, status, model, pid,
          _now(), parent_id, max_turns, int(auto_approve), int(generate_prompt),
-         budget_usd, on_approve, on_decline, ensemble_id, ensemble_role,
+         on_approve, on_decline, ensemble_id, ensemble_role,
          verify_cmd, plan_id, plan_step, setup_cmd),
     )
     conn.commit()
@@ -410,12 +402,11 @@ def create_plan(
     id: str,
     milestone_ref: str,
     plan_json: str,
-    budget_usd: Optional[float] = None,
 ) -> None:
     """Create an implementation plan."""
     conn.execute(
-        "INSERT INTO plans (id, milestone_ref, plan_json, created_at, budget_usd) VALUES (?, ?, ?, ?, ?)",
-        (id, milestone_ref, plan_json, _now(), budget_usd),
+        "INSERT INTO plans (id, milestone_ref, plan_json, created_at) VALUES (?, ?, ?, ?)",
+        (id, milestone_ref, plan_json, _now()),
     )
     conn.commit()
 
@@ -447,27 +438,6 @@ def get_plan_explorations(conn: sqlite3.Connection, plan_id: str) -> list[sqlite
         "SELECT * FROM explorations WHERE plan_id = ? ORDER BY plan_step",
         (plan_id,),
     ).fetchall()
-
-
-def get_plan_spend(conn: sqlite3.Connection, plan_id: str) -> float:
-    """Get cumulative cost of all explorations + meta-ops in a plan."""
-    # Exploration costs (main sessions)
-    row = conn.execute(
-        "SELECT COALESCE(SUM(cost_usd), 0) as total FROM explorations WHERE plan_id = ?",
-        (plan_id,),
-    ).fetchone()
-    exp_cost = row["total"] if row else 0.0
-
-    # Meta-operation costs (amends, auto-approve reviews) linked to plan explorations
-    row2 = conn.execute(
-        """SELECT COALESCE(SUM(c.cost_usd), 0) as total FROM costs c
-           JOIN explorations e ON c.exploration_id = e.id
-           WHERE e.plan_id = ?""",
-        (plan_id,),
-    ).fetchone()
-    meta_cost = row2["total"] if row2 else 0.0
-
-    return exp_cost + meta_cost
 
 
 def increment_amend_count(conn: sqlite3.Connection, exploration_id: str) -> int:

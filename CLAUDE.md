@@ -6,7 +6,7 @@ Read in this order:
 1. **CLAUDE.md** (this file) — tech stack, rules, conventions
 2. **CONTEXT.md** — project methodology, collaboration model, current state
 3. **DESIGN.md** — architecture, data model, module responsibilities
-4. **DECISIONS.md** — ADRs with full rationale (33 recorded)
+4. **DECISIONS.md** — ADRs with full rationale (34 recorded)
 5. **ROADMAP.md** — phase history, **Future Directions** (17 remaining improvements), deferred features
 6. **README.md** — user-facing docs, install, full command reference
 7. **GUIDE.md** — practical usage playbook, workflows, patterns
@@ -21,7 +21,7 @@ ROADMAP.md § Future Directions has 17 remaining improvements across 6 themes (A
 2. **D1** — Configurable document coherence verification (generalizes `validate`)
 3. **C3** — NULL cost handling in SUM queries (small, correctness)
 4. **A3** — Plan revision / replanning (large, architecture)
-5. **B2** — Archetype-aware budget allocation (medium)
+5. **B2** — Archetype-aware turn allocation (medium)
 
 A1, A2 completed (ADR-049). B1 completed (ADR-050). If asked to improve Elmer or work on next steps, start from this list. Full descriptions with complexity ratings are in ROADMAP.md.
 
@@ -43,14 +43,14 @@ Full options and examples in README.md. Core subcommands:
 | Command | Purpose |
 |---------|---------|
 | `elmer init` | Scaffold `.elmer/` in current project (`--docs`, `--skills`, `--agents`) |
-| `elmer explore "topic"` | Start exploration on a new branch (`-a`, `-m`, `--auto-approve`, `--budget`, `--replicas`, `--archetypes`, `--models`, `--verify-cmd`) |
+| `elmer explore "topic"` | Start exploration on a new branch (`-a`, `-m`, `--auto-approve`, `--replicas`, `--archetypes`, `--models`, `--verify-cmd`) |
 | `elmer batch FILE` | Spawn from `---`-separated topic list file (`--chain`, `--dry-run`, `--item`, `--max-concurrent`, `--stagger`, `--replicas`) |
 | `elmer generate` | AI-generate research topics and spawn explorations (`--count`, `--follow-up`, `--dry-run`) |
 | `elmer status` | Show all explorations with state (`-v` for topics, `--all-projects` for dashboard) |
 | `elmer tree` | Exploration dependency tree |
 | `elmer review [ID]` | List pending proposals or show one (`--prioritize` for ranked review) |
 | `elmer approve ID` | Merge branch, auto-clean (`--all`, `--auto-followup`, `--validate-invariants`, `--no-clean`) |
-| `elmer amend ID "feedback"` | Revise proposal in existing worktree (`-m`, `--max-turns`, `--budget`) |
+| `elmer amend ID "feedback"` | Revise proposal in existing worktree (`-m`, `--max-turns`) |
 | `elmer decline ID [REASON]` | Discard branch, cleanup (optional reason feeds digest) |
 | `elmer digest` | Synthesize convergence digest from recent explorations (`--since`, `--topic`) |
 | `elmer cancel ID` | Stop running/pending/amending exploration, cleanup |
@@ -64,7 +64,7 @@ Full options and examples in README.md. Core subcommands:
 | `elmer logs ID` | Session log diagnostics (`--raw` for JSON) |
 | `elmer pr ID` | Push branch, create GitHub PR |
 | `elmer clean` | Remove failed/orphaned worktrees + state entries (garbage collection) |
-| `elmer implement "milestone"` | Decompose milestone into steps, execute autonomously (`--dry-run`, `--save`, `--answers-file`, `--load-plan`, `--steps`, `--status`, `--resume`, `--budget`) |
+| `elmer implement "milestone"` | Decompose milestone into steps, execute autonomously (`--dry-run`, `--save`, `--answers-file`, `--load-plan`, `--steps`, `--status`, `--resume`) |
 | `elmer mcp` | Start MCP server — 23 tools for Claude Code integration |
 
 ## Rules
@@ -135,4 +135,4 @@ Each piece of information lives in one place. Other files reference, not duplica
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
 - **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
 
-*Last updated: 2026-02-25, A1+A2+B1 backlog fixes (33 ADRs)*
+*Last updated: 2026-02-25, remove budget enforcement ADR-051 (34 ADRs)*
