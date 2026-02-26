@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-44 ADRs recorded.
+49 ADRs recorded.
 
 ## Domain Index
 
@@ -52,6 +52,11 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-059 | Observability | Verification failure counter per exploration |
 | ADR-060 | Observability | Verification execution time tracking |
 | ADR-061 | UX | Plan step duration estimation |
+| ADR-062 | Resilience | Daemon stuck state prevention and partial plan rollback |
+| ADR-063 | Quality | FIFO approval ordering and normalized failure detection |
+| ADR-064 | Integration | Custom skills as verification hooks (F3) |
+| ADR-065 | Operations | External dependency tracking with blockers (D4) |
+| ADR-066 | Resilience | Stale PID recovery and cascade failure alerting |
 
 ---
 
@@ -1267,3 +1272,80 @@ The 7-day default is conservative — most legitimate dependencies resolve withi
 **Design choice:** `estimated_seconds` lives in the plan JSON (produced by the decompose agent), not as a DB column. This keeps the estimate with the plan definition rather than requiring schema changes per exploration. The `max_plan_hours` check is advisory (warning, not blocking) because estimates are inherently imprecise.
 
 **Files modified:** `decompose.py`, `implement.py`, `plan.py`, `config.py`.
+
+## ADR-062: Daemon Stuck State Prevention and Partial Plan Rollback
+
+**Decision:** Fix two stuck-state bugs in autonomous operation:
+
+1. **Paused plan auto-retry infinite loop** (daemon.py): When all `gate.retry_exploration()` calls throw exceptions, the plan stays paused and the daemon re-attempts the same retries every cycle. Fix: when all retries fail with exceptions, inject the "## Previous Attempt Failed" marker into the exploration topic so the retry-eligibility filter skips them next cycle. Logs a clear warning.
+
+2. **Partial plan execution** (implement.py): When a step creation throws mid-plan, the plan stays "active" with gaps. Fix: track creation errors and pause the plan if any steps failed. If all steps fail, mark the plan as "failed" entirely. Provide guidance for retrying specific steps with `--steps`.
+
+**Why:** Both bugs create infinite cycles of wasted work in autonomous operation. The daemon retries forever without progress, and partial plans schedule dependents that can never complete.
+
+**Files modified:** `daemon.py`, `implement.py`.
+
+## ADR-063: FIFO Approval Ordering and Normalized Failure Detection
+
+**Decision:** Two quality improvements for autonomous operation:
+
+1. **FIFO approval queue** (daemon.py): Sort done explorations by `completed_at` before processing the approval queue. Older explorations are approved first, preventing starvation when newer explorations flood the queue. Previously arbitrary iteration order.
+
+2. **Normalized verification failure comparison** (review.py): The `_is_repeated_failure()` comparison (ADR-050) now strips timestamps, PIDs, temp paths, and hex addresses before comparing verification output. New `_normalize_verification_output()` function uses regex substitution to replace volatile tokens with placeholders (`<TS>`, `<PID>`, `<TMP>`, `<ADDR>`). This reduces false negatives where identical systemic failures produce slightly different output.
+
+**Why:** FIFO ordering ensures fairness in approval batching. Normalized comparison prevents wasted amend cycles on systemic failures that only differ by timestamp or PID.
+
+**Files modified:** `daemon.py`, `review.py`.
+
+## ADR-064: Custom Skills as Verification Hooks (F3)
+
+**Decision:** Project-defined Claude Code skills can be invoked as lifecycle hooks at three points:
+
+- `on_done`: after PROPOSAL.md is committed, before verification. Failing hooks trigger auto-amend.
+- `pre_approve`: in the daemon auto-approve gate, before AI review. Failing hooks block approval.
+- `post_approve`: after merge. Informational only, cannot block.
+
+Configuration in `[hooks]` section of config.toml:
+```toml
+[hooks]
+on_done = ["mission-align"]
+pre_approve = ["cultural-lens"]
+model = "sonnet"
+max_turns = 10
+```
+
+Implementation: New `hooks.py` module with `run_skill_hook()` and `run_event_hooks()`. Skills are loaded via `config.resolve_skill()` which reads `.claude/skills/<name>/SKILL.md`. The skill body is used as context alongside the proposal text. Skills must output a `VERDICT: PASS/FAIL` line; no verdict defaults to pass (informational).
+
+New config functions: `resolve_skill()`, `list_project_skills()`, `get_hook_skills()`.
+
+**Why:** srf-yogananda-teachings has 6 custom skills (`/mission-align`, `/cultural-lens`, `/seeker-ux`, `/dedup-proposals`, `/proposal-merge`, `/theme-integrate`). These encode project-specific quality criteria that the generic auto-approve gate cannot evaluate. Skill hooks let projects define semantic quality checks without modifying Elmer core.
+
+**Files modified:** `hooks.py` (new), `config.py`, `review.py`, `daemon.py`.
+
+## ADR-065: External Dependency Tracking with Blockers (D4)
+
+**Decision:** Add external blocker management for tracking stakeholder decisions and prerequisites that gate implementation.
+
+Schema: New `external_blockers` table with `id`, `description`, `status` (blocked/resolved), `created_at`, `resolved_at`. New `blocked_by` column on `explorations` table (comma-separated blocker IDs).
+
+CLI commands: `elmer block <id> <description>`, `elmer unblock <id>`, `elmer blockers`.
+
+Scheduling: `schedule_ready()` checks `blocked_by` against `external_blockers` — explorations with any unresolved blocker stay pending. Status display shows `blocked by: <ids>` for pending explorations.
+
+Plan integration: Plan steps can include `blocked_by` in their definition. The decompose agent can reference external blockers when a step depends on an out-of-band decision.
+
+**Why:** srf-yogananda-teachings has 15+ stakeholder decisions blocking implementation (SRF copyright stance, editorial voice, Neon account setup, Contentful configuration). Without external blocker tracking, the daemon either blocks indefinitely on unresolvable dependencies or requires manual workarounds.
+
+**Files modified:** `state.py`, `explore.py`, `cli.py`.
+
+## ADR-066: Stale PID Recovery and Cascade Failure Alerting
+
+**Decision:** Two daemon resilience improvements:
+
+1. **Stale PID recovery** (daemon.py): The pidfile now stores `PID TIMESTAMP`. On read, validates that the process owning the PID started after the pidfile was written (using `/proc/<pid>/stat` on Linux). If the PID was recycled (process started before pidfile timestamp), the pidfile is treated as stale and removed. Falls back to basic PID check on non-Linux systems.
+
+2. **Cascade failure alerting** (explore.py): `schedule_ready()` now logs `CASCADE FAIL` and `CASCADE PAUSE` warnings when dependency failures propagate. Previously, cascade failures were silently applied with no operator notification. The `elmer.cascade` logger provides a dedicated channel for monitoring cascade events.
+
+**Why:** PID recycling can lock out the daemon on restart, requiring manual `.elmer/daemon.pid` deletion. Cascade failures can silently fail an entire plan without alerting the operator, defeating autonomous operation.
+
+**Files modified:** `daemon.py`, `explore.py`.

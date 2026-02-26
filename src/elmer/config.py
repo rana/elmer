@@ -109,6 +109,16 @@ max_turns = 50
 # log_stale_minutes = 60         # watchdog: kill if log unchanged for N minutes
 pending_ttl_days = 7              # auto-cancel pending explorations after N days
 
+[hooks]
+# Skill hooks: invoke project-defined Claude Code skills at lifecycle points.
+# Skills must exist in .claude/skills/<name>/SKILL.md.
+# Each hook receives the proposal text as context.
+# on_done = ["mission-align"]           # run after PROPOSAL.md is committed
+# pre_approve = ["cultural-lens"]       # run before auto-approve gate (must pass)
+# post_approve = []                     # run after merge (informational only)
+model = "sonnet"                        # model for skill hook sessions
+max_turns = 10                          # per-hook turn limit
+
 [verification]
 # on_done = "pnpm build && pnpm test"  # global verification for all explorations
 max_retries = 2                         # auto-amend attempts before marking failed
@@ -406,3 +416,62 @@ def list_bundled_agents() -> list[Path]:
     if not AGENTS_DIR.exists():
         return []
     return sorted(AGENTS_DIR.glob("*.md"))
+
+
+# ---------------------------------------------------------------------------
+# Skill resolution — Claude Code project skills (.claude/skills/)
+# ---------------------------------------------------------------------------
+
+def resolve_skill(project_dir: Path, skill_name: str) -> dict | None:
+    """Load a Claude Code skill from .claude/skills/<name>/SKILL.md.
+
+    Returns a dict with 'name', 'description', 'prompt' (the skill body),
+    or None if the skill doesn't exist.
+
+    Skills use YAML frontmatter (name, description, argument-hint) and
+    a markdown body with $ARGUMENTS substitution (ADR-064).
+    """
+    skill_path = project_dir / ".claude" / "skills" / skill_name / "SKILL.md"
+    if not skill_path.exists():
+        return None
+
+    content = skill_path.read_text()
+    metadata, body = parse_agent_file(content)
+    if not body:
+        return None
+
+    return {
+        "name": metadata.get("name", skill_name),
+        "description": metadata.get("description", f"Skill: {skill_name}"),
+        "prompt": body,
+        "argument_hint": metadata.get("argument-hint", ""),
+    }
+
+
+def list_project_skills(project_dir: Path) -> list[str]:
+    """List all skills available in a project's .claude/skills/ directory."""
+    skills_dir = project_dir / ".claude" / "skills"
+    if not skills_dir.exists():
+        return []
+    return sorted(
+        d.name for d in skills_dir.iterdir()
+        if d.is_dir() and (d / "SKILL.md").exists()
+    )
+
+
+def get_hook_skills(elmer_dir: Path) -> dict[str, list[str]]:
+    """Load skill hook configuration from [hooks] section.
+
+    Returns a dict mapping lifecycle events to lists of skill names:
+        {"on_done": ["mission-align"], "pre_approve": ["cultural-lens"]}
+    """
+    cfg = load_config(elmer_dir)
+    hooks = cfg.get("hooks", {})
+    result: dict[str, list[str]] = {}
+    for event in ("on_done", "pre_approve", "post_approve"):
+        skills = hooks.get(event, [])
+        if isinstance(skills, str):
+            skills = [skills]
+        if skills:
+            result[event] = skills
+    return result

@@ -167,6 +167,7 @@ def start_exploration(
     plan_id: Optional[str] = None,
     plan_step: Optional[int] = None,
     setup_cmd: Optional[str] = None,
+    blocked_by: Optional[str] = None,
 ) -> tuple[str, str]:
     """Start a new exploration. Returns (slug, archetype_used).
 
@@ -190,6 +191,9 @@ def start_exploration(
 
     setup_cmd: shell command run in the worktree after creation, before
     spawning the claude session. Used for dependency installation (ADR-044).
+
+    blocked_by: comma-separated external blocker IDs. Exploration stays
+    pending until all referenced blockers are resolved (ADR-065).
     """
     if not worker.check_claude_available():
         raise RuntimeError(
@@ -261,12 +265,20 @@ def start_exploration(
                     f"would create a circular dependency."
                 )
 
-    # Check if blocked by unmet dependencies
+    # Check if blocked by unmet dependencies or external blockers
     blocked = False
     if depends_on:
         for dep_id in depends_on:
             dep = state.get_exploration(conn, dep_id)
             if dep["status"] != "approved":
+                blocked = True
+                break
+
+    # External blockers (ADR-065): check if any referenced blockers are unresolved
+    if not blocked and blocked_by:
+        for bid in (b.strip() for b in blocked_by.split(",")):
+            blocker = state.get_blocker(conn, bid)
+            if blocker is None or blocker["status"] == "blocked":
                 blocked = True
                 break
 
@@ -292,8 +304,9 @@ def start_exploration(
             plan_id=plan_id,
             plan_step=plan_step,
             setup_cmd=setup_cmd,
+            blocked_by=blocked_by,
         )
-        for dep_id in depends_on:
+        for dep_id in (depends_on or []):
             state.add_dependency(conn, slug, dep_id)
         conn.close()
         return slug, archetype
@@ -696,8 +709,16 @@ def schedule_ready(elmer_dir: Path, project_dir: Path) -> list[str]:
             if plan_id:
                 state.update_plan(conn, plan_id, status="paused")
 
-    # Cascade failures — mark blocked explorations before scheduling
+    # Cascade failures — mark blocked explorations before scheduling.
+    # Log each cascade so operators can see the failure propagation (ADR-066).
+    import logging as _logging
+    _cascade_logger = _logging.getLogger("elmer.cascade")
+
     blocked = state.get_pending_blocked(conn)
+    if blocked:
+        _cascade_logger.warning(
+            "CASCADE: %d exploration(s) have failed/declined dependencies", len(blocked),
+        )
     for exp in blocked:
         dep_ids = state.get_dependencies(conn, exp["id"])
         failed_deps = []
@@ -706,6 +727,9 @@ def schedule_ready(elmer_dir: Path, project_dir: Path) -> list[str]:
             if dep and dep["status"] in ("failed", "declined"):
                 failed_deps.append(dep_id)
         dep_str = ", ".join(failed_deps)
+        _cascade_logger.warning(
+            "  CASCADE FAIL: %s — blocked by: %s", exp["id"], dep_str,
+        )
         state.update_exploration(
             conn, exp["id"],
             status="failed",
@@ -716,12 +740,24 @@ def schedule_ready(elmer_dir: Path, project_dir: Path) -> list[str]:
         plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
         if plan_id:
             state.update_plan(conn, plan_id, status="paused")
+            _cascade_logger.warning("  CASCADE PAUSE: plan %s paused", plan_id)
+
+    # External dependency check (ADR-065): skip explorations whose
+    # blocked_by references unresolved external blockers.
+    externally_blocked_ids: set[str] = set()
+    try:
+        ext_blocked = state.get_externally_blocked(conn)
+        externally_blocked_ids = {e["id"] for e in ext_blocked}
+    except Exception:
+        pass  # Table may not exist in older DBs
 
     ready = state.get_pending_ready(conn)
     conn.close()
 
     launched = []
     for exp in ready:
+        if exp["id"] in externally_blocked_ids:
+            continue  # Skip — waiting on external decision
         launch_pending(
             exploration_id=exp["id"],
             elmer_dir=elmer_dir,

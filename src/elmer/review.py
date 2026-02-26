@@ -11,7 +11,7 @@ from typing import Callable, Optional
 
 import click
 
-from . import autoapprove, config, explore as explore_mod, state, synthesize as synth_mod, worker, worktree as wt_mod
+from . import autoapprove, config, explore as explore_mod, hooks, state, synthesize as synth_mod, worker, worktree as wt_mod
 from .explore import slugify
 
 
@@ -209,6 +209,27 @@ def _accumulate_verification_seconds(conn, exploration_id: str, elapsed: float) 
     conn.commit()
 
 
+def _normalize_verification_output(text: str) -> str:
+    """Normalize verification output for comparison by stripping volatile tokens.
+
+    Removes timestamps, PIDs, temp paths, and memory addresses that differ
+    between runs even when the root failure is identical (ADR-062).
+    """
+    import re
+    s = text.strip()
+    # Strip ISO timestamps (2026-02-25T14:30:00Z, 2026-02-25 14:30:00)
+    s = re.sub(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.\dZ]*", "<TS>", s)
+    # Strip Unix-style timestamps (1740000000.123)
+    s = re.sub(r"\b\d{10,13}(?:\.\d+)?\b", "<TS>", s)
+    # Strip PIDs (pid=12345, PID 12345, process 12345)
+    s = re.sub(r"(?:pid[= ]?|PID[= ]?|process[= ]?)\d+", "<PID>", s, flags=re.IGNORECASE)
+    # Strip temp paths (/tmp/xxx, /var/folders/xxx)
+    s = re.sub(r"/(?:tmp|var/folders)/\S+", "<TMP>", s)
+    # Strip hex addresses (0x7fff1234abcd)
+    s = re.sub(r"0x[0-9a-fA-F]{6,}", "<ADDR>", s)
+    return s[:500]
+
+
 def _is_repeated_failure(elmer_dir: Path, exploration_id: str, output: str) -> bool:
     """Check if verification output matches the previous attempt's output.
 
@@ -216,11 +237,12 @@ def _is_repeated_failure(elmer_dir: Path, exploration_id: str, output: str) -> b
     auto-amend cannot help because the root cause is environmental, not in
     the code the agent is editing (ADR-050).
 
-    Compares the first 500 chars of normalized output — enough to detect
-    identical error messages while tolerating timestamp/pid differences.
+    Compares the first 500 chars of normalized output — timestamps, PIDs,
+    and temp paths are stripped before comparison to avoid false negatives
+    from volatile tokens (ADR-062).
     """
     verify_path = elmer_dir / "logs" / f"{exploration_id}.verify"
-    current = output.strip()[:500]
+    current = _normalize_verification_output(output)
 
     if verify_path.exists():
         try:
@@ -230,7 +252,7 @@ def _is_repeated_failure(elmer_dir: Path, exploration_id: str, output: str) -> b
         except OSError:
             pass
 
-    # Store current output for next comparison
+    # Store normalized output for next comparison
     try:
         verify_path.write_text(current)
     except OSError:
@@ -429,6 +451,39 @@ def _refresh_running(
                 # Commit PROPOSAL.md to the branch so it survives worktree
                 # removal and is recoverable via git show (ADR-034)
                 wt_mod.commit_proposal_to_branch(worktree_path, exp["id"])
+
+                # Skill hooks: on_done (ADR-064) — run after PROPOSAL.md is
+                # committed but before verification. A failing hook prevents
+                # the done transition (forces amend or human review).
+                if project_dir:
+                    try:
+                        proposal_text = proposal_path.read_text()
+                        hooks_passed, hook_results = hooks.run_event_hooks(
+                            event="on_done",
+                            proposal_text=proposal_text,
+                            exploration_id=exp["id"],
+                            elmer_dir=elmer_dir,
+                            project_dir=project_dir,
+                            notify=notify,
+                        )
+                        if not hooks_passed:
+                            failed_hooks = [name for name, passed, _ in hook_results if not passed]
+                            feedback = "\n".join(
+                                f"Hook '{name}' failed: {output[:200]}"
+                                for name, passed, output in hook_results if not passed
+                            )
+                            notify(f"  on_done hook(s) failed for {exp['id']}: {', '.join(failed_hooks)}")
+                            # Attempt auto-amend with hook feedback
+                            _attempt_auto_amend(
+                                elmer_dir, project_dir, exp,
+                                f"skill-hook:{','.join(failed_hooks)}", 1, feedback, notify,
+                            )
+                            if cost_fields:
+                                state.update_exploration(conn, exp["id"], **cost_fields)
+                            continue  # skip done transition — amend or fail
+                    except Exception as e:
+                        notify(f"  on_done hook error for {exp['id']}: {e}")
+                        # Best-effort — don't block on hook failures
 
                 # Verification hook (ADR-038): run verify_cmd before done transition
                 verify_cmd = exp["verify_cmd"] if "verify_cmd" in exp.keys() else None
@@ -766,6 +821,11 @@ def show_status(elmer_dir: Path, project_dir: Path = None, verbose: bool = False
                 conn_dep.close()
                 if unmet:
                     click.echo(f"      waiting on: {', '.join(unmet)}")
+
+            # External blockers (ADR-065): show blocked_by if present
+            blocked_by = exp["blocked_by"] if "blocked_by" in exp.keys() else None
+            if blocked_by:
+                click.echo(f"      blocked by: {blocked_by}")
 
     # Legend
     click.echo()

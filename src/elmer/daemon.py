@@ -22,6 +22,7 @@ from . import (
     explore as explore_mod,
     gate,
     generate as gen_mod,
+    hooks,
     plan as plan_mod,
     review,
     state,
@@ -44,22 +45,73 @@ class _DaemonState:
 
 
 def write_pidfile(elmer_dir: Path) -> Path:
-    """Write daemon PID to .elmer/daemon.pid."""
+    """Write daemon PID and start time to .elmer/daemon.pid.
+
+    Format: 'PID TIMESTAMP' — the timestamp detects stale PID files
+    from recycled process IDs (ADR-066).
+    """
     pidfile = elmer_dir / "daemon.pid"
-    pidfile.write_text(str(os.getpid()))
+    pidfile.write_text(f"{os.getpid()} {time.time():.0f}")
     return pidfile
 
 
 def read_pidfile(elmer_dir: Path) -> Optional[int]:
-    """Read daemon PID. Returns None if not running."""
+    """Read daemon PID. Returns None if not running or stale.
+
+    Validates process liveness AND pidfile freshness. If the process that
+    owns the PID started before the pidfile was written (PID recycled),
+    the pidfile is treated as stale and removed (ADR-066).
+    """
     pidfile = elmer_dir / "daemon.pid"
     if not pidfile.exists():
         return None
     try:
-        pid = int(pidfile.read_text().strip())
-        return pid if worker.is_running(pid) else None
+        parts = pidfile.read_text().strip().split()
+        pid = int(parts[0])
+
+        if not worker.is_running(pid):
+            # Process is dead — clean up stale pidfile
+            pidfile.unlink(missing_ok=True)
+            return None
+
+        # Validate timestamp to detect PID recycling (Linux only)
+        if len(parts) >= 2:
+            try:
+                pidfile_time = float(parts[1])
+                proc_start = _get_proc_start_time(pid)
+                if proc_start is not None:
+                    # If process started more than 60s before pidfile was written,
+                    # this PID belongs to a different process (recycled).
+                    if proc_start < pidfile_time - 60:
+                        pidfile.unlink(missing_ok=True)
+                        return None
+            except (ValueError, OSError):
+                pass  # Best-effort — fall through to basic PID check
+
+        return pid
     except (ValueError, OSError):
         return None
+
+
+def _get_proc_start_time(pid: int) -> Optional[float]:
+    """Get process start time in epoch seconds from /proc (Linux only)."""
+    try:
+        stat_path = Path(f"/proc/{pid}/stat")
+        if not stat_path.exists():
+            return None
+        stat_fields = stat_path.read_text().split()
+        if len(stat_fields) <= 21:
+            return None
+        # Field 22 is starttime in clock ticks since boot
+        clock_ticks = os.sysconf("SC_CLK_TCK")
+        # Get boot time from /proc/stat
+        for line in Path("/proc/stat").read_text().splitlines():
+            if line.startswith("btime "):
+                boot_time = float(line.split()[1])
+                return boot_time + int(stat_fields[21]) / clock_ticks
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
 
 
 def remove_pidfile(elmer_dir: Path) -> None:
@@ -347,6 +399,7 @@ def _run_cycle(
                     continue
 
                 retried_any = False
+                retry_failures = 0
                 for exp in retriable:
                     logger.info(
                         "Auto-retrying plan step %s (step %s in %s)",
@@ -363,12 +416,33 @@ def _run_cycle(
                         retried_any = True
                     except (RuntimeError, SystemExit) as e:
                         logger.warning("  Auto-retry failed for %s: %s", exp["id"], e)
+                        retry_failures += 1
 
                 if retried_any:
                     conn = state.get_db(elmer_dir)
                     state.update_plan(conn, plan_id, status="active")
                     conn.close()
                     logger.info("Plan %s: resumed after auto-retry", plan_id)
+                elif retry_failures == len(retriable):
+                    # All retries threw exceptions — mark retriable steps
+                    # as permanently failed so the daemon doesn't retry them
+                    # every cycle (stuck plan prevention, ADR-062).
+                    logger.warning(
+                        "Plan %s: all %d auto-retry(ies) failed with errors — "
+                        "marking steps as retried to prevent infinite loop",
+                        plan_id, retry_failures,
+                    )
+                    for exp in retriable:
+                        conn = state.get_db(elmer_dir)
+                        # Inject "## Previous Attempt Failed" marker so
+                        # the retry-eligibility filter skips these next cycle.
+                        current_topic = exp["topic"]
+                        if "## Previous Attempt Failed" not in current_topic:
+                            state.update_exploration(
+                                conn, exp["id"],
+                                topic=current_topic + "\n\n## Previous Attempt Failed\n\n(auto-retry threw an exception — needs human review)",
+                            )
+                        conn.close()
         except Exception as e:
             logger.warning("Plan auto-retry check failed: %s", e)
 
@@ -384,6 +458,10 @@ def _run_cycle(
         conn = state.get_db(elmer_dir)
         done_exps = state.list_explorations(conn, status="done")
         conn.close()
+
+        # FIFO ordering: approve oldest explorations first so long-waiting
+        # proposals aren't starved by newer ones (ADR-062).
+        done_exps = sorted(done_exps, key=lambda e: e.get("completed_at") or e["created_at"])
 
         # Safety bound: limit approvals per cycle (ADR-052)
         daemon_cfg = config.load_config(elmer_dir).get("daemon", {})
@@ -426,6 +504,31 @@ def _run_cycle(
                                         continue  # Skip approval — leave as 'done' for human review
                     except Exception as e:
                         logger.warning("Pre-approval completion check error for %s: %s", exp["id"], e)
+
+                # Skill hooks: pre_approve (ADR-064) — run before auto-approve gate.
+                # A failing hook blocks approval (leaves in 'done' for human review).
+                try:
+                    worktree_path = Path(exp["worktree_path"])
+                    proposal_path = worktree_path / "PROPOSAL.md"
+                    proposal_text = proposal_path.read_text() if proposal_path.exists() else ""
+                    hooks_passed, hook_results = hooks.run_event_hooks(
+                        event="pre_approve",
+                        proposal_text=proposal_text,
+                        exploration_id=exp["id"],
+                        elmer_dir=elmer_dir,
+                        project_dir=project_dir,
+                        notify=logger.info,
+                    )
+                    if not hooks_passed:
+                        failed_hooks = [name for name, passed, _ in hook_results if not passed]
+                        logger.info(
+                            "pre_approve hook(s) failed for %s: %s — holding for review",
+                            exp["id"], ", ".join(failed_hooks),
+                        )
+                        continue  # Skip approval — leave as 'done'
+                except Exception as e:
+                    logger.warning("pre_approve hook error for %s: %s", exp["id"], e)
+                    # Best-effort — proceed with normal approval on hook error
 
                 logger.info("Daemon auto-reviewing: %s%s", exp["id"],
                             " (plan step)" if is_plan_step else "")

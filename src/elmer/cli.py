@@ -1197,6 +1197,99 @@ def clean():
 
 
 @cli.command()
+@click.argument("blocker_id")
+@click.argument("description")
+def block(blocker_id, description):
+    """Register an external blocker (stakeholder decision, prerequisite).
+
+    Explorations with blocked_by referencing this ID will not be scheduled
+    until the blocker is resolved with 'elmer unblock'.
+
+    \b
+    Examples:
+        elmer block SRF-COPYRIGHT "Awaiting SRF copyright stance"
+        elmer block NEON-ACCOUNT "Neon project setup pending"
+    """
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+
+    conn = state.get_db(elmer_dir)
+    state.create_blocker(conn, id=blocker_id, description=description)
+    conn.close()
+    click.echo(f"Blocker registered: {blocker_id}")
+
+
+@cli.command()
+@click.argument("blocker_id")
+def unblock(blocker_id):
+    """Resolve an external blocker, unblocking dependent explorations.
+
+    \b
+    Examples:
+        elmer unblock SRF-COPYRIGHT
+    """
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+
+    conn = state.get_db(elmer_dir)
+    found = state.resolve_blocker(conn, blocker_id)
+    if found:
+        # Check how many explorations are now unblocked
+        pending = state.list_explorations(conn, status="pending")
+        unblocked = 0
+        for exp in pending:
+            blocked_by = exp["blocked_by"] if "blocked_by" in exp.keys() else None
+            if blocked_by and blocker_id in blocked_by:
+                # Check if ALL blockers for this exploration are now resolved
+                all_ids = [b.strip() for b in blocked_by.split(",")]
+                all_resolved = True
+                for bid in all_ids:
+                    blocker = state.get_blocker(conn, bid)
+                    if blocker and blocker["status"] == "blocked":
+                        all_resolved = False
+                        break
+                if all_resolved:
+                    unblocked += 1
+        conn.close()
+        click.echo(f"Blocker resolved: {blocker_id}")
+        if unblocked:
+            click.echo(f"  {unblocked} exploration(s) now unblocked")
+    else:
+        conn.close()
+        click.echo(f"Blocker '{blocker_id}' not found or already resolved.", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+def blockers():
+    """List all external blockers and their status.
+
+    Shows registered external dependencies with blocked/resolved status
+    and which explorations reference each blocker.
+    """
+    project_dir = _require_project()
+    elmer_dir = _require_elmer(project_dir)
+
+    conn = state.get_db(elmer_dir)
+    all_blockers = state.list_blockers(conn)
+
+    if not all_blockers:
+        click.echo("No external blockers registered.")
+        click.echo("Use 'elmer block <id> <description>' to register one.")
+        conn.close()
+        return
+
+    for b in all_blockers:
+        icon = "x" if b["status"] == "blocked" else "+"
+        click.echo(f"{icon} {b['id']:<30} {b['status']:<10} {b['description']}")
+        if b["resolved_at"]:
+            click.echo(f"    Resolved: {b['resolved_at']}")
+
+    conn.close()
+    click.echo(f"\n{len(all_blockers)} blocker(s) total")
+
+
+@cli.command()
 @click.argument("exploration_id")
 @click.option("--raw", is_flag=True, help="Show raw JSON log output")
 def logs(exploration_id, raw):

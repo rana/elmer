@@ -234,6 +234,8 @@ def execute_plan(
     exploration_ids: dict[int, str] = {}
     prev_id: Optional[str] = None
 
+    creation_errors: list[tuple[int, str]] = []
+
     for i in indices_to_run:
         if i < 0 or i >= len(steps):
             click.echo(f"  Step {i}: out of range (0-{len(steps) - 1}), skipping", err=True)
@@ -307,6 +309,32 @@ def execute_plan(
 
         except (RuntimeError, FileNotFoundError) as e:
             click.echo(f"  Step {i}: FAILED to create — {e}", err=True)
+            creation_errors.append((i, str(e)))
+
+    # If some steps failed to create, pause the plan to prevent the daemon
+    # from scheduling a plan with gaps (ADR-062: partial plan rollback).
+    if creation_errors and exploration_ids:
+        conn = state.get_db(elmer_dir)
+        state.update_plan(conn, plan_id, status="paused")
+        conn.close()
+        click.echo(
+            f"\nWarning: {len(creation_errors)} step(s) failed to create. "
+            f"Plan paused to prevent execution with gaps.",
+            err=True,
+        )
+        for step_idx, err in creation_errors:
+            click.echo(f"  Step {step_idx}: {err}", err=True)
+        click.echo(
+            f"Fix the issues and use 'elmer implement --load-plan ... --steps {','.join(str(i) for i, _ in creation_errors)}' "
+            f"to retry failed steps.",
+            err=True,
+        )
+    elif creation_errors and not exploration_ids:
+        # All steps failed — mark plan as failed entirely
+        conn = state.get_db(elmer_dir)
+        state.update_plan(conn, plan_id, status="failed")
+        conn.close()
+        click.echo(f"\nPlan {plan_id}: all steps failed to create — plan marked failed", err=True)
 
     click.echo(f"\nPlan {plan_id}: {len(exploration_ids)} step(s) created")
     if step_filter:

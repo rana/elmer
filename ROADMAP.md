@@ -93,8 +93,8 @@ Persistent status view (curses or web) showing real-time daemon cycle progress, 
 **D3. Multi-document transactional updates** (Medium)
 Proposal graduation in srf (PRO-NNN → ADR/DES) requires coordinated updates to 4+ documents. If any update fails or creates inconsistency, the whole graduation should roll back. Currently, Elmer explorations touch files independently. A "transactional exploration" mode could bundle related document changes with pre-merge invariant validation.
 
-**D4. External dependency tracking** (Small-Medium)
-srf has 15+ stakeholder decisions that block implementation (SRF copyright stance, editorial voice, crisis resources). Elmer has no concept of external blockers. Plan steps could have a `blocked_by` field referencing external decision IDs, with the daemon skipping blocked steps until manually unblocked.
+**D4. External dependency tracking** — RESOLVED (ADR-065)
+New `external_blockers` table and `blocked_by` column on explorations. CLI commands: `elmer block`, `elmer unblock`, `elmer blockers`. Explorations referencing unresolved blockers stay pending. Status display shows `blocked by:` for pending explorations.
 
 **D5. Arc/milestone orchestration** (Large)
 srf has 7 arcs and 15 milestones forming a multi-month delivery structure. Elmer's `implement` handles single plans but not hierarchical plan composition. A "plan of plans" or milestone grouping would let Elmer orchestrate arc-level delivery with per-milestone plans.
@@ -118,8 +118,8 @@ When synthesis fails (API outage), no mechanism to re-trigger. Add automatic re-
 **F2. Plan step duration estimation** — RESOLVED (ADR-061)
 `estimate_plan_duration()` sums `estimated_seconds` from plan JSON. Warns on partial/invalid estimates. `max_plan_hours` config option (advisory). Plan status shows estimated vs actual verification time.
 
-**F3. Custom skills as verification hooks** (Small-Medium)
-srf has 6 Claude Code skills (`.claude/skills/`). Elmer could invoke project-defined skills as post-exploration or pre-merge hooks — e.g., run `/dedup-proposals` after a batch of explorations complete, or `/mission-align` as part of auto-approve review.
+**F3. Custom skills as verification hooks** — RESOLVED (ADR-064)
+New `hooks.py` module invokes project-defined Claude Code skills at lifecycle points (`on_done`, `pre_approve`, `post_approve`). Skills loaded from `.claude/skills/<name>/SKILL.md`. Configured in `[hooks]` config section. Skills must output `VERDICT: PASS/FAIL` to gate transitions.
 
 ---
 
@@ -127,4 +127,4 @@ srf has 6 Claude Code skills (`.claude/skills/`). Elmer could invoke project-def
 
 See Open Questions in CONTEXT.md. Features discussed but not committed are tracked there.
 
-*Last updated: 2026-02-25, F2 (ADR-061) resolved, 10 remaining future directions*
+*Last updated: 2026-02-25, F3 (ADR-064) + D4 (ADR-065) resolved, daemon resilience ADR-062/063/066, 7 remaining future directions*

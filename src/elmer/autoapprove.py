@@ -43,7 +43,7 @@ def evaluate(
     conn.close()
 
     if exp is None or exp["status"] != "done":
-        return False
+        return False  # conn already closed above
 
     # Load config (needed for both paths)
     cfg = config.load_config(elmer_dir)

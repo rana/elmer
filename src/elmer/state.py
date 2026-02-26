@@ -58,7 +58,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                          ("amend_count", "INTEGER DEFAULT 0"),
                          ("setup_cmd", "TEXT"),
                          ("verification_failures", "INTEGER DEFAULT 0"),
-                         ("verification_seconds", "REAL DEFAULT 0")]:
+                         ("verification_seconds", "REAL DEFAULT 0"),
+                         ("blocked_by", "TEXT")]:
         try:
             conn.execute(f"ALTER TABLE explorations ADD COLUMN {col} {coltype}")
         except sqlite3.OperationalError:
@@ -115,6 +116,16 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     """)
 
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS external_blockers (
+            id TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'blocked',
+            created_at TEXT NOT NULL,
+            resolved_at TEXT
+        )
+    """)
+
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS daemon_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             cycle_number INTEGER NOT NULL,
@@ -160,6 +171,7 @@ def create_exploration(
     plan_id: Optional[str] = None,
     plan_step: Optional[int] = None,
     setup_cmd: Optional[str] = None,
+    blocked_by: Optional[str] = None,
 ) -> None:
     conn.execute(
         """
@@ -167,13 +179,13 @@ def create_exploration(
             (id, topic, archetype, branch, worktree_path, status, model, pid,
              created_at, parent_id, max_turns, auto_approve, generate_prompt,
              on_approve, on_decline, ensemble_id, ensemble_role,
-             verify_cmd, plan_id, plan_step, setup_cmd)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             verify_cmd, plan_id, plan_step, setup_cmd, blocked_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (id, topic, archetype, branch, worktree_path, status, model, pid,
          _now(), parent_id, max_turns, int(auto_approve), int(generate_prompt),
          on_approve, on_decline, ensemble_id, ensemble_role,
-         verify_cmd, plan_id, plan_step, setup_cmd),
+         verify_cmd, plan_id, plan_step, setup_cmd, blocked_by),
     )
     conn.commit()
 
@@ -483,3 +495,66 @@ def increment_verification_failures(conn: sqlite3.Connection, exploration_id: st
         "SELECT verification_failures FROM explorations WHERE id = ?", (exploration_id,),
     ).fetchone()
     return row["verification_failures"] if row else 0
+
+
+# --- External blockers (ADR-065) ---
+
+
+def create_blocker(
+    conn: sqlite3.Connection,
+    *,
+    id: str,
+    description: str,
+) -> None:
+    """Create an external blocker (stakeholder decision, prerequisite, etc.)."""
+    conn.execute(
+        "INSERT OR IGNORE INTO external_blockers (id, description, status, created_at) VALUES (?, ?, 'blocked', ?)",
+        (id, description, _now()),
+    )
+    conn.commit()
+
+
+def resolve_blocker(conn: sqlite3.Connection, blocker_id: str) -> bool:
+    """Mark an external blocker as resolved. Returns True if found."""
+    result = conn.execute(
+        "UPDATE external_blockers SET status = 'resolved', resolved_at = ? WHERE id = ? AND status = 'blocked'",
+        (_now(), blocker_id),
+    )
+    conn.commit()
+    return result.rowcount > 0
+
+
+def get_blocker(conn: sqlite3.Connection, blocker_id: str) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM external_blockers WHERE id = ?", (blocker_id,)
+    ).fetchone()
+
+
+def list_blockers(conn: sqlite3.Connection, status: Optional[str] = None) -> list[sqlite3.Row]:
+    if status:
+        return conn.execute(
+            "SELECT * FROM external_blockers WHERE status = ? ORDER BY created_at",
+            (status,),
+        ).fetchall()
+    return conn.execute(
+        "SELECT * FROM external_blockers ORDER BY created_at"
+    ).fetchall()
+
+
+def get_externally_blocked(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Get pending explorations that reference unresolved external blockers.
+
+    The blocked_by column contains a comma-separated list of blocker IDs.
+    An exploration is externally blocked if ANY referenced blocker is still 'blocked'.
+    """
+    return conn.execute("""
+        SELECT e.* FROM explorations e
+        WHERE e.status = 'pending'
+        AND e.blocked_by IS NOT NULL
+        AND e.blocked_by != ''
+        AND EXISTS (
+            SELECT 1 FROM external_blockers b
+            WHERE b.status = 'blocked'
+            AND (',' || e.blocked_by || ',') LIKE ('%,' || b.id || ',%')
+        )
+    """).fetchall()
