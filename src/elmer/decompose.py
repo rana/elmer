@@ -465,3 +465,87 @@ def detect_parallel_conflicts(plan: dict) -> list[str]:
                 )
 
     return warnings
+
+
+def validate_key_files_flow(plan: dict) -> list[str]:
+    """Validate key_files dependency flow across plan steps (ADR-076).
+
+    Checks that steps declaring key_files are reachable (via depends_on) by
+    at least one later step, and that later steps which consume key_files
+    from prior steps actually depend on those producers. Catches wasted
+    context injection (orphaned producers) and missing dependencies (a step
+    expects files that aren't in its dependency chain).
+
+    Returns list of warning strings. Empty list means no issues found.
+    """
+    steps = plan.get("steps", [])
+    if not steps:
+        return []
+
+    warnings: list[str] = []
+    num_steps = len(steps)
+
+    # Build transitive dependency closure per step
+    transitive_deps: dict[int, set[int]] = {i: set() for i in range(num_steps)}
+    for i in range(num_steps):
+        direct = set(steps[i].get("depends_on", []))
+        queue = list(direct)
+        visited: set[int] = set()
+        while queue:
+            dep = queue.pop(0)
+            if dep in visited or dep < 0 or dep >= num_steps:
+                continue
+            visited.add(dep)
+            queue.extend(steps[dep].get("depends_on", []))
+        transitive_deps[i] = visited
+
+    # Build reverse map: which later steps transitively depend on step i?
+    dependents: dict[int, set[int]] = {i: set() for i in range(num_steps)}
+    for i in range(num_steps):
+        for dep in transitive_deps[i]:
+            dependents[dep].add(i)
+
+    # Check 1: Orphaned producers — steps with key_files that no later step depends on.
+    # Their artifacts are never injected into any downstream context.
+    for i, step in enumerate(steps):
+        key_files = step.get("key_files", [])
+        if not key_files:
+            continue
+        # Last step naturally has no dependents
+        if i == num_steps - 1:
+            continue
+        if not dependents[i]:
+            warnings.append(
+                f"step {i} declares key_files {key_files} but no later step "
+                f"depends on it — artifacts will never be injected"
+            )
+
+    # Check 2: Build a map of which files each step's dependency chain produces
+    # (file -> producing step index).
+    file_producers: dict[str, list[int]] = {}
+    for i, step in enumerate(steps):
+        for f in step.get("key_files", []):
+            file_producers.setdefault(f, []).append(i)
+
+    # Check 3: For each step, verify that key_files it shares with a prior
+    # producer are in its dependency chain. If step A produces file X and
+    # step B also declares X in key_files but doesn't depend on A, warn
+    # that the file may not exist when B runs.
+    for i in range(1, num_steps):
+        step_ancestors = transitive_deps[i]
+        step_key_files = set(steps[i].get("key_files", []))
+
+        for f, producers in file_producers.items():
+            if f not in step_key_files:
+                continue
+            for prod_idx in producers:
+                if prod_idx == i:
+                    continue  # Same step
+                if prod_idx not in step_ancestors and prod_idx < i:
+                    warnings.append(
+                        f"step {i} declares key_file '{f}' also produced by "
+                        f"step {prod_idx}, but doesn't depend on it — "
+                        f"file may not exist yet when step {i} runs"
+                    )
+
+    return warnings

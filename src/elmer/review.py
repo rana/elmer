@@ -121,22 +121,71 @@ def _extract_summary(proposal_path: Path, max_lines: int = 5) -> str:
     return " ".join(summary_lines)[:200] if summary_lines else "(empty proposal)"
 
 
-def _diagnose_failure(log_path: Path) -> str:
+# Failure categories — machine-readable taxonomy (ADR-076)
+FAILURE_NO_LOG = "no_log"
+FAILURE_EMPTY_LOG = "empty_log"
+FAILURE_LOG_CORRUPT = "log_corrupt"
+FAILURE_CLAUDE_ERROR = "claude_error"
+FAILURE_WRONG_PATH = "wrong_path"
+FAILURE_PROPOSAL_MISSING = "proposal_missing"
+FAILURE_PERMISSION_DENIED = "permission_denied"
+FAILURE_NO_PROPOSAL = "no_proposal"
+FAILURE_VERIFICATION_FAILED = "verification_failed"
+FAILURE_VERIFICATION_EXHAUSTED = "verification_exhausted"
+FAILURE_STALE_PENDING = "stale_pending"
+FAILURE_DEPENDENCY_FAILED = "dependency_failed"
+FAILURE_BRANCH_CONFLICT = "branch_conflict"
+
+# Retry policy per failure category (ADR-076):
+#   "retry"              — transient failure, worth automatic retry
+#   "retry_with_context" — retriable, failure context injected into next attempt
+#   "skip"               — permanent failure, never retry automatically
+RETRY_POLICY: dict[str, str] = {
+    FAILURE_NO_LOG: "retry",
+    FAILURE_EMPTY_LOG: "retry",
+    FAILURE_LOG_CORRUPT: "retry",
+    FAILURE_CLAUDE_ERROR: "retry",
+    FAILURE_WRONG_PATH: "retry_with_context",
+    FAILURE_PROPOSAL_MISSING: "retry_with_context",
+    FAILURE_NO_PROPOSAL: "retry_with_context",
+    FAILURE_PERMISSION_DENIED: "skip",
+    FAILURE_VERIFICATION_FAILED: "skip",          # handled by verification retry loop
+    FAILURE_VERIFICATION_EXHAUSTED: "skip",
+    FAILURE_STALE_PENDING: "skip",
+    FAILURE_DEPENDENCY_FAILED: "skip",            # handled by cascade logic
+    FAILURE_BRANCH_CONFLICT: "skip",
+}
+
+
+def get_retry_policy(failure_category: str | None) -> str:
+    """Return the retry policy for a failure category.
+
+    Returns "retry", "retry_with_context", or "skip".
+    Unknown categories default to "retry_with_context" (conservative).
+    None (pre-taxonomy failures) defaults to "retry_with_context".
+    """
+    if failure_category is None:
+        return "retry_with_context"
+    return RETRY_POLICY.get(failure_category, "retry_with_context")
+
+
+def _diagnose_failure(log_path: Path) -> tuple[str, str]:
     """Extract a structured failure reason from a claude session log.
 
-    Parses the JSON log to determine why PROPOSAL.md wasn't created,
-    returning a human-readable reason string.
+    Parses the JSON log to determine why PROPOSAL.md wasn't created.
+    Returns (failure_category, human_readable_reason) — the category is a
+    machine-readable enum value from the FAILURE_* constants (ADR-076).
     """
     if not log_path.exists():
-        return "(no log file — session may not have started)"
+        return FAILURE_NO_LOG, "(no log file — session may not have started)"
 
     try:
         raw = log_path.read_text().strip()
         if not raw:
-            return "(empty log file — session produced no output)"
+            return FAILURE_EMPTY_LOG, "(empty log file — session produced no output)"
         data = json.loads(raw)
     except (json.JSONDecodeError, OSError):
-        return "(log file not valid JSON — session may have crashed)"
+        return FAILURE_LOG_CORRUPT, "(log file not valid JSON — session may have crashed)"
 
     # Handle streaming format (list of objects)
     if isinstance(data, list):
@@ -148,31 +197,30 @@ def _diagnose_failure(log_path: Path) -> str:
             data = data[-1] if data else {}
 
     if not isinstance(data, dict):
-        return "(unexpected log format)"
+        return FAILURE_LOG_CORRUPT, "(unexpected log format)"
 
     # Check if claude reported an error
     if data.get("is_error"):
         result = str(data.get("result", ""))[:150]
-        return f"(claude error: {result})"
+        return FAILURE_CLAUDE_ERROR, f"(claude error: {result})"
 
     # Check if the result mentions PROPOSAL.md (wrote to wrong location)
     result = str(data.get("result", ""))
     if "PROPOSAL.md" in result or "proposal" in result.lower():
         # Check for explicit wrong-path writes
-        import re
         paths = re.findall(r"written[^/]*(/[^\s\"']+PROPOSAL\.md)", result)
         if paths:
-            return f"(PROPOSAL.md written to wrong path: {paths[0]})"
-        return "(claude reported writing PROPOSAL.md but file not found in worktree)"
+            return FAILURE_WRONG_PATH, f"(PROPOSAL.md written to wrong path: {paths[0]})"
+        return FAILURE_PROPOSAL_MISSING, "(claude reported writing PROPOSAL.md but file not found in worktree)"
 
     # Check permission denials
     denials = data.get("permission_denials", [])
     if denials:
         tools = [d.get("tool_name", "?") for d in denials]
-        return f"(no PROPOSAL.md; {len(denials)} permission denial(s): {', '.join(tools)})"
+        return FAILURE_PERMISSION_DENIED, f"(no PROPOSAL.md; {len(denials)} permission denial(s): {', '.join(tools)})"
 
     num_turns = data.get("num_turns")
-    return f"(no PROPOSAL.md produced — session completed {num_turns or '?'} turns normally)"
+    return FAILURE_NO_PROPOSAL, f"(no PROPOSAL.md produced — session completed {num_turns or '?'} turns normally)"
 
 
 def parse_log_details(log_path: Path) -> Optional[dict]:
@@ -572,6 +620,7 @@ def _refresh_running(
                                         status="failed",
                                         completed_at=datetime.now(timezone.utc).isoformat(),
                                         proposal_summary=f"(verification failed, fallback also failed: {verify_cmd})",
+                                        failure_category=FAILURE_VERIFICATION_EXHAUSTED,
                                         **cost_fields,
                                     )
                                     plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
@@ -586,6 +635,7 @@ def _refresh_running(
                                     status="failed",
                                     completed_at=datetime.now(timezone.utc).isoformat(),
                                     proposal_summary=f"(verification failed: {verify_cmd})",
+                                    failure_category=FAILURE_VERIFICATION_EXHAUSTED,
                                     **cost_fields,
                                 )
                                 plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
@@ -611,13 +661,14 @@ def _refresh_running(
                 )
                 newly_done.append(exp)
             else:
-                reason = _diagnose_failure(log_path)
+                category, reason = _diagnose_failure(log_path)
                 state.update_exploration(
                     conn,
                     exp["id"],
                     status="failed",
                     completed_at=datetime.now(timezone.utc).isoformat(),
                     proposal_summary=reason,
+                    failure_category=category,
                     **cost_fields,
                 )
 
@@ -692,6 +743,7 @@ def _refresh_running(
                                         status="failed",
                                         completed_at=datetime.now(timezone.utc).isoformat(),
                                         proposal_summary=f"(verification+fallback failed after amend: {verify_cmd})",
+                                        failure_category=FAILURE_VERIFICATION_EXHAUSTED,
                                     )
                                     plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
                                     if plan_id:
@@ -704,6 +756,7 @@ def _refresh_running(
                                     status="failed",
                                     completed_at=datetime.now(timezone.utc).isoformat(),
                                     proposal_summary=f"(verification failed after amend: {verify_cmd})",
+                                    failure_category=FAILURE_VERIFICATION_EXHAUSTED,
                                 )
                                 plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
                                 if plan_id:
@@ -939,6 +992,9 @@ def show_proposal(elmer_dir: Path, exploration_id: str) -> None:
     click.echo(f"Created:     {exp['created_at']}")
     if exp["completed_at"]:
         click.echo(f"Completed:   {exp['completed_at']}")
+    failure_cat = exp["failure_category"] if "failure_category" in exp.keys() else None
+    if failure_cat:
+        click.echo(f"Failure:     {failure_cat}")
 
     # Display frontmatter metadata if present (H2)
     if proposal_path.exists():

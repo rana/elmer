@@ -37,7 +37,14 @@ def evaluate(
     project_dir: Path,
     exploration_id: str,
 ) -> bool:
-    """Evaluate a proposal for auto-approval. Returns True if approved."""
+    """Evaluate a proposal for auto-approval. Returns True if approved.
+
+    Gate behavior depends on [auto_approve].policy (ADR-076):
+    - "review" (default): structural validation → verification shortcut → AI review
+    - "verification_sufficient": structural validation → approve if verify_cmd
+      passed (tests are the definitive gate), fall through to AI review only
+      when no verify_cmd exists
+    """
     conn = state.get_db(elmer_dir)
     exp = state.get_exploration(conn, exploration_id)
     conn.close()
@@ -51,6 +58,7 @@ def evaluate(
     verify_cfg = cfg.get("verification", {})
     max_files = aa_cfg.get("max_files_changed", 10)
     require_proposal = aa_cfg.get("require_proposal", True)
+    policy = aa_cfg.get("policy", "review")
 
     # Read proposal
     worktree_path = Path(exp["worktree_path"])
@@ -74,14 +82,24 @@ def evaluate(
         conn.close()
         return False
 
-    # Verification shortcut: if verify_cmd passed, tests are the authority.
-    # For plan steps, bypass diff size guard entirely — scaffold steps
-    # routinely create 20+ files and tests are the definitive quality check.
-    # For standalone explorations, apply diff size guard as a safety net.
     verify_cmd = exp["verify_cmd"] if "verify_cmd" in exp.keys() else None
     auto_approve_on_pass = verify_cfg.get("auto_approve_on_pass", True)
     is_plan_step = bool(exp["plan_id"] if "plan_id" in exp.keys() else None)
 
+    # Trust escalation (ADR-076): "verification_sufficient" policy trusts
+    # passing tests as the definitive quality gate. If verify_cmd exists and
+    # the exploration reached "done" (meaning verification already passed in
+    # _refresh_running), approve without AI review. No diff size guard —
+    # if the tests pass, the change is acceptable.
+    if policy == "verification_sufficient" and verify_cmd:
+        gate.approve_exploration(elmer_dir, project_dir, exploration_id)
+        return True
+
+    # Verification shortcut (default "review" policy): if verify_cmd passed,
+    # tests are the authority but still respect diff size guards.
+    # For plan steps, bypass diff size guard entirely — scaffold steps
+    # routinely create 20+ files and tests are the definitive quality check.
+    # For standalone explorations, apply diff size guard as a safety net.
     if verify_cmd and auto_approve_on_pass:
         if is_plan_step:
             # Plan steps: tests passed = approve regardless of diff size.

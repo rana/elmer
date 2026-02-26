@@ -90,6 +90,7 @@ def elmer_status(status_filter: Optional[str] = None) -> dict:
                 "cost_usd": exp["cost_usd"],
                 "parent_id": exp["parent_id"],
                 "has_proposal": exp["proposal_summary"] is not None,
+                "failure_category": exp["failure_category"] if s == "failed" else None,
             }
 
             # Progress indicators for active explorations
@@ -173,6 +174,7 @@ def elmer_review(
                     "status": exp["status"],
                     "archetype": exp["archetype"],
                     "created_at": exp["created_at"],
+                    "failure_category": exp["failure_category"] if exp["status"] == "failed" else None,
                 }
                 for exp in proposals
             ]
@@ -219,6 +221,7 @@ def elmer_review(
             "input_tokens": exp["input_tokens"],
             "output_tokens": exp["output_tokens"],
             "num_turns_actual": exp["num_turns_actual"],
+            "failure_category": exp["failure_category"] if exp["status"] == "failed" else None,
             "dependencies": dependencies,
             "dependents": dependents,
         }

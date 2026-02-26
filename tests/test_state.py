@@ -29,7 +29,7 @@ class TestSchema:
             "num_turns_actual", "on_approve", "on_decline", "decline_reason",
             "ensemble_id", "ensemble_role", "verify_cmd", "plan_id",
             "plan_step", "amend_count", "setup_cmd", "verification_failures",
-            "verification_seconds", "blocked_by",
+            "verification_seconds", "blocked_by", "failure_category",
         }
         assert expected.issubset(cols), f"Missing columns: {expected - cols}"
 

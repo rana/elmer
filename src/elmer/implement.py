@@ -13,7 +13,7 @@ from typing import Optional
 import click
 
 from . import config, explore as explore_mod, state, worktree as wt_mod
-from .decompose import estimate_plan_duration, validate_prerequisites, validate_step_metadata
+from .decompose import estimate_plan_duration, validate_key_files_flow, validate_prerequisites, validate_step_metadata
 
 
 def _build_step_context(
@@ -202,6 +202,11 @@ def execute_plan(
     meta_warnings = validate_step_metadata(plan)
     for w in meta_warnings:
         click.echo(f"  Metadata warning: {w}", err=True)
+
+    # Semantic key_files flow validation (ADR-076)
+    kf_warnings = validate_key_files_flow(plan)
+    for w in kf_warnings:
+        click.echo(f"  Key-files warning: {w}", err=True)
 
     # Duration estimate check (ADR-061)
     total_seconds, dur_warnings = estimate_plan_duration(plan)

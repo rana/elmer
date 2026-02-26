@@ -710,6 +710,13 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
                 click.echo(f"  ~ {c}")
             click.echo("  (Use --max-concurrent=1 to avoid, or add depends_on to serialize)")
 
+        # Semantic key_files flow validation (ADR-076)
+        kf_warnings = decompose_mod.validate_key_files_flow(plan)
+        if kf_warnings:
+            click.echo(f"\nKey-files flow warnings ({len(kf_warnings)}):")
+            for w in kf_warnings:
+                click.echo(f"  ~ {w}")
+
         # Show prerequisite check results
         prereqs = plan.get("prerequisites", {})
         if prereqs:
@@ -1554,6 +1561,17 @@ def validate(model, check):
         click.echo()
     else:
         click.echo("State invariants: all passed.")
+        click.echo()
+
+    # Config validation: check for interdependency issues (ADR-076)
+    config_warnings = config.validate_config(cfg)
+    if config_warnings:
+        click.echo("Config warnings:")
+        for w in config_warnings:
+            click.echo(f"  ! {w}")
+        click.echo()
+    else:
+        click.echo("Config: all checks passed.")
         click.echo()
 
     click.echo(f"Validating document invariants (model: {inv_model})...")

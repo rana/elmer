@@ -59,7 +59,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                          ("setup_cmd", "TEXT"),
                          ("verification_failures", "INTEGER DEFAULT 0"),
                          ("verification_seconds", "REAL DEFAULT 0"),
-                         ("blocked_by", "TEXT")]:
+                         ("blocked_by", "TEXT"),
+                         ("failure_category", "TEXT")]:
         try:
             conn.execute(f"ALTER TABLE explorations ADD COLUMN {col} {coltype}")
         except sqlite3.OperationalError:

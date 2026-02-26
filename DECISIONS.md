@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-58 ADRs recorded.
+59 ADRs recorded.
 
 ## Domain Index
 
@@ -66,6 +66,7 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-073 | Observability | Archetype effectiveness diagnosis (I1) |
 | ADR-074 | Intelligence | Document routing annotations and per-step prerequisites |
 | ADR-075 | Quality | Testing philosophy — AI immune system, three layers |
+| ADR-076 | Autonomy | Failure taxonomy, trust escalation, config validation, retry policy, key-files flow |
 
 ---
 
@@ -1527,3 +1528,39 @@ All are best-effort (exceptions caught silently) and called in `_resolve_agent_a
 - Self-verification already in place: `.elmer/config.toml` has `on_done = "uv run python -m pytest tests/ -q"`.
 
 **Result:** 169 tests across 13 files, all passing in <1s. From 64 tests / 9 files to 169 tests / 13 files.
+
+*Revised: 2026-02-26, test count now 218 across 18 files after ADR-076 additions.*
+
+## ADR-076: Autonomous Operation — Failure Taxonomy, Trust Escalation, Config Validation
+
+**Decision:** Three coordinated changes to reduce human touchpoints for autonomous AI operation of elmer.
+
+**Context:** With all seven development phases complete and 22 future directions partially resolved, the remaining friction for fully autonomous operation concentrated in three areas: (1) failures were diagnosed as narrative strings, requiring log file parsing to categorize; (2) the AI review gate had no graduation path — even when verification commands comprehensively validate code quality, an AI reviewer still runs; (3) config interdependencies were implicit, causing silent misconfiguration that wasted hours.
+
+**1. Structured Failure Taxonomy.**
+Added `failure_category` column to the explorations table. Every failure transition now records a machine-readable category alongside the human-readable `proposal_summary`. Categories: `no_log`, `empty_log`, `log_corrupt`, `claude_error`, `wrong_path`, `proposal_missing`, `permission_denied`, `no_proposal`, `verification_failed`, `verification_exhausted`, `stale_pending`, `dependency_failed`, `branch_conflict`. Exposed in `elmer review`, `elmer_status` MCP tool, and `elmer_review` MCP tool. An AI operator can now filter and react to failures programmatically without parsing log files.
+
+**2. Trust Escalation Policy.**
+Added `[auto_approve].policy` config option with two values:
+- `"review"` (default): existing three-layer gate — structural validation, verification shortcut (with diff size guard), AI review.
+- `"verification_sufficient"`: structural validation, then approve if verify_cmd exists (tests passed = change is acceptable). Falls through to AI review only when no verify_cmd exists. No diff size guard — passing tests are the definitive quality gate.
+
+This is a trust escalation ladder, not an override. Projects with comprehensive test suites can graduate from AI review to test-only gating. The structural validation layer (empty/short/TODO proposals) always runs regardless of policy.
+
+**3. Config Validation.**
+Added `validate_config(cfg) -> list[str]` to config.py. Fast, deterministic checks — no filesystem, no AI. Catches: daemon.auto_approve without [auto_approve] section, daemon.auto_generate without [generate], max_concurrent < 1, generate_threshold >= max_concurrent (topics never generated), unknown auto_approve policy, verification_sufficient without on_done, negative max_retries, zero pending_ttl_days. Integrated into daemon startup (warns before entering loop) and `elmer validate` CLI (alongside state invariants and document invariants).
+
+**Alternatives considered:**
+- Per-exploration failure_reason JSON field (rejected: over-engineering for what's effectively an enum)
+- Confidence scoring in the review gate (deferred: the binary policy switch is simpler and covers the primary use case; confidence scoring can layer on later)
+- Config schema validation with a schema library (rejected: TOML + simple Python checks are consistent with elmer's no-external-dependency principle)
+
+**4. Failure-Aware Retry Policy.**
+Added `RETRY_POLICY` dict and `get_retry_policy()` to review.py. Each failure category maps to a retry disposition: `"retry"` (transient — infrastructure issues like `no_log`, `empty_log`, `claude_error`), `"retry_with_context"` (agent errors like `wrong_path`, `no_proposal` — injected failure context helps), or `"skip"` (permanent — `permission_denied`, `verification_exhausted`, `branch_conflict`). The daemon's plan step auto-retry (Step 1.75) now consults this policy before retrying, preventing wasted compute on failures that require configuration changes or human intervention. Unknown/legacy categories (None) default to `retry_with_context`.
+
+**5. Semantic Plan Pre-Flight Validation.**
+Added `validate_key_files_flow()` to decompose.py. Checks two conditions: (a) orphaned producers — steps declaring key_files that no later step depends on (artifacts will never be injected into downstream context), and (b) missing dependencies — steps sharing a key_file but lacking a dependency chain (file may not exist when the later step runs). Integrated into `implement --dry-run` and `execute_plan` runtime. Deterministic, O(n²) in step count — fast for typical plans (2–10 steps).
+
+**Testing:** 49 new tests across 5 files (test_failure_taxonomy.py, test_autoapprove_policy.py, test_config_validation.py, test_retry_policy.py, test_key_files_flow.py). Full suite: 218 tests, all passing.
+
+*Revised: 2026-02-26, added failure-aware retry policy and semantic plan pre-flight validation.*

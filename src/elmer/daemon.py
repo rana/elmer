@@ -244,6 +244,13 @@ def run_daemon(
             else:
                 logger.warning("Invalid audit schedule entry (expected 'archetype:topic'): %s", entry)
 
+    # Config validation (ADR-076): warn about misconfiguration before entering loop
+    startup_cfg = config.load_config(elmer_dir)
+    config_warnings = config.validate_config(startup_cfg)
+    for w in config_warnings:
+        logger.warning("Config: %s", w)
+        click.echo(f"  ⚠ {w}", err=True)
+
     logger.info(
         "Daemon started (PID %d), interval %ds, auto_approve=%s, auto_generate=%s, audit=%s",
         os.getpid(), interval_seconds, auto_approve, auto_generate, audit_enabled,
@@ -386,12 +393,31 @@ def _run_cycle(
                 if not root_failures:
                     continue
 
-                # Don't retry steps that already had a retry attempt
-                # (failure-aware retry injects "## Previous Attempt Failed" into topic)
+                # Failure-aware retry policy (ADR-076): consult the failure
+                # taxonomy to skip permanent failures (permission_denied,
+                # verification_exhausted, etc.) and only retry transient ones.
                 retriable = [
                     e for e in root_failures
                     if "## Previous Attempt Failed" not in e["topic"]
+                    and review.get_retry_policy(
+                        e["failure_category"] if "failure_category" in e.keys() else None
+                    ) != "skip"
                 ]
+                # Log permanent failures that are being skipped
+                skipped_permanent = [
+                    e for e in root_failures
+                    if "## Previous Attempt Failed" not in e["topic"]
+                    and review.get_retry_policy(
+                        e["failure_category"] if "failure_category" in e.keys() else None
+                    ) == "skip"
+                ]
+                for e in skipped_permanent:
+                    fc = e["failure_category"] if "failure_category" in e.keys() else None
+                    logger.info(
+                        "Plan %s: skipping auto-retry for step %s — "
+                        "failure_category=%s (permanent, needs human intervention)",
+                        plan_id, e["id"], fc or "unknown",
+                    )
                 if not retriable:
                     # ADR-067: auto-replan when retry is exhausted and config allows
                     auto_replan = config.load_config(elmer_dir).get(

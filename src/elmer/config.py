@@ -37,6 +37,10 @@ max_turns = 3
 criteria = "document-only proposals with no code changes"
 max_files_changed = 10
 require_proposal = true
+# policy: "review" (default, AI reviews every proposal) or
+#         "verification_sufficient" (skip AI review when verify_cmd passes —
+#         trust tests as the definitive quality gate, ADR-076)
+policy = "review"
 
 [archetype_selection]
 model = "sonnet"
@@ -236,6 +240,93 @@ def load_config(elmer_dir: Path) -> dict:
         with open(config_path, "rb") as f:
             return tomllib.load(f)
     return {"defaults": {"archetype": "explore-act", "model": "opus", "max_turns": 50}}
+
+
+def validate_config(cfg: dict) -> list[str]:
+    """Check config for common misconfiguration and interdependency issues.
+
+    Returns a list of warning strings. Empty list means no issues found.
+    This is a fast, deterministic check — no filesystem or AI access (ADR-076).
+    """
+    warnings: list[str] = []
+
+    # 1. daemon.auto_approve requires [auto_approve] section
+    daemon_cfg = cfg.get("daemon", {})
+    if daemon_cfg.get("auto_approve") and "auto_approve" not in cfg:
+        warnings.append(
+            "[daemon] auto_approve = true but [auto_approve] section is missing — "
+            "AI review gate will use hardcoded defaults"
+        )
+
+    # 2. daemon.auto_generate requires [generate] section
+    if daemon_cfg.get("auto_generate") and "generate" not in cfg:
+        warnings.append(
+            "[daemon] auto_generate = true but [generate] section is missing — "
+            "topic generation will use hardcoded defaults"
+        )
+
+    # 3. daemon.max_concurrent must be > 0
+    max_concurrent = daemon_cfg.get("max_concurrent", 5)
+    if isinstance(max_concurrent, (int, float)) and max_concurrent < 1:
+        warnings.append(
+            f"[daemon] max_concurrent = {max_concurrent} — must be >= 1"
+        )
+
+    # 4. generate_threshold should be < max_concurrent
+    threshold = daemon_cfg.get("generate_threshold", 2)
+    if (isinstance(threshold, (int, float)) and isinstance(max_concurrent, (int, float))
+            and threshold >= max_concurrent):
+        warnings.append(
+            f"[daemon] generate_threshold ({threshold}) >= max_concurrent ({max_concurrent}) — "
+            "new topics will never be generated because active count will always meet threshold"
+        )
+
+    # 5. auto_approve.policy must be a known value
+    aa_cfg = cfg.get("auto_approve", {})
+    policy = aa_cfg.get("policy", "review")
+    if policy not in ("review", "verification_sufficient"):
+        warnings.append(
+            f"[auto_approve] policy = \"{policy}\" — unknown policy; "
+            "expected \"review\" or \"verification_sufficient\""
+        )
+
+    # 6. verification_sufficient without on_done is likely misconfigured
+    if policy == "verification_sufficient":
+        verify_cfg = cfg.get("verification", {})
+        if not verify_cfg.get("on_done"):
+            warnings.append(
+                "[auto_approve] policy = \"verification_sufficient\" but "
+                "[verification] on_done is not set — explorations without "
+                "per-exploration verify_cmd will fall through to AI review"
+            )
+
+    # 7. hooks referencing events that don't exist
+    hooks_cfg = cfg.get("hooks", {})
+    valid_events = {"on_done", "pre_approve", "post_approve", "model", "max_turns"}
+    for key in hooks_cfg:
+        if key not in valid_events:
+            warnings.append(
+                f"[hooks] unknown key \"{key}\" — valid lifecycle events: "
+                "on_done, pre_approve, post_approve"
+            )
+
+    # 8. verification.max_retries should be >= 0
+    verify_cfg = cfg.get("verification", {})
+    max_retries = verify_cfg.get("max_retries", 2)
+    if isinstance(max_retries, (int, float)) and max_retries < 0:
+        warnings.append(
+            f"[verification] max_retries = {max_retries} — must be >= 0"
+        )
+
+    # 9. session.pending_ttl_days should be > 0 if set
+    session_cfg = cfg.get("session", {})
+    ttl = session_cfg.get("pending_ttl_days")
+    if ttl is not None and isinstance(ttl, (int, float)) and ttl <= 0:
+        warnings.append(
+            f"[session] pending_ttl_days = {ttl} — must be > 0 (or remove to disable)"
+        )
+
+    return warnings
 
 
 def register_project(project_dir: Path) -> None:

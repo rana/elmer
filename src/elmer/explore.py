@@ -742,7 +742,8 @@ def launch_pending(
 
     if worktree.branch_exists(project_dir, branch):
         state.update_exploration(conn, exploration_id, status="failed",
-                                 proposal_summary="(branch conflict on deferred start)")
+                                 proposal_summary="(branch conflict on deferred start)",
+                                 failure_category="branch_conflict")
         conn.close()
         return
 
@@ -923,6 +924,7 @@ def schedule_ready(elmer_dir: Path, project_dir: Path) -> list[str]:
                 status="failed",
                 completed_at=datetime.now(timezone.utc).isoformat(),
                 proposal_summary=f"(auto-cancelled: pending > {pending_ttl_days}d)",
+                failure_category="stale_pending",
             )
             plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
             if plan_id:
@@ -954,6 +956,7 @@ def schedule_ready(elmer_dir: Path, project_dir: Path) -> list[str]:
             status="failed",
             completed_at=datetime.now(timezone.utc).isoformat(),
             proposal_summary=f"(dependency failed: {dep_str})",
+            failure_category="dependency_failed",
         )
         # Pause the plan if this belongs to one
         plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
