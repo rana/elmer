@@ -720,6 +720,23 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
         click.echo(f"\n  Loaded {len(file_answers)} pre-answered question(s) from {answers_file}")
 
     if dry_run:
+        # Validate plan structure (ADR-046)
+        plan_errors = impl_mod.validate_plan(plan, elmer_dir)
+        if plan_errors:
+            click.echo(f"\nPlan validation ({len(plan_errors)} error(s)):")
+            for e in plan_errors:
+                click.echo(f"  ! {e}")
+        else:
+            click.echo(f"\nPlan validation: OK ({len(plan.get('steps', []))} steps, DAG valid)")
+
+        # Check for parallel step conflicts (ADR-047)
+        conflicts = impl_mod.detect_parallel_conflicts(plan)
+        if conflicts:
+            click.echo(f"\nParallel conflict warnings ({len(conflicts)}):")
+            for c in conflicts:
+                click.echo(f"  ~ {c}")
+            click.echo("  (Use --max-concurrent=1 to avoid, or add depends_on to serialize)")
+
         # Show prerequisite check results
         prereqs = plan.get("prerequisites", {})
         if prereqs:
@@ -733,6 +750,14 @@ def implement(milestone, model, max_turns, dry_run, skip_clarify, answers_file, 
                          + len(prereqs.get("commands", []))
                          + len(prereqs.get("files", [])))
                 click.echo(f"\nPrerequisites: {total} checked, all passed")
+
+        # Budget analysis (ADR-048)
+        if budget_usd is not None:
+            num_steps = len(plan.get("steps", []))
+            per_step = budget_usd / num_steps if num_steps > 0 else budget_usd
+            click.echo(f"\nBudget: ${budget_usd:.2f} total, ${per_step:.2f}/step ({num_steps} steps)")
+            if per_step < 0.50:
+                click.echo("  ! Warning: per-step budget below $0.50 — steps may fail")
 
         if questions:
             click.echo(f"\nQuestions ({len(questions)}):")

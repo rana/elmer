@@ -53,7 +53,7 @@ GUIDE.md and README.md add user-facing documentation (playbook and reference, re
 
 ## Current State
 
-All six development phases complete:
+All seven development phases complete:
 
 1. **Phase 1 (Core Loop):** Manual explore/review/approve cycle. Proved the loop is useful.
 2. **Phase 2 (Intelligence):** AI topic generation, DAG dependencies, auto-approve, cost controls.
@@ -61,8 +61,9 @@ All six development phases complete:
 4. **Phase 4 (Meta):** Scaffolding, archetype stats, attention routing, invariant enforcement, multi-project dashboard, PR creation, batch topics, skill scaffolding.
 5. **Phase 5 (Integration):** MCP server — structured Claude Code access, custom subagent integration, proposal amendment.
 6. **Phase 6 (Convergence):** Decline reasons, convergence digests, digest-aware generation, daemon synthesis step. Closes the feedback loop.
+7. **Phase 7 (Implementation Engine):** Milestone decomposition (`elmer implement`) — AI decomposes milestones into ordered plan steps with dependencies, then executes each as a separate exploration with cross-step context, verification hooks, auto-amend, and cascade failure handling. 11 ADRs (ADR-038 through ADR-048).
 
-The tool is functional and in active use. 18 ADRs recorded.
+The tool is functional and in active use on multiple projects. 31 ADRs recorded.
 
 ## What's Working
 
@@ -75,6 +76,10 @@ The tool is functional and in active use. 18 ADRs recorded.
 - Convergence digests synthesize understanding across approved/declined work
 - Decline reasons create learning signals that steer future topic generation
 - Ensemble exploration runs same topic N times with synthesis for high-confidence decisions
+- Implementation engine decomposes milestones into executable plan steps with dependency tracking
+- Plan steps carry cross-step context, verification hooks, and auto-amend retry on failure
+- Daemon auto-retries failed plan steps with failure-aware context injection
+- Parallel conflict detection warns about key_files overlap before execution
 
 ## Open Questions
 
@@ -86,5 +91,8 @@ The tool is functional and in active use. 18 ADRs recorded.
 - **Sibling-aware exploration prompts** — explorations have no knowledge of other in-flight or completed explorations. Partially addressed by convergence digests (ADR-030): the digest synthesizes cross-exploration understanding, which feeds into topic generation. Individual explorations remain independent by design. The remaining question is whether to inject digest context into exploration prompts (not just generation prompts).
 - **Cross-project MCP** — every MCP tool infers project from `cwd`. No way to address multiple projects in a single Claude Code session. Adding a `project_path` parameter to tools that need it is the likely path, with `None` defaulting to cwd. Deferred because most usage is single-project.
 - **Composable status queries** — MCP status/review tools return full result sets; filtering happens client-side, wasting tokens. A `filter` parameter on `elmer_status` (e.g., `status=done AND archetype=prototype`) would collapse multi-call workflows. Deferred because current usage is manageable.
+- **Document-heavy pre-code projects** — srf-yogananda-teachings (13 docs, 124 ADRs, 1.5 MB architecture, zero code) exposed that `elmer implement` assumes verification commands exist. Projects in design phase need document-coherence verification, not build/test. See Future Directions D1–D5 in ROADMAP.md.
+- **Retry dependency management** — when a plan step is retried, the old exploration is deleted with its dependency records. Cascade-failed dependents become orphaned. Known correctness bug affecting both `resume_plan()` and daemon auto-retry. See Future Directions A1 in ROADMAP.md.
+- **Plan completion check ordering** — plan-level verification runs after the last step merges to main. If it fails, broken code is already integrated. See Future Directions A2 in ROADMAP.md.
 
-*Last updated: 2026-02-24, MCP enhancements from AI architect proposal reflection*
+*Last updated: 2026-02-25, Phase 7 complete, srf-yogananda-teachings analysis, future directions*

@@ -304,14 +304,58 @@ def _refresh_running(
     verify_fallback = verify_cfg.get("fallback")
     verify_timeout = verify_cfg.get("timeout", 300)
 
+    # Session watchdog (ADR-045): detect stuck sessions by TTL and log staleness
+    max_session_hours = cfg.get("session", {}).get("max_hours", 4)
+    log_stale_minutes = cfg.get("session", {}).get("log_stale_minutes", 60)
+    import os as _os
+
     newly_done = []
     for exp in explorations:
         pid = exp["pid"]
+
+        # Watchdog: check if session has been running too long or log is stale
+        if worker.is_running(pid):
+            should_kill = False
+            kill_reason = ""
+
+            # Check total runtime
+            try:
+                created = datetime.fromisoformat(exp["created_at"])
+                elapsed_hours = (datetime.now(timezone.utc) - created).total_seconds() / 3600
+                if elapsed_hours > max_session_hours:
+                    should_kill = True
+                    kill_reason = f"exceeded max session time ({elapsed_hours:.1f}h > {max_session_hours}h)"
+            except (ValueError, TypeError):
+                pass
+
+            # Check log file staleness (no output for too long)
+            if not should_kill and log_stale_minutes > 0:
+                log_path_check = elmer_dir / "logs" / f"{exp['id']}.log"
+                if log_path_check.exists():
+                    try:
+                        mtime = datetime.fromtimestamp(
+                            _os.path.getmtime(log_path_check), tz=timezone.utc,
+                        )
+                        stale_mins = (datetime.now(timezone.utc) - mtime).total_seconds() / 60
+                        if stale_mins > log_stale_minutes:
+                            should_kill = True
+                            kill_reason = f"log stale ({stale_mins:.0f}m > {log_stale_minutes}m)"
+                    except OSError:
+                        pass
+
+            if should_kill:
+                notify(f"  Watchdog: killing stuck session {exp['id']} — {kill_reason}")
+                worker.terminate(pid)
+                # Fall through to the normal "process not running" handling below
+                # (is_running will now return False)
+
         if not worker.is_running(pid):
             worktree_path = Path(exp["worktree_path"])
             proposal_path = worktree_path / "PROPOSAL.md"
 
             # Extract cost data from the JSON log file (best-effort)
+            # ADR-048: warn when cost data is missing so operators can detect
+            # budget leaks from crashed sessions or truncated logs.
             cost_fields = {}
             log_path = elmer_dir / "logs" / f"{exp['id']}.log"
             cost_result = worker.parse_log_costs(log_path)
@@ -324,6 +368,10 @@ def _refresh_running(
                         "num_turns_actual": cost_result.num_turns,
                     }.items() if v is not None
                 }
+                if cost_result.cost_usd is None:
+                    notify(f"  Warning: no cost data in log for {exp['id']} (log may be truncated)")
+            else:
+                notify(f"  Warning: could not parse log for {exp['id']} (cost data missing)")
 
             if proposal_path.exists():
                 # Commit PROPOSAL.md to the branch so it survives worktree
@@ -634,6 +682,25 @@ def show_status(elmer_dir: Path, project_dir: Path = None, verbose: bool = False
             if verbose or _topic_adds_info(topic, exp["id"]):
                 topic_display = _truncate(topic, tw - 6)
                 click.echo(f"      {topic_display}")
+
+        # Pending dependency info (ADR-048): show what's blocking this exploration
+        if exp["status"] == "pending":
+            conn_dep = state.get_db(elmer_dir)
+            dep_ids = state.get_dependencies(conn_dep, exp["id"])
+            conn_dep.close()
+            if dep_ids:
+                # Show unmet dependencies (not yet approved)
+                unmet = []
+                conn_dep = state.get_db(elmer_dir)
+                for did in dep_ids:
+                    dep_exp = state.get_exploration(conn_dep, did)
+                    if dep_exp and dep_exp["status"] != "approved":
+                        unmet.append(f"{did} [{dep_exp['status']}]")
+                    elif dep_exp is None:
+                        unmet.append(f"{did} [missing]")
+                conn_dep.close()
+                if unmet:
+                    click.echo(f"      waiting on: {', '.join(unmet)}")
 
     # Legend
     click.echo()

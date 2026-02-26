@@ -312,17 +312,88 @@ def _run_cycle(
     except Exception as e:
         logger.warning("Ensemble synthesis check failed: %s", e)
 
+    # Step 1.75: Auto-retry failed plan steps (ADR-047)
+    # When a plan step fails (after exhausting amend retries), the plan pauses.
+    # For autonomous operation, attempt one automatic retry with failure-aware
+    # context (ADR-045) before requiring human intervention.
+    if auto_approve:
+        try:
+            conn = state.get_db(elmer_dir)
+            paused_plans = state.list_plans(conn, status="paused")
+            conn.close()
+
+            for plan_row in paused_plans:
+                plan_id = plan_row["id"]
+                conn = state.get_db(elmer_dir)
+                plan_exps = state.get_plan_explorations(conn, plan_id)
+                conn.close()
+
+                failed_steps = [e for e in plan_exps if e["status"] == "failed"]
+                if not failed_steps:
+                    continue
+
+                # Only retry root-cause failures (not cascade failures from ADR-041)
+                root_failures = [
+                    e for e in failed_steps
+                    if not (e.get("proposal_summary") or "").startswith("(dependency failed:")
+                ]
+                if not root_failures:
+                    continue
+
+                # Don't retry steps that already had a retry attempt
+                # (failure-aware retry injects "## Previous Attempt Failed" into topic)
+                retriable = [
+                    e for e in root_failures
+                    if "## Previous Attempt Failed" not in e["topic"]
+                ]
+                if not retriable:
+                    logger.info(
+                        "Plan %s: failed steps already retried, needs human review", plan_id,
+                    )
+                    continue
+
+                retried_any = False
+                for exp in retriable:
+                    logger.info(
+                        "Auto-retrying plan step %s (step %s in %s)",
+                        exp["id"], exp.get("plan_step", "?"), plan_id,
+                    )
+                    try:
+                        new_slug = gate.retry_exploration(
+                            elmer_dir=elmer_dir,
+                            project_dir=project_dir,
+                            exploration_id=exp["id"],
+                            notify=logger.info,
+                        )
+                        logger.info("  Retried as: %s", new_slug)
+                        retried_any = True
+                    except (RuntimeError, SystemExit) as e:
+                        logger.warning("  Auto-retry failed for %s: %s", exp["id"], e)
+
+                if retried_any:
+                    conn = state.get_db(elmer_dir)
+                    state.update_plan(conn, plan_id, status="active")
+                    conn.close()
+                    logger.info("Plan %s: resumed after auto-retry", plan_id)
+        except Exception as e:
+            logger.warning("Plan auto-retry check failed: %s", e)
+
     # Step 2: Gate — auto-approve remaining done explorations
     # (_refresh_running already handles explorations flagged with auto_approve;
     # daemon-level auto_approve covers ALL done explorations)
+    # ADR-046: always auto-approve plan steps in daemon mode regardless of
+    # per-exploration auto_approve flag. Plan steps have verification as their
+    # quality gate; blocking on human review defeats autonomous plan execution.
     if auto_approve:
         conn = state.get_db(elmer_dir)
         done_exps = state.list_explorations(conn, status="done")
         conn.close()
 
         for exp in done_exps:
-            if not exp["auto_approve"]:
-                logger.info("Daemon auto-reviewing: %s", exp["id"])
+            is_plan_step = bool(exp["plan_id"] if "plan_id" in exp.keys() else None)
+            if not exp["auto_approve"] or is_plan_step:
+                logger.info("Daemon auto-reviewing: %s%s", exp["id"],
+                            " (plan step)" if is_plan_step else "")
                 approved = autoapprove.evaluate(elmer_dir, project_dir, exp["id"])
                 if approved:
                     logger.info("Daemon auto-approved: %s", exp["id"])

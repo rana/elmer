@@ -2,7 +2,7 @@
 
 Architecture Decision Records. Mutable living documents — update directly when decisions evolve. When substantially revising an ADR, add `*Revised: [date], [reason]*` at the section's end. Git history serves as the full audit trail.
 
-27 ADRs recorded.
+31 ADRs recorded.
 
 ## Domain Index
 
@@ -35,6 +35,10 @@ Architecture Decision Records. Mutable living documents — update directly when
 | ADR-042 | Intelligence | Prerequisites, artifact flow, greenfield decomposition |
 | ADR-043 | Safety | Verify-cmd visibility, plan budget enforcement, amend cost attribution |
 | ADR-044 | Resilience | Context budget, plan completion verification, worktree setup commands |
+| ADR-045 | Operations | Session watchdog, failure-aware retry, per-step model routing |
+| ADR-046 | Quality | Plan validation, merge conflict recovery, daemon plan auto-approve |
+| ADR-047 | Resilience | Parallel conflict detection, daemon auto-retry for plan steps |
+| ADR-048 | Observability | Budget validation, dependency visibility, cost observability |
 
 ---
 
@@ -767,3 +771,227 @@ The implement agent *should* run install commands (its system prompt says to), b
 The decompose agent's rules 16-17 instruct it to set `setup_cmd` on every step after step 0 and to include `completion_verify_cmd` at the plan level.
 
 **Files modified:** `implement.py` (context budget in _build_step_context, run_completion_check, setup_cmd passthrough), `explore.py` (_run_setup_cmd, setup_cmd in start_exploration and launch_pending), `state.py` (setup_cmd column, completion_note column), `daemon.py` (completion check in cycle step 6c), `agents/decompose.md` (setup_cmd and completion_verify_cmd fields, rules 16-17).
+
+## ADR-045: Session Watchdog, Failure-Aware Retry, and Per-Step Model Routing
+
+**Decision:** Three improvements addressing operational liveness, retry quality, and cost optimization in autonomous plan execution.
+
+### Session Watchdog
+
+**Problem:** When `spawn_claude()` launches a background session, there is no timeout. If a Claude session hangs — stuck waiting for an API response, caught in a reasoning loop, or blocked on a tool permission — it remains in "running" status indefinitely. All dependent steps are blocked. The daemon keeps seeing "running" every cycle. The only recovery is manual `elmer cancel ID`.
+
+This is the highest-severity operational gap: a single stuck session silently halts an entire plan pipeline, and in autonomous mode (daemon without human supervision), the system becomes permanently wedged.
+
+**Solution:** Two detection mechanisms added to `_refresh_running()` in `review.py`:
+
+1. **TTL (max session hours):** Compares `created_at` against the current time. Sessions running longer than `[session] max_hours` (default: 4) are terminated via `worker.terminate()` and fall through to the normal process-not-running handling (which marks them as done or failed depending on whether PROPOSAL.md exists).
+
+2. **Log staleness:** Checks the log file's mtime. If the file hasn't been modified in `[session] log_stale_minutes` (default: 60), the session is terminated. Claude writes streaming JSON to the log — if the log isn't being written to, the session is stuck.
+
+After termination, the normal `_refresh_running()` flow handles the exploration: if PROPOSAL.md exists, it transitions to "done" (the agent made progress before hanging); if not, it transitions to "failed" with a diagnosis.
+
+**Configuration:**
+```toml
+[session]
+max_hours = 4              # Max total runtime before auto-kill
+log_stale_minutes = 60     # Max time without log output before auto-kill
+```
+
+**Why terminate rather than pause:** A hung session consumes system resources (memory, file handles) and may hold locks on the worktree. Terminating is clean. If the session had made partial progress (PROPOSAL.md exists), the verification and amend pipeline can pick it up. If not, failure-aware retry (below) gives the next attempt context about what happened.
+
+**Why not a per-process timer:** `spawn_claude()` uses `subprocess.Popen` — there's no built-in timeout for background processes. Adding `start_new_session=True` means the process outlives the parent. The daemon's periodic `_refresh_running()` is the natural enforcement point.
+
+### Failure-Aware Retry
+
+**Problem:** When `retry_exploration()` re-spawns a failed exploration, it uses the same topic, archetype, model, and parameters. The new session starts completely fresh with zero knowledge of why the previous attempt failed. If the failure was "PROPOSAL.md written to wrong path" or "verification failed: missing database migration," the retry session will likely make the same mistake.
+
+`proposal_summary` already stores the failure diagnosis (from `_diagnose_failure()` in review.py). The information exists — it just wasn't being used.
+
+**Solution:** `retry_exploration()` in `gate.py` now:
+
+1. Reads the failed exploration's `proposal_summary` (failure reason)
+2. Optionally reads the session log for the final output snippet (via `review.parse_log_details()`)
+3. Appends a `## Previous Attempt Failed` context block to the retry topic:
+
+```markdown
+## Previous Attempt Failed
+
+This is a **retry**. The previous attempt failed with:
+- Reason: (verification failed: pnpm build && pnpm test)
+
+Final session output (excerpt):
+    Error: Cannot find module '@/lib/config'...
+
+**Avoid the approach that caused this failure.**
+```
+
+The retry also preserves `setup_cmd`, `verify_cmd`, `plan_id`, and `plan_step` from the original exploration, so plan-level context and worktree setup are maintained across retries.
+
+**Why append to topic, not use a separate parameter:** The topic is the only persistent context the Claude session receives. Adding a separate "retry context" parameter would require changes to `spawn_claude()`, the worker protocol, and every archetype. Appending to the topic is zero-infrastructure.
+
+**Why preserve plan_id/plan_step on retry:** Without this, retried plan steps lose their plan membership. The scheduler won't recognize them as plan steps, budget enforcement doesn't apply, and cross-step context injection doesn't fire.
+
+### Per-Step Model Routing
+
+**Problem:** All plan steps use the same model (the `--model` flag passed to `execute_plan()`). But step complexity varies enormously:
+
+- Step 0 (scaffold) creates the entire project foundation — it needs the best model (opus)
+- Step 5 (add a single API endpoint following an established pattern) is routine — sonnet is sufficient
+- Step 8 (complex state machine with edge cases) needs opus again
+
+Using opus for every step wastes ~60% more budget than necessary. Using sonnet for every step risks failures on complex steps that require more reasoning.
+
+**Solution:** Steps can declare `"model": "opus"` in the plan JSON. `execute_plan()` reads `step.get("model", model)` — step-level model takes precedence, falling back to the plan-level default.
+
+The decompose agent's field reference documents when to use opus vs the default: "Step 0 should almost always use opus — it establishes patterns that every subsequent step follows."
+
+The plan display shows model overrides: `Model: opus (override)` when a step uses a different model than the plan default.
+
+**Why not auto-route:** We considered automatic routing based on topic length, number of files mentioned, or dependency count. But these proxies are unreliable — a short topic can describe a complex task, and a long topic might just be detailed instructions for something simple. The decompose agent has the domain knowledge to make this call. It already decides archetype, verify_cmd, and dependencies per step; model is a natural addition.
+
+**Files modified:** `review.py` (watchdog in _refresh_running), `gate.py` (failure context injection in retry_exploration, review import), `implement.py` (per-step model routing in execute_plan, model override display), `agents/decompose.md` (model field in schema and field reference).
+
+## ADR-046: Plan Validation, Merge Conflict Recovery, and Daemon Plan Auto-Approve
+
+**Decision:** Three improvements addressing plan quality assurance before execution, autonomous merge conflict handling, and seamless daemon-driven plan progression.
+
+### Plan Validation in Dry-Run
+
+**Problem:** `--dry-run` only checked prerequisites (env vars, commands, files). A plan with an invalid archetype name, a forward dependency (`step 3 depends on step 5`), or a dependency cycle would pass dry-run and fail expensively at runtime — either immediately (archetype not found) or after several steps complete (cycle detected at scheduling time).
+
+**Solution:** `validate_plan()` in `implement.py` checks:
+- **Required fields:** Each step must have a `topic`
+- **Archetype existence:** Each step's archetype is resolved via `config.resolve_archetype()` — catches typos and missing custom archetypes before any money is spent
+- **Dependency bounds:** All `depends_on` indices must be valid integers within `[0, num_steps)` and must reference earlier steps (no forward or self dependencies)
+- **Cycle detection:** Full graph traversal using recursive DFS with an in-stack set. Catches transitive cycles that individual dependency checks would miss.
+
+Wired into the CLI's `--dry-run` path: validation results display before prerequisite checks. Shows "Plan validation: OK (N steps, DAG valid)" or lists specific errors.
+
+**Why not validate on every execution:** `validate_plan()` runs in `--dry-run` and also before `execute_plan()` starts creating explorations. The dry-run gives fast feedback; the execution-time check is the safety net.
+
+### Merge Conflict Recovery for Plan Steps
+
+**Problem:** When `approve_exploration()` merges a plan step's branch and encounters a conflict, it calls `sys.exit(1)`. In daemon mode, this kills the approval flow for that step and leaves it in "done" status forever. The daemon re-attempts every cycle, fails every cycle, and generates noise. For autonomous plan execution, merge conflicts are a permanent wedge.
+
+Sequential plan steps rarely conflict (each depends on the previous, so they build on merged state). But they *can* conflict when: PROPOSAL.md exists on both branches (already handled by removal), or when two steps touch overlapping generated files (e.g., both update a central index file).
+
+**Solution:** Plan steps get automatic conflict resolution with `-X theirs`:
+
+1. First attempt: standard `git merge --no-ff`
+2. On conflict: abort the merge, detect if this is a plan step
+3. For plan steps: retry with `git merge --no-ff -X theirs` — the step's changes take precedence
+4. If that also fails: fall through to the existing manual resolution path
+
+`worktree.merge_branch()` gains a `strategy_option` parameter for this.
+
+**Why `-X theirs` is safe for plan steps:** Each plan step runs in a worktree created from the latest main branch (with all previous steps merged). The step's changes are built on top of that state and passed verification. If there's a conflict, the step's version is more recent and was tested against the current codebase. The "ours" side (main) conflicts because an earlier step modified the same file — the later step's version supersedes it.
+
+**Why not for standalone explorations:** Standalone explorations don't have the sequential dependency guarantee. Two independent explorations might legitimately conflict in ways that require human judgment.
+
+### Daemon Plan Step Auto-Approve
+
+**Problem:** When the daemon has `auto_approve=True`, it evaluates all "done" explorations that don't already have their own `auto_approve` flag set. But plan steps created by `execute_plan()` inherit `auto_approve` from the plan creation call. If a user runs `elmer implement "Milestone 1a"` without `--auto-approve`, plan steps get `auto_approve=False`. The daemon then skips them in `_refresh_running()` (which only auto-reviews explorations with `auto_approve=True`). The steps sit in "done" status, blocking the pipeline.
+
+**Solution:** In the daemon's gate step (step 2), plan steps are always evaluated regardless of their per-exploration `auto_approve` flag. The logic: plan steps have verification commands as their quality gate. If verification passed and the step reached "done" status, the daemon should attempt AI review. Blocking on human review defeats the purpose of autonomous plan execution.
+
+The `_refresh_running()` path (which fires on exploration completion) still respects the per-exploration flag — this change only affects the daemon's explicit gate sweep.
+
+**Files modified:** `implement.py` (validate_plan function), `cli.py` (dry-run validation display), `gate.py` (merge conflict recovery with -X theirs), `worktree.py` (strategy_option parameter on merge_branch), `daemon.py` (plan step auto-approve in gate step).
+
+## ADR-047: Parallel Conflict Detection and Daemon Auto-Retry for Plan Steps
+
+**Decision:** Two improvements for autonomous plan execution reliability: pre-flight detection of file conflicts between parallel steps, and automatic retry of failed plan steps in daemon mode.
+
+### Parallel Step Conflict Detection
+
+**Problem:** When a plan declares steps that can run in parallel (no dependency chain between them), both steps might modify the same files. The merge of one step's branch could conflict with the other's. The `detect_parallel_conflicts()` analysis from ADR-046 checks archetype existence and DAG validity, but says nothing about whether parallel steps will produce merge conflicts at integration time.
+
+`key_files` declarations in the plan JSON already document which files each step creates or modifies. Steps that could run concurrently (neither transitively depends on the other) with overlapping `key_files` are likely to conflict.
+
+**Solution:** `detect_parallel_conflicts()` in `implement.py`:
+
+1. Builds the transitive dependency closure for each step (BFS from `depends_on`)
+2. Identifies all pairs of steps where neither is in the other's closure (parallel candidates)
+3. Checks `key_files` overlap between each parallel pair
+4. Returns warnings for pairs with shared files
+
+Wired into `--dry-run` output after plan validation:
+```
+Parallel conflict warnings (1):
+  ~ steps 2 and 4 may conflict: both declare key_files package.json
+  (Use --max-concurrent=1 to avoid, or add depends_on to serialize)
+```
+
+**Why key_files and not static analysis:** Static analysis of `topic` text to predict which files a step will touch is unreliable and expensive. `key_files` is the decompose agent's explicit declaration — it already lists files that subsequent steps need to see. Overlap means both steps claim ownership of the same file.
+
+**Why warnings, not errors:** Overlapping `key_files` is a heuristic. Two steps might both declare `package.json` but modify different sections. The warning gives the operator a signal; `--max-concurrent=1` or adding `depends_on` are the fixes.
+
+### Daemon Auto-Retry for Failed Plan Steps
+
+**Problem:** When a plan step fails (after exhausting verification amend retries), `_refresh_running()` pauses the plan and waits for human intervention. In daemon mode with `--auto-approve`, this defeats autonomous plan execution — a single step failure permanently blocks the pipeline until a human runs `elmer implement --resume`.
+
+The failure-aware retry mechanism (ADR-045) already injects previous failure context into retry topics, making retries significantly more effective than blind re-runs. But this context is only used when a human triggers `elmer retry` or `elmer implement --resume`.
+
+**Solution:** The daemon now auto-retries failed plan steps (Step 1.75 in the cycle) when `auto_approve` is enabled:
+
+1. Scans for paused plans with failed steps
+2. Filters to root-cause failures only (excludes cascade failures whose `proposal_summary` starts with `(dependency failed:`)
+3. Skips steps that have already been retried (detected via `## Previous Attempt Failed` in the topic — injected by ADR-045's failure-aware retry)
+4. Calls `gate.retry_exploration()` for each retriable step
+5. Un-pauses the plan to "active" so the scheduler can proceed
+
+**One retry, not infinite:** The `## Previous Attempt Failed` marker in the topic serves as the retry limit. First failure → automatic retry with failure context. Second failure (topic already has the marker) → plan stays paused for human review. This gives one shot at self-healing without risking a retry loop that burns budget.
+
+**Why catch SystemExit:** `retry_exploration()` uses `sys.exit(1)` for error paths (exploration not found, wrong status). In daemon context, `SystemExit` would kill the daemon process. Catching it alongside `RuntimeError` keeps the daemon alive.
+
+**Why only with auto_approve:** Auto-retry without auto-approve creates zombie retries — they complete, produce proposals, and sit in "done" status with nobody to review them. Tying auto-retry to `auto_approve` ensures the full pipeline (retry → review → approve → schedule next) operates autonomously.
+
+**Files modified:** `implement.py` (detect_parallel_conflicts function), `cli.py` (parallel conflict warnings in dry-run), `daemon.py` (auto-retry for paused plans in daemon cycle step 1.75).
+
+## ADR-048: Budget Validation, Dependency Visibility, and Cost Observability
+
+**Decision:** Three observability improvements addressing operational blind spots in autonomous plan execution: upfront budget validation, pending exploration dependency display, and cost parsing failure warnings.
+
+### Upfront Plan Budget Validation
+
+**Problem:** When `execute_plan()` receives a `--budget` flag, it divides the budget evenly across steps. But there's no check that the per-step allocation is viable. A $5.00 budget for 20 steps gives $0.25/step — not enough for any meaningful Claude session. The plan creates all explorations, burns through the budget on the first few steps, and the remaining steps get marked "budget exceeded" by `schedule_ready()`.
+
+The failure happens late (at scheduling time) after money has already been spent. The operator should know upfront that the budget is too thin.
+
+**Solution:** `execute_plan()` in `implement.py` now warns when per-step budget falls below $0.50 (the minimum for any useful work):
+
+```
+Warning: per-step budget is only $0.25 ($5.00 / 20 steps). Steps may fail due to insufficient budget.
+```
+
+Also displayed in `--dry-run` output with the full budget breakdown. The warning doesn't block execution — the operator may know that some steps are trivial and will use less than allocated.
+
+**Why $0.50 threshold:** Based on observed session costs. A simple "add one file" step with sonnet costs ~$0.30. Any step requiring multiple tool uses or file reads exceeds $0.50. The threshold is deliberately conservative — it catches obvious underfunding without blocking legitimate slim-budget runs.
+
+### Pending Exploration Dependency Visibility
+
+**Problem:** `elmer status` shows pending explorations with a "." icon but no indication of *why* they're pending. The operator sees 5 pending explorations and can't tell if they're waiting on running explorations (normal), on done explorations awaiting review (actionable), or on failed explorations (broken pipeline). The information exists in the `dependencies` table but isn't surfaced.
+
+**Solution:** `show_status()` in `review.py` now queries dependencies for each pending exploration and displays unmet ones:
+
+```
+. build-user-service     pending    implement      opus     2h
+      waiting on: setup-scaffold [running], create-db-schema [done]
+```
+
+Only unmet dependencies are shown (not already-approved ones). Missing dependencies (deleted from DB) show as `[missing]`, which flags a data integrity issue.
+
+### Cost Parsing Failure Warnings
+
+**Problem:** When a Claude session crashes or produces truncated JSON in its log file, `worker.parse_log_costs()` returns None. The exploration transitions to done/failed with `cost_usd=NULL` in the database. `SUM(cost_usd)` queries silently skip NULL values, so plan-level and cycle-level cost totals undercount. Over many plan steps, missing costs compound — a $50 plan might report $35 spent because 30% of sessions had truncated logs.
+
+The cost data is genuinely lost (the API was called, money was spent), but the system doesn't even acknowledge the gap.
+
+**Solution:** `_refresh_running()` now logs warnings when cost data is unavailable:
+
+- `parse_log_costs()` returns None: `Warning: could not parse log for <id> (cost data missing)`
+- `parse_log_costs()` returns a result but `cost_usd` is None: `Warning: no cost data in log for <id> (log may be truncated)`
+
+In daemon mode, these warnings appear in `daemon.log`, giving operators a signal to investigate. The fix doesn't invent cost data — it makes the gap visible so it can be accounted for manually or in budget slack calculations.
+
+**Files modified:** `implement.py` (budget validation in execute_plan), `cli.py` (budget display in dry-run), `review.py` (dependency visibility in show_status, cost parsing warnings in _refresh_running).

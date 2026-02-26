@@ -236,6 +236,74 @@ def validate_prerequisites(
     return failures
 
 
+def validate_plan(
+    plan: dict,
+    elmer_dir: Path,
+) -> list[str]:
+    """Validate plan structure and coherence before execution (ADR-046).
+
+    Checks archetypes exist, dependencies form a valid DAG, step indices
+    are within range, and steps have required fields. Returns list of errors.
+    """
+    errors: list[str] = []
+    steps = plan.get("steps", [])
+
+    if not steps:
+        errors.append("plan has no steps")
+        return errors
+
+    num_steps = len(steps)
+
+    for i, step in enumerate(steps):
+        # Required field: topic
+        if not step.get("topic"):
+            errors.append(f"step {i}: missing 'topic' field")
+
+        # Validate archetype exists
+        archetype = step.get("archetype", "implement")
+        try:
+            config.resolve_archetype(elmer_dir, archetype)
+        except FileNotFoundError:
+            errors.append(f"step {i}: archetype '{archetype}' not found")
+
+        # Validate dependency indices
+        deps = step.get("depends_on", [])
+        for dep_idx in deps:
+            if not isinstance(dep_idx, int):
+                errors.append(f"step {i}: dependency '{dep_idx}' is not an integer")
+            elif dep_idx < 0 or dep_idx >= num_steps:
+                errors.append(f"step {i}: dependency index {dep_idx} out of range (0-{num_steps - 1})")
+            elif dep_idx >= i:
+                errors.append(f"step {i}: depends on step {dep_idx} (forward/self dependency)")
+
+    # Check for cycles in dependency graph
+    # Build adjacency list and do topological sort
+    adj: dict[int, list[int]] = {i: step.get("depends_on", []) for i, step in enumerate(steps)}
+    visited: set[int] = set()
+    in_stack: set[int] = set()
+
+    def _has_cycle(node: int) -> bool:
+        if node in in_stack:
+            return True
+        if node in visited:
+            return False
+        visited.add(node)
+        in_stack.add(node)
+        for dep in adj.get(node, []):
+            if isinstance(dep, int) and 0 <= dep < num_steps:
+                if _has_cycle(dep):
+                    return True
+        in_stack.discard(node)
+        return False
+
+    for i in range(num_steps):
+        if _has_cycle(i):
+            errors.append(f"dependency cycle detected involving step {i}")
+            break
+
+    return errors
+
+
 def _build_step_context(
     elmer_dir: Path,
     project_dir: Path,
@@ -381,6 +449,53 @@ def _build_step_context(
     return result
 
 
+def detect_parallel_conflicts(plan: dict) -> list[str]:
+    """Detect potential file conflicts between parallel plan steps (ADR-047).
+
+    Analyzes key_files declarations to find steps that could run in parallel
+    (no dependency chain between them) but declare overlapping files.
+    Returns list of warning strings.
+    """
+    steps = plan.get("steps", [])
+    if not steps:
+        return []
+
+    warnings: list[str] = []
+
+    # Build dependency closure: for each step, which steps must complete first?
+    num_steps = len(steps)
+    # transitive_deps[i] = set of all steps that i transitively depends on
+    transitive_deps: dict[int, set[int]] = {i: set() for i in range(num_steps)}
+    for i, step in enumerate(steps):
+        direct = set(step.get("depends_on", []))
+        queue = list(direct)
+        visited: set[int] = set()
+        while queue:
+            dep = queue.pop(0)
+            if dep in visited or dep < 0 or dep >= num_steps:
+                continue
+            visited.add(dep)
+            queue.extend(steps[dep].get("depends_on", []))
+        transitive_deps[i] = visited
+
+    # Find pairs of steps that could run in parallel (neither depends on the other)
+    for i in range(num_steps):
+        for j in range(i + 1, num_steps):
+            if j in transitive_deps[i] or i in transitive_deps[j]:
+                continue  # Sequential — no conflict possible
+
+            # These steps could run in parallel. Check for file overlap.
+            files_i = set(steps[i].get("key_files", []))
+            files_j = set(steps[j].get("key_files", []))
+            overlap = files_i & files_j
+            if overlap:
+                warnings.append(
+                    f"steps {i} and {j} may conflict: both declare key_files {', '.join(sorted(overlap))}"
+                )
+
+    return warnings
+
+
 def execute_plan(
     *,
     plan: dict,
@@ -419,6 +534,19 @@ def execute_plan(
             f"Plan has {len(failures)} unmet prerequisite(s). "
             "Fix these before executing, or remove 'prerequisites' from the plan."
         )
+
+    # Upfront budget validation (ADR-048): warn if budget is too thin.
+    # A per-step budget under $0.50 is unlikely to complete any meaningful work.
+    if budget_usd is not None:
+        num_steps_to_run = len(step_filter) if step_filter else len(steps)
+        per_step = budget_usd / num_steps_to_run if num_steps_to_run > 0 else budget_usd
+        if per_step < 0.50:
+            click.echo(
+                f"\nWarning: per-step budget is only ${per_step:.2f} "
+                f"(${budget_usd:.2f} / {num_steps_to_run} steps). "
+                f"Steps may fail due to insufficient budget.",
+                err=True,
+            )
 
     # Generate plan ID from milestone ref
     plan_id = explore_mod.slugify(milestone_ref) or "plan"
@@ -478,6 +606,9 @@ def execute_plan(
         verify_cmd = step.get("verify_cmd")
         setup_cmd = step.get("setup_cmd")
 
+        # Per-step model routing (ADR-045): step can override the plan-level model
+        step_model = step.get("model", model)
+
         # Cross-step context injection (ADR-040): tell this step about
         # the plan, what previous steps accomplished, and what's next
         step_context = _build_step_context(
@@ -502,7 +633,7 @@ def execute_plan(
             slug, _ = explore_mod.start_exploration(
                 topic=enriched_topic,
                 archetype=archetype,
-                model=model,
+                model=step_model,
                 max_turns=max_turns,
                 elmer_dir=elmer_dir,
                 project_dir=project_dir,
@@ -523,6 +654,8 @@ def execute_plan(
                 click.echo(f"    Depends on: {', '.join(depends_on)}")
             if verify_cmd:
                 click.echo(f"    Verify: {verify_cmd}")
+            if step_model != model:
+                click.echo(f"    Model: {step_model} (override)")
 
         except (RuntimeError, FileNotFoundError) as e:
             click.echo(f"  Step {i}: FAILED to create — {e}", err=True)

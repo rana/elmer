@@ -12,7 +12,7 @@ from typing import Optional
 
 import click
 
-from . import config, explore as explore_mod, generate as gen_mod, insights, state, synthesize as synth_mod, worker, worktree
+from . import config, explore as explore_mod, generate as gen_mod, insights, review, state, synthesize as synth_mod, worker, worktree
 
 
 def _archive_has_id(path: Path, exploration_id: str) -> bool:
@@ -263,12 +263,37 @@ def approve_exploration(
                 f"Merge elmer exploration: {exp['topic']}",
             )
         except subprocess.CalledProcessError as e:
-            click.echo(f"Merge failed (conflicts?):\n{e.stderr}", err=True)
-            click.echo(
-                f"Resolve manually, then run: elmer approve {exploration_id}",
-                err=True,
-            )
-            sys.exit(1)
+            # Merge conflict: for plan steps, attempt auto-resolution (ADR-046).
+            # Plan steps' changes are authoritative — they were verified individually.
+            # Use -X theirs to prefer the branch's version on conflicts.
+            is_plan_step = bool(exp["plan_id"] if "plan_id" in exp.keys() else None)
+            worktree.abort_merge(project_dir)
+
+            if is_plan_step:
+                notify(f"Merge conflict for plan step {exploration_id}, retrying with -X theirs...")
+                try:
+                    worktree.merge_branch(
+                        project_dir,
+                        branch,
+                        f"Merge elmer exploration: {exp['topic']}",
+                        strategy_option="theirs",
+                    )
+                    notify(f"  Auto-resolved merge conflict for {exploration_id}")
+                except subprocess.CalledProcessError:
+                    worktree.abort_merge(project_dir)
+                    click.echo(f"Merge failed even with -X theirs:\n{e.stderr}", err=True)
+                    click.echo(
+                        f"Resolve manually, then run: elmer approve {exploration_id}",
+                        err=True,
+                    )
+                    sys.exit(1)
+            else:
+                click.echo(f"Merge failed (conflicts?):\n{e.stderr}", err=True)
+                click.echo(
+                    f"Resolve manually, then run: elmer approve {exploration_id}",
+                    err=True,
+                )
+                sys.exit(1)
 
     # Remove PROPOSAL.md from main — it's an elmer artifact, not a project deliverable.
     # The proposal is archived to .elmer/proposals/ before worktree cleanup.
@@ -665,6 +690,33 @@ def retry_exploration(
     auto_approve = bool(exp["auto_approve"])
     generate_prompt = bool(exp["generate_prompt"])
     budget_usd = exp["budget_usd"]
+    setup_cmd = exp["setup_cmd"] if "setup_cmd" in exp.keys() else None
+    verify_cmd_orig = exp["verify_cmd"] if "verify_cmd" in exp.keys() else None
+    plan_id = exp["plan_id"] if "plan_id" in exp.keys() else None
+    plan_step = exp["plan_step"] if "plan_step" in exp.keys() else None
+
+    # Failure-aware retry (ADR-045): inject previous failure diagnosis so
+    # the agent doesn't repeat the same mistake
+    failure_context = ""
+    if exp["status"] == "failed" and exp.get("proposal_summary"):
+        failure_reason = exp["proposal_summary"]
+        # Also check log for more detail
+        log_path = elmer_dir / "logs" / f"{exploration_id}.log"
+        log_diagnosis = review.parse_log_details(log_path) if log_path.exists() else None
+        log_snippet = ""
+        if log_diagnosis and log_diagnosis.get("result_snippet"):
+            log_snippet = f"\n\nFinal session output (excerpt):\n```\n{log_diagnosis['result_snippet'][:500]}\n```"
+
+        failure_context = (
+            f"\n\n## Previous Attempt Failed\n\n"
+            f"This is a **retry**. The previous attempt failed with:\n"
+            f"- Reason: {failure_reason}\n"
+            f"{log_snippet}\n\n"
+            f"**Avoid the approach that caused this failure.** If the failure was "
+            f"a missing dependency, install it first. If the failure was a wrong "
+            f"file path, verify paths before writing. If verification failed, "
+            f"check the verification command output carefully.\n"
+        )
 
     # For re-synthesis: capture previous synthesis content before cleanup
     previous_synthesis = None
@@ -699,8 +751,9 @@ def retry_exploration(
             previous_synthesis=previous_synthesis,
         )
     else:
+        retry_topic = topic + failure_context if failure_context else topic
         slug, _ = explore_mod.start_exploration(
-            topic=topic,
+            topic=retry_topic,
             archetype=archetype,
             model=model,
             max_turns=max_turns,
@@ -709,6 +762,10 @@ def retry_exploration(
             auto_approve=auto_approve,
             generate_prompt=generate_prompt,
             budget_usd=budget_usd,
+            setup_cmd=setup_cmd,
+            verify_cmd=verify_cmd_orig,
+            plan_id=plan_id,
+            plan_step=plan_step,
         )
 
         # Restore ensemble membership on the new exploration

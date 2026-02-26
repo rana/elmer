@@ -41,6 +41,7 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
       "setup_cmd": "pnpm install",
       "depends_on": [],
       "archetype": "implement",
+      "model": "opus",
       "key_files": ["package.json", "lib/config.ts"]
     },
     {
@@ -66,6 +67,7 @@ Output a JSON object (and ONLY a JSON object, no markdown fencing, no commentary
 - **`key_files`** — Files this step creates that subsequent steps need to see. Their content is injected into the next step's context after this step is approved. Use for: config files, `.env.example`, service interfaces, schema files.
 - **`setup_cmd`** — Shell command run in the worktree before the implementation session starts. Used for dependency installation (e.g., `pnpm install`). Each step's worktree is created fresh from the main branch — gitignored artifacts like `node_modules/` don't exist. Without `setup_cmd`, the implementation agent must install dependencies itself, wasting time and risking errors.
 - **`completion_verify_cmd`** — (Plan-level, not per-step.) Shell command run after ALL steps are approved to verify the assembled project works as a whole. Falls back to the last step's `verify_cmd` if not specified.
+- **`model`** — (Optional, per-step.) Override the plan-level model for this step. Use `"opus"` for high-stakes steps (step 0 scaffold, complex architecture) and omit for routine steps that use the plan default. Step 0 should almost always use opus — it establishes patterns that every subsequent step follows.
 
 ## Rules
 

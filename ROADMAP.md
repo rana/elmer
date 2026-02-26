@@ -1,6 +1,6 @@
 # Elmer — Roadmap
 
-All six phases complete. Git history has the full delivery record.
+Seven phases complete. Git history has the full delivery record.
 
 ## Phase 1: Core Loop — COMPLETE
 
@@ -28,10 +28,103 @@ Decline reasons (`elmer decline ID "reason"`), convergence digests (`elmer diges
 
 Ensemble exploration (ADR-031): `--replicas N` on `explore` and `batch` runs the same topic N times with independent sessions, then auto-synthesizes into a single consolidated proposal. Archetype rotation (`--archetypes`) and model rotation (`--models`) maximize variance. Approval/decline cascades: approving synthesis cleans up replicas, declining synthesis declines all. New `synthesize.py` module, `elmer-meta-synthesize` agent, daemon integration. Two-scale convergence: ensemble (intra-topic) and digest (inter-topic).
 
+## Phase 7: Implementation Engine — COMPLETE
+
+Milestone decomposition and autonomous multi-step implementation (`elmer implement`). AI decomposes a high-level milestone into ordered plan steps with dependency tracking, then executes each step as a separate exploration with cross-step context. 11 ADRs (ADR-038 through ADR-048) across four iteration waves.
+
+**Wave 1 — Foundation (ADR-038, 039):** Pre-merge verification hooks with auto-amend retry. Milestone decomposition via `elmer-meta-decompose` agent producing ordered JSON plans with `key_files`, `depends_on`, `verify_cmd`. Plan execution with dependency scheduling and cascade failure propagation.
+
+**Wave 2 — Intelligence (ADR-040, 041, 042):** Cross-step context injection (approved predecessors' summaries feed into dependent step prompts). Plan loading from files. Fallback verification (build/test/lint auto-detection). Dependency cascade failures. Proposal structural validation. Prerequisites and artifact flow between steps. Greenfield decomposition for projects with no existing code.
+
+**Wave 3 — Safety & Operations (ADR-043, 044, 045, 046):** Verify-cmd visibility in proposals. Plan budget enforcement and amend cost attribution. Context budget management. Plan completion verification. Worktree setup commands. Session watchdog with TTL-based termination. Failure-aware retry (injecting failure context into retry prompts). Per-step model routing. Plan validation (structural + semantic checks). Merge conflict recovery with strategy escalation. Daemon auto-approve for completed plan steps.
+
+**Wave 4 — Resilience & Observability (ADR-047, 048):** Parallel conflict detection (key_files overlap analysis for concurrent steps). Daemon auto-retry for failed plan steps with retry-limit detection. Upfront budget validation. Pending dependency visibility in status display. Cost parsing failure logging.
+
+---
+
+## Future Directions
+
+Organized by theme, grounded in both internal pipeline audit and real-world usage on a documentation-heavy pre-implementation project (srf-yogananda-teachings: 13 documents, 124 ADRs, 1.5 MB of architecture, zero code).
+
+### A. Plan Lifecycle — Correctness & Recovery
+
+**A1. Retry dependency management** (Medium, correctness bug)
+When `gate.retry_exploration()` retries a failed plan step, it deletes the old exploration — including its dependency records. Cascade-failed dependents remain as failed with dangling references. After a successful retry, these dependents need re-creation with correct dependencies pointing at the new exploration. Affects both `resume_plan()` and daemon auto-retry. Pre-existing bug surfaced during ADR-047 analysis.
+
+**A2. Plan completion check ordering** (Medium, safety)
+Plan-level `run_completion_check()` runs AFTER the last step is approved and merged. If integration verification fails, the broken code is already on main. Should run BEFORE final approval, or at minimum before auto-approving the last step.
+
+**A3. Plan revision / replanning** (Large, architecture)
+When a step failure reveals the plan is wrong (not just the implementation), allow mid-execution replanning. Requires: new meta-agent for plan revision, mapping existing step completions to revised plan, handling in-flight step cancellation, state management for plan transitions. Deferred from Phase 7 as too complex for incremental delivery.
+
+### B. Execution Intelligence
+
+**B1. Amend failure pattern detection** (Medium)
+When auto-amend retries all produce the same error output, it's a systemic issue (missing env var, broken dependency) not a code bug. Compare failure outputs across amend attempts; if identical, fail fast instead of burning budget on identical retries.
+
+**B2. Graceful session checkpoint** (Large)
+Instead of hard-killing sessions that exceed TTL via `worker.terminate()`, implement a checkpoint mechanism. Save partial work before termination so it can be resumed rather than restarted from scratch.
+
+**B3. Per-step model routing from project context** (Medium)
+ADR-045 added per-step `model` field in plans. Currently set by the decompose agent based on step complexity. Could be informed by project-level model tiering policies (e.g., srf project defines Tier 1/2/3 model classifications in its CLAUDE.md).
+
+### C. Observability & Cost
+
+**C1. Verification failure tracking** (Medium)
+Add `verification_failures` counter to explorations table. Track how many times verification failed across amend attempts. Surface in plan status. Currently only `amend_count` exists.
+
+**C2. Verification execution time tracking** (Small-Medium)
+Record `verification_seconds` in explorations table. Sum into plan/cycle cost metrics. Useful for budget forecasting when verification commands are expensive (e.g., full test suites).
+
+**C3. NULL cost handling in SUM queries** (Small)
+`COALESCE(cost_usd, 0)` or explicit NULL-checking in `get_plan_spend()` and `_get_cycle_cost()`. Currently NULLs silently drop from SUM. ADR-048 added logging for the gap; this would close it in the accounting.
+
+**C4. Daemon observability dashboard** (Medium)
+Persistent status view (curses or web) showing real-time daemon cycle progress, plan status, cost tracking, and alerts. Currently all info requires running `elmer status` or reading daemon.log.
+
+### D. Document-Heavy Projects (from srf-yogananda-teachings analysis)
+
+**D1. Configurable document coherence verification** (Medium-Large)
+Elmer's `validate` command checks invariants for its own 7-doc pattern. Projects like srf have 13 interdependent documents with their own identifier systems (ADR-NNN, DES-NNN, PRO-NNN). Need configurable invariant definitions — either in `.elmer/config.toml` or a dedicated `.elmer/invariants.toml` — so `validate` and `--verify-cmd` can enforce project-specific coherence rules.
+
+**D2. Pre-code project support** (Medium)
+Current `elmer implement` assumes verification commands (build, test, lint) exist. Documentation-only projects have no code to verify. The "verification" is document coherence: ADR counts match, cross-references resolve, identifier sequences are gapped correctly. Elmer should detect pre-code projects (no package.json/pyproject.toml/Makefile) and default to document-coherence verification.
+
+**D3. Multi-document transactional updates** (Medium)
+Proposal graduation in srf (PRO-NNN → ADR/DES) requires coordinated updates to 4+ documents. If any update fails or creates inconsistency, the whole graduation should roll back. Currently, Elmer explorations touch files independently. A "transactional exploration" mode could bundle related document changes with pre-merge invariant validation.
+
+**D4. External dependency tracking** (Small-Medium)
+srf has 15+ stakeholder decisions that block implementation (SRF copyright stance, editorial voice, crisis resources). Elmer has no concept of external blockers. Plan steps could have a `blocked_by` field referencing external decision IDs, with the daemon skipping blocked steps until manually unblocked.
+
+**D5. Arc/milestone orchestration** (Large)
+srf has 7 arcs and 15 milestones forming a multi-month delivery structure. Elmer's `implement` handles single plans but not hierarchical plan composition. A "plan of plans" or milestone grouping would let Elmer orchestrate arc-level delivery with per-milestone plans.
+
+### E. Content & Data Pipelines
+
+**E1. Non-code exploration types** (Medium)
+Current explorations assume code output on a branch. Data pipeline orchestration (PDF ingestion, embedding generation, search quality evaluation) produces data artifacts, not code. Elmer could support exploration "types" where the output isn't a PROPOSAL.md but a quality report, evaluation matrix, or data validation summary.
+
+**E2. Parameter tuning explorations** (Medium)
+srf needs systematic A/B testing of chunk sizes, RRF weights, cache TTLs. A specialized archetype or exploration mode that varies parameters, measures against a golden set, and produces a recommendation report. The ensemble mechanism (ADR-031 replicas with archetype rotation) is a natural fit — each replica uses a different parameter configuration.
+
+**E3. Ensemble synthesis failure recovery** (Medium)
+When synthesis fails (API outage), no mechanism to re-trigger. Add automatic re-queue or explicit "re-synthesize ensemble" command in daemon.
+
+### F. Operational
+
+**F1. Stale pending exploration cleanup** (Small)
+TTL for pending explorations. If pending > N days with unmet dependencies, auto-cancel with warning. Prevents forgotten explorations blocking resource accounting.
+
+**F2. Plan step duration estimation** (Small)
+Optional `estimated_seconds` field in plan steps. Validate total against config constraints. Warn if a plan's expected runtime exceeds operator time windows.
+
+**F3. Custom skills as verification hooks** (Small-Medium)
+srf has 6 Claude Code skills (`.claude/skills/`). Elmer could invoke project-defined skills as post-exploration or pre-merge hooks — e.g., run `/dedup-proposals` after a batch of explorations complete, or `/mission-align` as part of auto-approve review.
+
 ---
 
 ## Deferred / Uncertain
 
 See Open Questions in CONTEXT.md. Features discussed but not committed are tracked there.
 
-*Last updated: 2026-02-23, ADR-031 ensemble exploration and synthesis*
+*Last updated: 2026-02-25, Phase 7 complete (ADR-038–048), future directions documented*

@@ -38,10 +38,19 @@ def delete_branch(project_dir: Path, branch_name: str) -> None:
     )
 
 
-def merge_branch(project_dir: Path, branch_name: str, message: str) -> None:
-    """Merge a branch into the current branch."""
+def merge_branch(
+    project_dir: Path, branch_name: str, message: str, *,
+    strategy_option: str | None = None,
+) -> None:
+    """Merge a branch into the current branch.
+
+    strategy_option: passed as -X (e.g., 'theirs') for conflict resolution.
+    """
+    cmd = ["git", "merge", branch_name, "--no-ff", "-m", message]
+    if strategy_option:
+        cmd.extend(["-X", strategy_option])
     subprocess.run(
-        ["git", "merge", branch_name, "--no-ff", "-m", message],
+        cmd,
         cwd=str(project_dir),
         check=True,
         capture_output=True,
