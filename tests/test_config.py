@@ -10,7 +10,6 @@ from elmer.config import (
     DEFAULT_CONFIG,
     load_config,
     parse_agent_file,
-    resolve_archetype,
     get_hook_skills,
 )
 
@@ -117,34 +116,6 @@ class TestParseAgentFile:
         metadata, body = parse_agent_file(content)
         assert "# comment" not in metadata
         assert metadata["name"] == "real"
-
-
-# ---------------------------------------------------------------------------
-# resolve_archetype
-# ---------------------------------------------------------------------------
-
-class TestResolveArchetype:
-    """Verify archetype resolution priority: local > bundled."""
-
-    def test_bundled_archetype_found(self, elmer_dir):
-        """Bundled archetypes resolve from the package's archetypes directory."""
-        # 'explore' should exist as a bundled archetype
-        path = resolve_archetype(elmer_dir, "explore")
-        assert path.exists()
-        assert path.name == "explore.md"
-
-    def test_local_archetype_priority(self, elmer_dir):
-        """Project-local archetype takes priority over bundled."""
-        local_dir = elmer_dir / "archetypes"
-        local_dir.mkdir()
-        local_file = local_dir / "explore.md"
-        local_file.write_text("# Custom explore")
-        path = resolve_archetype(elmer_dir, "explore")
-        assert path == local_file
-
-    def test_nonexistent_archetype_raises(self, elmer_dir):
-        with pytest.raises(FileNotFoundError, match="not-a-real-archetype"):
-            resolve_archetype(elmer_dir, "not-a-real-archetype")
 
 
 # ---------------------------------------------------------------------------

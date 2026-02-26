@@ -346,7 +346,6 @@ Conservative default: decline when uncertain. Criteria configurable in `.elmer/c
 
 /path/to/project/.elmer/
 ├── config.toml          # Project-specific overrides
-├── archetypes/          # Legacy templates (retained as reference, not used for execution)
 ├── state.db             # Project state
 ├── proposals/           # Archived PROPOSAL.md files (persistent)
 ├── digests/             # Convergence digest files (timestamped)
@@ -377,7 +376,7 @@ Elmer archetypes and Claude Code skills overlap in analysis methodology but serv
 | `elmer_review` | `state.get_exploration()` + PROPOSAL.md | Proposal list (with optional prioritization) or full proposal content + metadata + dependencies |
 | `elmer_costs` | `state.list_explorations()` + `state.get_all_costs()` | Cost data per exploration + meta-ops + totals |
 | `elmer_tree` | `state.list_explorations()` + `state.get_dependencies()` | Recursive dependency tree |
-| `elmer_archetypes` | `config.ARCHETYPES_DIR` glob + optional stats | Archetype list with optional approval rates |
+| `elmer_archetypes` | `config.AGENTS_DIR` glob + optional stats | Archetype list with optional approval rates |
 | `elmer_archetype_diagnose` | `archstats.diagnose_archetype()` | Detailed effectiveness report for a specific archetype |
 | `elmer_insights` | `insights.list_all_insights()` / `get_relevant_insights()` | Cross-project insights |
 | `elmer_config_get` | `config.load_config()` | Full config or specific key via dot notation |
@@ -431,4 +430,4 @@ Each tool opens a DB connection per call, matching the CLI pattern. Mutation too
 
 59 ADRs recorded. Full rationale and domain index in DECISIONS.md.
 
-*Last updated: 2026-02-26, document health reconciliation — schema, MCP tools, module table, template mode removal, agent counts (25 tools, 59 ADRs)*
+*Last updated: 2026-02-26, deep review — removed legacy archetypes/ from layout, fixed ARCHETYPES_DIR→AGENTS_DIR in MCP table (25 tools, 59 ADRs)*

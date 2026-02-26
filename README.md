@@ -339,10 +339,6 @@ When you run `elmer init`, it creates:
 ```
 .elmer/
 ├── config.toml        # Configuration (committed)
-├── archetypes/        # Prompt templates (committed)
-│   ├── explore.md
-│   ├── explore-act.md
-│   └── prototype.md
 ├── explore-act.md     # Topic list file (optional, committed)
 ├── worktrees/         # Git worktrees (gitignored)
 ├── logs/              # Claude session logs (gitignored)
@@ -380,9 +376,9 @@ With `--agents`, copies all bundled subagent definitions for customization:
 ├── elmer-explore-act.md       # Exploration agents (9)
 ├── elmer-explore.md
 ├── elmer-consistency-audit.md # Audit agents (8)
-├── elmer-meta-review-gate.md  # Meta-operation agents (11)
+├── elmer-meta-review-gate.md  # Meta-operation agents (12)
 ├── elmer-meta-decompose.md    # Milestone decomposition
-└── ...                        # 28 agents total
+└── ...                        # 29 agents total
 ```
 
 Agents define exploration methodology as Claude Code custom subagents with tool restrictions and model selection. Local copies override bundled defaults. See ADR-026 in DECISIONS.md.
@@ -441,4 +437,4 @@ Claude Code learns the commands from the project's `CLAUDE.md`. Note that `elmer
 
 Elmer Fudd. Persistent hunter. Homage to the [Ralph Wiggum](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) naming tradition for autonomous Claude Code tools.
 
-*Last updated: 2026-02-26*
+*Last updated: 2026-02-26, deep review — removed legacy archetypes/ from project structure, fixed agent counts (29 agents)*

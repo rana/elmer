@@ -12,7 +12,6 @@ except ImportError:
 GLOBAL_DIR = Path.home() / ".elmer"
 PROJECTS_REGISTRY = GLOBAL_DIR / "projects.json"
 
-ARCHETYPES_DIR = Path(__file__).parent / "archetypes"
 AGENTS_DIR = Path(__file__).parent / "agents"
 
 # Prefix for agent names in .claude/agents/ to avoid collisions
@@ -367,23 +366,6 @@ def _save_registry(projects: list[str]) -> None:
     """Save the project registry to disk."""
     GLOBAL_DIR.mkdir(exist_ok=True)
     PROJECTS_REGISTRY.write_text(json.dumps(projects, indent=2) + "\n")
-
-
-def resolve_archetype(elmer_dir: Path, archetype_name: str) -> Path:
-    """Find an archetype template file. Checks project .elmer/ first, then bundled."""
-    # Project-local archetype
-    local = elmer_dir / "archetypes" / f"{archetype_name}.md"
-    if local.exists():
-        return local
-
-    # Bundled archetype
-    bundled = ARCHETYPES_DIR / f"{archetype_name}.md"
-    if bundled.exists():
-        return bundled
-
-    raise FileNotFoundError(
-        f"Archetype '{archetype_name}' not found in .elmer/archetypes/ or bundled archetypes"
-    )
 
 
 # ---------------------------------------------------------------------------

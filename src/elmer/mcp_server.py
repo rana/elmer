@@ -442,7 +442,7 @@ def elmer_archetypes(include_stats: bool = False) -> dict:
     Use this to choose an archetype before starting an exploration.
     """
     try:
-        _, elmer_dir = _find_project()
+        project_dir, elmer_dir = _find_project()
 
         # Collect archetypes from both sources
         seen: dict[str, str] = {}  # name -> source

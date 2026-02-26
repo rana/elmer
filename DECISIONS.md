@@ -1140,14 +1140,13 @@ Meanwhile, Claude CLI already enforces per-session budgets via `--max-budget-usd
 - `config.py`: `init_project()` no longer copies templates to `.elmer/archetypes/`.
 - `cli.py` and `mcp_server.py`: archetype listing reads from `AGENTS_DIR` and `.claude/agents/elmer-*.md`.
 
-**What was retained:**
-- `resolve_archetype()` function in `config.py` — kept but no longer called by any operational code.
-- `ARCHETYPES_DIR` constant — bundled template files remain in `src/elmer/archetypes/` as reference material but are not used for execution.
-- All 28 agent definitions in `src/elmer/agents/` — these are the canonical source of archetype methodology.
-
 **Migration for existing projects:** Projects with custom archetypes in `.elmer/archetypes/` must convert them to agent definitions in `.claude/agents/elmer-<name>.md` with YAML frontmatter.
 
+All 29 agent definitions in `src/elmer/agents/` are the canonical source of archetype methodology.
+
 **Files modified:** `explore.py`, `autoapprove.py`, `questions.py`, `insights.py`, `digest.py`, `generate.py`, `promptgen.py`, `archselect.py`, `invariants.py`, `config.py`, `cli.py`, `mcp_server.py`.
+
+*Revised: 2026-02-26, completed removal — `resolve_archetype()`, `ARCHETYPES_DIR`, `src/elmer/archetypes/` directory (26 legacy templates), and their tests all removed. Agent count updated 28→29 (replan agent added by ADR-067).*
 
 ---
 

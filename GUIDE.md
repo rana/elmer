@@ -444,7 +444,8 @@ elmer costs --exploration my-topic # detail for one exploration
 ```
 pending → running → done → approved
                          → declined
-                  → failed → declined
+                  → failed → approved (partial work worth merging)
+                           → declined
 ```
 
 - **pending**: Waiting for a dependency to be approved. No worktree yet. Will start automatically when unblocked.
