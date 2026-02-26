@@ -1,0 +1,129 @@
+[defaults]
+archetype = "explore-act"
+model = "opus"
+max_turns = 50
+generate_prompt = false
+
+[generate]
+count = 5
+model = "sonnet"
+max_turns = 5
+
+[auto_approve]
+model = "sonnet"
+max_turns = 3
+criteria = "document-only proposals with no code changes"
+max_files_changed = 10
+require_proposal = true
+
+[archetype_selection]
+model = "sonnet"
+max_turns = 3
+
+[followup]
+enabled = false
+count = 3
+model = "sonnet"
+auto_approve = false
+
+[daemon]
+interval = 600                  # seconds between cycles
+auto_approve = false
+auto_generate = false
+auto_archetype = false            # AI selects archetype for generated topics
+max_concurrent = 5
+generate_threshold = 2          # generate new topics when active < threshold
+generate_count = 5
+max_approvals_per_cycle = 10    # safety bound: max auto-approvals per cycle
+
+[insights]
+enabled = false                 # extract insights after approval
+model = "sonnet"
+max_turns = 3
+inject = true                   # inject cross-project insights into prompts
+inject_limit = 5                # max insights to inject per exploration
+
+[ensemble]
+synthesis_model = "sonnet"
+synthesis_max_turns = 15
+# default_replicas = 3          # default replica count for --replicas
+# default_archetypes = ["explore", "devil-advocate", "dead-end-analysis"]
+
+[digest]
+model = "sonnet"
+max_turns = 5
+threshold = 5                   # approvals since last digest before synthesizing
+inject_into_explorations = true # inject latest digest into exploration prompts (G1)
+# daemon auto-triggers digest when approvals >= threshold
+
+[questions]
+model = "sonnet"
+max_turns = 5
+
+[invariants]
+model = "sonnet"
+max_turns = 5
+# rules = [                          # custom invariant rules (optional)
+#   "ADR count in CLAUDE.md matches DECISIONS.md entries",
+#   "Phase status in ROADMAP.md matches CLAUDE.md",
+# ]
+
+[audit]
+enabled = false                       # enable audit scheduling in daemon
+auto_approve = true                   # auto-review audit explorations
+model = "sonnet"
+max_turns = 50
+# schedule: "archetype:topic" pairs, one per daemon cycle, rotating
+# schedule = [
+#   "consistency-audit:data model",
+#   "consistency-audit:CLI interface",
+#   "coherence-audit:",
+#   "architecture-audit:state management",
+#   "documentation-audit:",
+#   "opportunity-scan:",
+# ]
+
+[session]
+# max_hours = 4                  # watchdog: kill running sessions after N hours
+# log_stale_minutes = 60         # watchdog: kill if log unchanged for N minutes
+pending_ttl_days = 7              # auto-cancel pending explorations after N days
+
+[hooks]
+# Skill hooks: invoke project-defined Claude Code skills at lifecycle points.
+# Skills must exist in .claude/skills/<name>/SKILL.md.
+# Each hook receives the proposal text as context.
+# on_done = ["mission-align"]           # run after PROPOSAL.md is committed
+# pre_approve = ["cultural-lens"]       # run before auto-approve gate (must pass)
+# post_approve = []                     # run after merge (informational only)
+model = "sonnet"                        # model for skill hook sessions
+max_turns = 10                          # per-hook turn limit
+
+[verification]
+on_done = "uv run python -m pytest tests/ -q"  # run test suite after each exploration
+max_retries = 2                         # auto-amend attempts before marking failed
+
+[implement]
+model = "opus"                    # model for implementation sessions
+decompose_model = "opus"          # model for milestone decomposition
+decompose_max_turns = 30          # max turns for decomposition
+max_turns = 50                    # per-step turn limit
+# max_plan_hours = 8              # warn if estimated plan duration exceeds N hours
+
+[implement.model_routing]
+# Per-step model routing (B3): assign models based on step archetype or index.
+# The decompose agent can set model per step; these are fallback defaults.
+# scaffold = "opus"              # step 0 (scaffold/foundation)
+# implement = "opus"             # implementation steps
+# explore = "sonnet"             # analysis-only steps
+# prototype = "sonnet"           # prototype steps
+# fallback = "opus"              # any step without a specific route
+
+# Per-million-token rates (USD) for cost estimation.
+# Used only when claude CLI does not report actual cost.
+[costs.rates]
+haiku_input = 0.25
+haiku_output = 1.25
+sonnet_input = 3.00
+sonnet_output = 15.00
+opus_input = 15.00
+opus_output = 75.00
