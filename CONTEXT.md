@@ -48,7 +48,7 @@ A single monolithic document fails at scale — it becomes too long to read, too
 | **DESIGN.md** | Architecture — modules, data flow, schemas | Developers |
 | **DECISIONS.md** | Rationale — why, not just what | Future decision-makers |
 | **ROADMAP.md** | Timeline — what's done, what's next, what's deferred | Project managers |
-| **README.md** | Reference — install, commands, options | Users |
+| **README.md** | Product overview — capabilities, install, quick start | Users |
 | **GUIDE.md** | Playbook — workflows, patterns, troubleshooting | Practitioners |
 
 The separation means updating a design decision doesn't require re-reading installation instructions, and changing a CLI flag doesn't touch the architecture.
@@ -95,4 +95,4 @@ The tool is functional and in active use on multiple projects. 59 ADRs recorded.
 - **Composable status queries** — MCP status/review tools return full result sets; filtering happens client-side, wasting tokens. A `filter` parameter on `elmer_status` (e.g., `status=done AND archetype=prototype`) would collapse multi-call workflows. Deferred because current usage is manageable.
 - **Document-heavy pre-code projects** — srf-yogananda-teachings (13 docs, 124 ADRs, 1.5 MB architecture, zero code) exposed that `elmer implement` assumes verification commands exist. Projects in design phase need document-coherence verification, not build/test. See Future Directions D1–D5 in ROADMAP.md.
 
-*Last updated: 2026-02-26, deep review — updated "five documents" to "seven documents" with full table*
+*Last updated: 2026-02-26, README/GUIDE restructure — README now "product overview" in document table*

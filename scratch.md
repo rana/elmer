@@ -6,6 +6,8 @@ Elmer to autonomously build, deploy, test, etc project `/home/rana/prj/srf-yogan
 
 ---
 What's next to implement? 
+Question the value of next planned features before implementation.
+What are high value changes?
 Prepare to implement, then implement. Answer your own questions. 
 Bias to action. 
 Automate, automate, automate.

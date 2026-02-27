@@ -1,6 +1,6 @@
 # Elmer — Usage Guide
 
-How to use Elmer effectively. README.md is the reference (what commands exist). This is the playbook (how to think about using them).
+How to use Elmer effectively — workflows, command reference, configuration, troubleshooting, and patterns. README.md is the product overview.
 
 ## The Core Loop
 
@@ -41,6 +41,29 @@ elmer init --skills
 
 This reads your project docs and generates `.claude/skills/` with project-specific analysis lenses (e.g., `/mission-align`, `/cultural-lens`). These complement Elmer's autonomous archetypes with interactive skills you can invoke in Claude Code sessions.
 
+To customize agent behavior, scaffold local copies of all bundled subagent definitions:
+
+```bash
+elmer init --agents
+```
+
+This copies 29 agent definitions to `.claude/agents/`. Local copies override bundled defaults. See "Creating Custom Archetypes" below.
+
+### What `elmer init` Creates
+
+```
+.elmer/
+├── config.toml        # Configuration (committed)
+├── explore-act.md     # Topic list file (optional, committed)
+├── worktrees/         # Git worktrees (gitignored)
+├── logs/              # Claude session logs (gitignored)
+└── state.db           # SQLite state (gitignored)
+.vscode/
+└── settings.json      # Watcher exclusions for .elmer/ ephemeral dirs
+```
+
+With `--docs`, scaffolds in the project root: CLAUDE.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CONTEXT.md. With `--skills`, generates `.claude/skills/` with project-specific analysis lenses. With `--agents`, copies agent definitions to `.claude/agents/` (9 exploration + 8 audit + 12 meta-operation = 29 total).
+
 ### 2. Edit .elmer/config.toml
 
 The defaults work, but review them:
@@ -64,6 +87,16 @@ Ask the first question that matters to your project right now:
 ```bash
 elmer explore "what are the biggest architectural risks in this codebase"
 ```
+
+### What Happens Behind the Scenes
+
+1. `elmer explore "topic"` creates a git worktree on branch `elmer/<slug>`
+2. Resolves a Claude Code subagent for the archetype
+3. Spawns `claude --agents <JSON> --agent <name> -p "<topic>"` in the worktree (background)
+4. Claude reads project docs, investigates the topic, writes `PROPOSAL.md`
+5. `elmer status` detects when the session finishes
+6. `elmer review <id>` shows the proposal
+7. `elmer approve <id>` merges the branch; `elmer decline <id>` discards it
 
 ## Choosing the Right Archetype
 
@@ -676,4 +709,245 @@ elmer replan my-plan "Need different approach"
 elmer daemon --auto-approve --generate
 ```
 
-*Last updated: 2026-02-26, deep review — added amending/verify states to state diagram*
+## Command Reference
+
+Use `elmer <command> --help` for complete option details and defaults.
+
+| Command | Description |
+|---------|-------------|
+| `elmer init` | Initialize `.elmer/` in the current project |
+| `elmer explore "topic"` | Start an exploration on a new branch |
+| `elmer batch FILE` | Run explorations from a topic list file |
+| `elmer generate` | AI-generate research topics and spawn explorations |
+| `elmer status` | Show all explorations and their states |
+| `elmer tree` | Show exploration dependency tree |
+| `elmer review [ID]` | List pending proposals or show one |
+| `elmer approve ID` | Merge exploration branch and clean up |
+| `elmer amend ID "feedback"` | Revise proposal based on editorial direction |
+| `elmer decline ID [REASON]` | Discard branch and clean up |
+| `elmer digest` | Synthesize convergence digest from recent explorations |
+| `elmer cancel ID` | Stop a running, pending, or amending exploration |
+| `elmer retry [ID]` | Retry a failed exploration |
+| `elmer costs` | Show cost summary |
+| `elmer validate` | Check document invariants |
+| `elmer archetypes` | `list`, `stats`, or `diagnose NAME` |
+| `elmer mine-questions` | Extract open questions from project docs |
+| `elmer insights` | List cross-project insights |
+| `elmer implement "milestone"` | Decompose and execute autonomously |
+| `elmer replan PLAN [CONTEXT]` | Revise a paused plan |
+| `elmer daemon` | Continuous operation (subcommands: `status`, `stop`) |
+| `elmer logs ID` | Session log diagnostics |
+| `elmer pr ID` | Push branch and create GitHub PR |
+| `elmer clean` | Remove failed/orphaned worktrees and state entries |
+| `elmer block ID DESC` | Register an external blocker |
+| `elmer unblock ID` | Resolve an external blocker |
+| `elmer blockers` | List all external blockers |
+| `elmer mcp` | Start the MCP server |
+
+### Key Options
+
+#### elmer init
+
+| Flag | Effect |
+|------|--------|
+| `--docs` | Scaffold project documentation (CLAUDE.md, DESIGN.md, DECISIONS.md, ROADMAP.md, CONTEXT.md) |
+| `--skills` | Scaffold Claude Code skills from project docs |
+| `--agents` | Scaffold subagent definitions to `.claude/agents/` for customization |
+
+#### elmer explore
+
+| Flag | Effect |
+|------|--------|
+| `-a/--archetype NAME` | Archetype to use (default: explore-act) |
+| `-m/--model MODEL` | Model: opus, sonnet, haiku (default: opus) |
+| `--max-turns N` | Turn limit (default: 50) |
+| `--auto-approve` | AI reviews proposal when done |
+| `--auto-archetype` | AI picks the archetype |
+| `--generate-prompt` | AI generates the exploration prompt |
+| `--replicas N` | Ensemble — N independent runs + synthesis |
+| `--archetypes A,B,C` | Archetype rotation for replicas |
+| `--models A,B,C` | Model rotation for replicas |
+| `--verify-cmd CMD` | Verification command before marking done |
+| `--on-approve CMD` | Shell command to run on approval |
+| `--on-decline CMD` | Shell command to run on decline |
+| `--depends-on ID` | Wait for another exploration to be approved first |
+
+#### elmer batch
+
+| Flag | Effect |
+|------|--------|
+| `--chain` | Sequential — each depends on previous |
+| `--dry-run` | Preview parsed topics without spawning |
+| `--item N` | Run only item N |
+| `--max-concurrent N` | Limit parallel explorations |
+| `--stagger N` | Delay between spawns (seconds) |
+| `--replicas N` | Ensemble: N replicas per topic |
+| `--auto-approve` | AI reviews proposals |
+
+#### elmer approve
+
+| Flag | Effect |
+|------|--------|
+| `--all` | Approve all pending proposals |
+| `--auto-followup` | Generate follow-up topics after approval |
+| `--followup-count N` | Number of follow-ups to generate |
+| `--validate-invariants` | Check document consistency after merge |
+| `--no-clean` | Keep worktree after merge |
+
+#### elmer implement
+
+| Flag | Effect |
+|------|--------|
+| `--dry-run` | Preview the plan without executing |
+| `--dry-run --save` | Save plan to `.elmer/plans/` for review |
+| `--answers-file F` | Pre-answer decomposition questions (JSON/TOML) |
+| `--from-exploration ID` | Feed exploration proposal into decomposition |
+| `--load-plan F` | Load a saved plan JSON (skip decomposition) |
+| `--steps RANGE` | Run specific steps (e.g., `0-3`, `2,4`) |
+| `--status` | Show active plan progress |
+| `--resume PLAN` | Resume a paused plan |
+| `--max-concurrent N` | Allow parallel steps |
+| `-y` | Skip clarifying questions |
+
+#### elmer replan
+
+| Flag | Effect |
+|------|--------|
+| `--dry-run` | Preview revised plan |
+| `--dry-run --save` | Save revised plan for review |
+| `-m/--model MODEL` | Model for replanning |
+
+#### elmer daemon
+
+| Flag | Effect |
+|------|--------|
+| `--interval N` | Cycle interval in seconds (default: 300) |
+| `--auto-approve` | AI reviews proposals |
+| `--generate` | Generate topics each cycle |
+| `--max-concurrent N` | Limit parallel explorations |
+| `--auto-followup` | Generate follow-ups after approvals |
+| `--followup-count N` | Follow-ups per approval |
+| `--audit` | Run audit archetype rotation |
+| `--auto-archetype` | AI picks archetypes for generated topics |
+| `--generate-threshold N` | Min explorations before generating |
+| `--generate-count N` | Topics per generation |
+
+#### Other Commands
+
+```
+elmer decline ID [REASON]                              — optional reason feeds digest synthesis
+elmer amend ID "feedback" [-m MODEL] [--max-turns N]
+elmer digest [--since DATE] [--topic KEYWORD] [-m MODEL]
+elmer generate [--count N] [--follow-up [ID]] [--dry-run] [-m MODEL]
+elmer retry [ID] [--failed] [--max-concurrent N]
+elmer status [-v] [--all-projects]
+elmer logs ID [--raw]
+elmer validate [--check]
+elmer mine-questions [--spawn] [--cluster KEYWORD]
+elmer review [--prioritize]
+elmer costs [--exploration ID]
+```
+
+## Configuration Reference
+
+`.elmer/config.toml` — all fields optional, defaults shown:
+
+```toml
+[defaults]
+archetype = "explore-act"
+model = "opus"
+max_turns = 50
+
+[session]
+pending_ttl_days = 7         # Auto-cancel pending explorations older than this (ADR-058)
+
+[insights]
+enabled = false          # Extract insights after approval
+inject = true            # Inject cross-project insights into prompts
+
+[digest]
+model = "sonnet"
+max_turns = 5
+threshold = 5            # Approvals since last digest before daemon auto-synthesizes
+inject_into_explorations = true  # Inject latest digest into worker prompts (ADR-071)
+
+[verification]
+# on_done = "make test"      # Global verification command for all explorations
+# fallback = "make build"    # Fallback command when primary exhausts retries (ADR-040)
+max_retries = 2              # Auto-amend attempts before marking failed
+timeout = 300                # Verification timeout in seconds
+auto_approve_on_pass = true  # false = require AI review even if tests pass (ADR-041)
+
+[auto_approve]
+# policy = "review"          # "review" (default) or "verification_sufficient" (ADR-076)
+# max_approvals_per_cycle = 10  # Daemon per-cycle limit (ADR-054)
+
+[ensemble]
+# synthesis_model = "sonnet"
+# synthesis_max_turns = 10
+# default_replicas = 1       # Default replica count for explorations
+
+[implement]
+model = "opus"               # Model for implementation steps
+decompose_model = "opus"     # Model for milestone decomposition
+decompose_max_turns = 30     # Max turns for decomposition agent
+# auto_replan = false        # Auto-replan on structural failure (ADR-067)
+
+[implement.model_routing]
+# scaffold = "opus"          # Step 0 (foundation)
+# implement = "opus"         # Implementation steps
+# explore = "sonnet"         # Analysis-only steps
+# fallback = "sonnet"        # Steps without a specific route (ADR-069)
+
+[hooks]
+# on_done = "skill:my-check"     # Claude Code skill at lifecycle points (ADR-064)
+# pre_approve = ""
+# post_approve = ""
+
+[invariants]
+model = "sonnet"
+max_turns = 5
+# rules = ["ADR count in CLAUDE.md matches DECISIONS.md entries"]
+```
+
+## Using Elmer from Claude Code
+
+### MCP Server (Recommended)
+
+The MCP server exposes Elmer's full functionality as structured JSON tools over stdio.
+
+Add to `.claude/mcp.json` (project-level) or `~/.claude/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "elmer": {
+      "command": "uv",
+      "args": ["run", "elmer", "mcp"]
+    }
+  }
+}
+```
+
+25 tools in 5 categories, all returning structured JSON:
+
+- **Read-only (9):** `elmer_status`, `elmer_review`, `elmer_costs`, `elmer_tree`, `elmer_archetypes`, `elmer_archetype_diagnose`, `elmer_insights`, `elmer_config_get`, `elmer_recover_partial`
+- **Mutation (8):** `elmer_explore`, `elmer_approve`, `elmer_amend`, `elmer_decline`, `elmer_cancel`, `elmer_retry`, `elmer_clean`, `elmer_pr`
+- **Intelligence (4):** `elmer_generate`, `elmer_validate`, `elmer_mine_questions`, `elmer_digest`
+- **Implementation (3):** `elmer_implement`, `elmer_plan_status`, `elmer_replan`
+- **Batch (1):** `elmer_batch`
+
+### CLI Usage
+
+Elmer works as a regular CLI tool from within Claude Code sessions:
+
+```bash
+elmer explore "evaluate caching strategies"
+elmer status
+elmer review evaluate-caching-strategies
+elmer approve evaluate-caching-strategies
+```
+
+`elmer explore` spawns a background `claude -p` process — nested Claude Code invocations work fine but be aware of cost and concurrency implications.
+
+*Last updated: 2026-02-26, restructure — absorbed command reference, configuration, and MCP server from README; added project structure and exploration internals to Getting Started*

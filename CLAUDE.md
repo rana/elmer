@@ -8,7 +8,7 @@ Read in this order:
 3. **DESIGN.md** — architecture, data model, module responsibilities
 4. **DECISIONS.md** — ADRs with full rationale (59 recorded)
 5. **ROADMAP.md** — phase history, **Future Directions** (remaining improvements), deferred features
-6. **README.md** — user-facing docs, install, full command reference
+6. **README.md** — product overview, install, capabilities
 7. **GUIDE.md** — practical usage playbook, workflows, patterns
 
 Elmer is an autonomous research tool that uses git branches as isolation boundaries and Claude Code sessions (`claude -p`) as workers. All seven development phases complete.
@@ -30,7 +30,7 @@ Elmer is an autonomous research tool that uses git branches as isolation boundar
 
 ## Commands
 
-Full options and examples in README.md. Core subcommands:
+Full options and examples in GUIDE.md. Core subcommands:
 
 | Command | Purpose |
 |---------|---------|
@@ -92,7 +92,7 @@ Seven files. Keep them accurate — drift compounds across sessions.
 |----------------------|--------------------------|
 | New ADR added | DECISIONS.md (ADR + domain index + count), CLAUDE.md (ADR count in Orientation) |
 | Module added or removed | DESIGN.md (module table, data flow) |
-| Command added or changed | README.md (command table, options), CLAUDE.md (command table) |
+| Command added or changed | GUIDE.md (command reference), CLAUDE.md (command table) |
 | New workflow or pattern discovered | GUIDE.md |
 | Deferred feature added or resolved | CONTEXT.md (open questions), ROADMAP.md (deferred section) |
 | Project purpose or methodology evolves | CONTEXT.md |
@@ -110,7 +110,7 @@ Each piece of information lives in one place. Other files reference, not duplica
 |-------------|---------------|
 | Tech stack | CLAUDE.md |
 | Project methodology & context | CONTEXT.md |
-| Full command reference | README.md |
+| Full command reference | GUIDE.md |
 | Module responsibilities | DESIGN.md |
 | ADR list + rationale | DECISIONS.md |
 | Phase history | ROADMAP.md |
@@ -122,13 +122,13 @@ Each piece of information lives in one place. Other files reference, not duplica
 
 1. If you added ADRs → update count in CLAUDE.md Orientation ("11 recorded") and DECISIONS.md header
 2. If architecture changed → update DESIGN.md
-3. If commands changed → update README.md
+3. If commands changed → update GUIDE.md
 4. Update last-updated footer on every modified document
 
 ### Documentation Rules
 
 - **ADRs are mutable living documents.** Update directly — add, revise, or replace content in place. When substantially revising, add `*Revised: [date], [reason]*` at the section's end. Git history is the audit trail.
 - **Section-level change tracking.** When substantially revising a DESIGN.md section or an ADR, add `*Revised: [date], [reason or ADR]*` at the section's end.
-- **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in README.md.
+- **No duplication across documents.** If information exists in its canonical home, other documents reference it. The ADR list lives only in DECISIONS.md. The command reference lives only in GUIDE.md.
 
-*Last updated: 2026-02-26, document health reconciliation — cross-document counts, stale references, schema, config docs, GUIDE workflows, 218 tests, 59 ADRs, 25 MCP tools*
+*Last updated: 2026-02-26, README/GUIDE restructure — command reference canonical home now GUIDE.md, README is product overview*
